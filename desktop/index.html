@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-Ozra/4VaDMcVXZ0Ef92pkeJsAUre3RkxUdCzwy9qFFs='; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' blob: data:; worker-src blob:">
+  <title>VA 桌面角色</title>
+  <link rel="stylesheet" href="/style.css">
+  <script type="importmap">{"imports":{"three":"/three/three.module.js","three/addons/":"/three/addons/"}}</script>
+  <script type="module" src="/renderer.js"></script>
+</head>
+<body>
+  <div id="avatar">
+    <main id="stage" aria-label="3D 桌面角色">
+      <p id="notice" role="status">正在加载角色…</p>
+    </main>
+  </div>
+</body>
+</html>

@@ -1,0 +1,17 @@
+{
+  "id": "va-desktop",
+  "name": "VA 桌面角色",
+  "description": "把所选 OpenClaw 频道发送的回复镜像到 VA。",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "command": { "type": "array", "items": { "type": "string" }, "minItems": 1, "default": ["va"] },
+      "sshHost": { "type": "string", "default": "" },
+      "openclawCommand": { "type": "array", "items": { "type": "string" }, "minItems": 1, "default": ["openclaw"] }
+    }
+  },
+  "contracts": {
+    "tools": ["va_desktop_say", "va_desktop_act", "va_desktop_selfie", "va_desktop_status"]
+  }
+}

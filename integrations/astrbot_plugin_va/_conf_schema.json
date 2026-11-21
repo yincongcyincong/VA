@@ -1,0 +1,20 @@
+{
+  "command": {
+    "description": "VA 命令",
+    "type": "string",
+    "default": "va",
+    "hint": "运行 VA 的命令。可以填绝对路径，或填写 Node 绝对路径加 VA/bin/va.js。"
+  },
+  "ssh_host": {
+    "description": "VA Mac 的 SSH 主机别名",
+    "type": "string",
+    "default": "",
+    "hint": "同一台 Mac 时留空。容器或远端部署可使用预先配置好的 OpenSSH 主机别名。"
+  },
+  "allowed_user_ids": {
+    "description": "允许操作 VA 的额外用户 ID",
+    "type": "list",
+    "default": [],
+    "hint": "AstrBot 管理员总是可以使用；这里只填写允许操作实体桌面角色的其他用户 ID。"
+  }
+}

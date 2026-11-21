@@ -1,0 +1,30 @@
+{
+  "name": "va-avatar",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.12"
+  },
+  "scripts": {
+    "start": "electron .",
+    "build:mac": "node scripts/build-mac.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@pixiv/three-vrm": "2.0.10",
+    "smol-toml": "1.9.1",
+    "three": "0.160.1",
+    "ws": "8.23.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@electron/packager": "20.3.0",
+    "electron": "45.4.1"
+  },
+  "description": "阿哈桌面虚拟角色",
+  "main": "desktop/main.js",
+  "bin": {
+    "va": "bin/va.js"
+  }
+}

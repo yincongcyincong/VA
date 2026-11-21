@@ -1,0 +1,21 @@
+:root {
+  background: transparent;
+  --paper: #fff4ed;
+  --ink: #3c2430;
+  --outline: #b77b87;
+  font: 550 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+}
+:root[data-theme="sakura"] { --paper: #fff1f7; --ink: #4a2440; --outline: #d47ca2; }
+:root[data-theme="starlight"] { --paper: #23214b; --ink: #fff0fc; --outline: #a799ff; }
+body { margin: 0; overflow: hidden; }
+#bubble {
+  position: relative; margin: 8px 9px 0; padding: 10px 13px;
+  border: 1px solid var(--outline); border-radius: 14px; background: var(--paper);
+  box-shadow: 0 3px 10px #251b2540; color: var(--ink); overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+#bubble::after {
+  content: ''; position: absolute; top: 16px; right: -6px; width: 10px; height: 10px;
+  background: var(--paper); border: solid var(--outline); border-width: 1px 1px 0 0; transform: rotate(45deg);
+}
+body[data-side="right"] #bubble::after { left: -6px; transform: rotate(-135deg); }

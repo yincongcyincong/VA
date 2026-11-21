@@ -1,0 +1,8 @@
+{
+  "name": "openclaw-va-desktop",
+  "version": "0.2.0",
+  "type": "module",
+  "description": "Native OpenClaw bridge for the VA desktop character",
+  "files": ["index.js", "openclaw.plugin.json"],
+  "openclaw": { "extensions": ["./index.js"] }
+}

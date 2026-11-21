@@ -1,0 +1,38 @@
+:root { color: #fff6ef; font: 12px/1.4 -apple-system, "PingFang SC", sans-serif; }
+body { margin: 0; background: transparent; user-select: none; }
+nav {
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  border-radius: 20px;
+  background: #251b25f0;
+  border: 1px solid #ecd9cf80;
+}
+#handle {
+  white-space: nowrap;
+  min-width: 0;
+  max-width: 72px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: #efc9c9;
+  padding: 3px 5px 3px 2px;
+  cursor: move;
+  -webkit-app-region: drag;
+}
+button {
+  background: transparent;
+  color: inherit;
+  border: 0;
+  border-radius: 6px;
+  min-width: 19px;
+  height: 22px;
+  padding: 0 3px;
+  cursor: pointer;
+  font: inherit;
+}
+button:hover:enabled, button:focus-visible { background: #fff3; }
+button:disabled { opacity: .35; cursor: default; }
+#scale { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
+#settings { margin-left: 2px; border-left: 1px solid #ffffff30; padding-inline: 5px; }

@@ -1,0 +1,285 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; media-src blob:; worker-src 'self'">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>VA 设置</title>
+  <link rel="stylesheet" href="/settings.css">
+  <script type="module" src="/settings.js"></script>
+  <script type="module" src="/chat.js"></script>
+</head>
+<body>
+  <main class="workspace">
+    <header class="window-header">
+      <span class="brand" aria-hidden="true">VA</span>
+      <h1>设置</h1>
+    </header>
+    <nav id="settings-tabs" class="tabs" role="tablist" aria-label="设置">
+      <button type="button" role="tab" data-choice="avatar" id="tab-avatar" aria-controls="panel-avatar" aria-selected="true">桌面角色</button>
+      <button type="button" role="tab" data-choice="senses" id="tab-senses" aria-controls="panel-senses" aria-selected="false" tabindex="-1">屏幕与音乐</button>
+      <button type="button" role="tab" data-choice="voice" id="tab-voice" aria-controls="panel-voice" aria-selected="false" tabindex="-1">参考音色</button>
+      <button type="button" role="tab" data-choice="agent" id="tab-agent" aria-controls="panel-agent" aria-selected="false" tabindex="-1">智能体与模型</button>
+    </nav>
+
+    <section id="panel-avatar" class="panel" role="tabpanel" aria-labelledby="tab-avatar">
+      <div class="card">
+        <div class="section-head">
+          <div><h2>桌面模型</h2><p id="model-summary"></p></div>
+          <button id="model-file" type="button">选择模型…</button>
+        </div>
+        <p id="model-status" class="feedback" role="status"></p>
+      </div>
+      <form id="character-name-form" class="card row">
+        <label>角色名称 <input id="character-name" type="text" maxlength="40" required autocomplete="off"></label>
+        <button type="submit">保存名称</button>
+        <p id="character-name-status" class="feedback" role="status"></p>
+      </form>
+      <div class="card settings-grid">
+        <h2>外观与操作</h2>
+        <fieldset class="plain">
+          <legend>界面主题</legend>
+          <div id="theme" class="choices theme-choices" role="group" aria-label="界面主题">
+            <button type="button" data-choice="default" aria-pressed="false">经典</button>
+            <button type="button" data-choice="sakura" aria-pressed="false">樱花漫画</button>
+            <button type="button" data-choice="starlight" aria-pressed="false">星夜霓虹</button>
+          </div>
+        </fieldset>
+        <label for="scale" class="section-head">角色大小 <output id="value"></output></label>
+        <input id="scale" type="range" min="40" max="110" step="1" disabled>
+        <fieldset class="plain">
+          <legend>角色视角</legend>
+          <div id="view" class="choices" role="group" aria-label="角色视角">
+            <button type="button" data-choice="full" aria-pressed="false" disabled>全身</button>
+            <button type="button" data-choice="portrait" aria-pressed="false" disabled>半身</button>
+          </div>
+        </fieldset>
+        <label class="toggle"><input id="click-through" type="checkbox" disabled> 鼠标穿透</label>
+        <p>开启后，仍可通过底部控制条或 ⌃⌥V 打开设置。</p>
+      </div>
+      <div class="card section-head">
+        <div><h2>角色人设</h2><p>提供通用语气和动作台词。Agent 与模型 API 可另填附加 Prompt。</p></div>
+        <button id="character" type="button">打开人设文件…</button>
+      </div>
+    </section>
+
+    <section id="panel-senses" class="panel" role="tabpanel" aria-labelledby="tab-senses" hidden>
+      <div class="card settings-grid">
+        <div class="section-head"><h2>看屏幕</h2>
+          <label class="toggle"><input id="screen-watch" type="checkbox" disabled> 开启观察</label>
+        </div>
+        <fieldset class="plain">
+          <legend>观察间隔</legend>
+          <div id="screen-interval" class="choices intervals" role="group" aria-label="观察间隔"></div>
+        </fieldset>
+        <p id="screen-destination"></p>
+        <p id="screen-state" role="status"></p>
+        <p id="screen-timing"></p>
+        <div><button id="privacy" type="button">打开系统录制权限…</button></div>
+      </div>
+      <div class="card settings-grid">
+        <div class="section-head"><h2>跟随音乐</h2>
+          <label class="toggle"><input id="music-dance" type="checkbox" disabled> 检测音乐并自动跳舞</label>
+        </div>
+        <p id="music-state" role="status"></p>
+      </div>
+    </section>
+
+    <section id="panel-voice" class="panel" role="tabpanel" aria-labelledby="tab-voice" hidden>
+      <div class="card settings-grid">
+        <h2>说话风格</h2>
+        <div id="speaking-style" class="choices" role="group" aria-label="说话风格"></div>
+        <p>文字回复也会带口型和动作。开启朗读后，口型跟随语音。</p>
+      </div>
+      <div class="card settings-grid">
+        <h2>朗读音色</h2>
+        <div id="voice-provider" class="choices" role="group" aria-label="朗读音色">
+          <button type="button" data-choice="system" aria-pressed="false">macOS 普通话</button>
+          <button type="button" data-choice="volc" aria-pressed="false">火山 TTS</button>
+        </div>
+        <form id="volc-form" class="form-grid" hidden>
+          <label>API Key <input name="apiKey" type="password" autocomplete="off" maxlength="1024"></label>
+          <label>音色 ID <input name="speaker" type="text" required maxlength="160"></label>
+          <fieldset class="plain wide">
+            <legend>模型资源</legend>
+            <div id="volc-resource" class="choices" role="group" aria-label="模型资源">
+              <button type="button" data-choice="seed-tts-2.0" aria-pressed="false">豆包语音合成 2.0</button>
+              <button type="button" data-choice="seed-icl-2.0" aria-pressed="false">声音复刻 2.0</button>
+            </div>
+          </fieldset>
+          <p class="wide">使用火山时，朗读文本由火山引擎处理。</p>
+          <div class="wide"><button type="submit" class="primary">保存并使用火山</button></div>
+        </form>
+        <div class="row">
+          <button id="voice-preview" type="button">试听当前音色</button>
+          <button id="voice-config" type="button">语音服务配置…</button>
+        </div>
+        <p id="voice-status" class="feedback" role="status"></p>
+      </div>
+      <div class="card settings-grid">
+        <div class="section-head">
+          <div><h2>本地原声</h2><p id="voice-name"></p></div>
+          <button id="voice-file" type="button">更换录音…</button>
+        </div>
+        <div><button id="voice-original" type="button" disabled>播放参考原声</button></div>
+      </div>
+    </section>
+
+    <section id="panel-agent" class="panel" role="tabpanel" aria-labelledby="tab-agent" hidden>
+      <div class="section-head agent-head">
+        <div><h2>接入方式</h2><p id="connection"></p></div>
+        <button id="config-file" type="button">打开配置文件…</button>
+      </div>
+      <nav id="mode" class="tabs secondary" role="tablist" aria-label="接入方式">
+        <button type="button" role="tab" data-choice="local" aria-selected="false">本地 Agent</button>
+        <button type="button" role="tab" data-choice="doubao-client" aria-selected="false">豆包客户端</button>
+        <button type="button" role="tab" data-choice="doubao" aria-selected="false">火山实时语音</button>
+        <button type="button" role="tab" data-choice="api" aria-selected="false">模型 API</button>
+        <button type="button" role="tab" data-choice="astrbot" aria-selected="false">AstrBot</button>
+        <button type="button" role="tab" data-choice="openclaw" aria-selected="false">OpenClaw</button>
+        <button type="button" role="tab" data-choice="off" aria-selected="false">关闭</button>
+      </nav>
+
+      <div id="local-panel" class="card settings-grid" hidden>
+        <div id="providers" class="choices" role="group" aria-label="本地 Agent">
+          <button type="button" data-choice="codex" aria-pressed="false">Codex</button>
+          <button type="button" data-choice="claude" aria-pressed="false">Claude Code</button>
+          <button type="button" data-choice="deepseekharness" aria-pressed="false">DeepSeek Harness</button>
+          <button type="button" data-choice="omp" aria-pressed="false">OMP</button>
+          <button type="button" data-choice="custom" aria-pressed="false">自定义</button>
+        </div>
+        <form id="configuration" class="form-grid">
+          <label id="model-field">模型 <input name="model" type="text" maxlength="200" placeholder="留空使用 Agent 的默认模型" spellcheck="false"></label>
+          <label>工作目录 <input name="cwd" type="text" maxlength="4096" placeholder="留空使用 VA 启动目录"></label>
+          <label class="wide">附加 Prompt <textarea name="prompt" rows="2" maxlength="5000"></textarea></label>
+          <label class="toggle"><input name="speak" type="checkbox"> 朗读回复</label>
+          <div class="end"><button type="submit">保存 Agent</button></div>
+        </form>
+        <form id="binding" class="row binding">
+          <label>已有会话 ID <input name="session" type="text" maxlength="160" required spellcheck="false"></label>
+          <button type="submit">绑定会话</button>
+        </form>
+      </div>
+
+      <section id="doubao-client-panel" class="card settings-grid" hidden>
+        <p>打开本机豆包的一个对话，再绑定。关闭设置窗口后，桌面仍会显示新回复。</p>
+        <div class="row">
+          <button id="doubao-client-open" type="button">打开豆包</button>
+          <button id="doubao-client-bind" type="button">绑定当前对话</button>
+          <button id="doubao-client-unbind" type="button" disabled>解除绑定</button>
+          <button id="doubao-client-context" type="button" disabled>同步角色能力</button>
+          <button id="doubao-client-read" type="button" disabled>用豆包朗读最近回复</button>
+        </div>
+        <p id="doubao-client-hint" role="status"></p>
+        <p>语音输入在豆包客户端的输入框按住空格。绑定后，新回复会显示在角色旁边。</p>
+      </section>
+
+      <section id="doubao-captions-panel" class="card settings-grid" hidden>
+        <h2>通话字幕</h2>
+        <p>在豆包客户端通话。VA 用 macOS 在本机转写豆包播放的声音。</p>
+        <label class="toggle"><input type="checkbox" id="doubao-caption-dance" checked> 让本机模型根据通话内容决定是否跳舞</label>
+        <label class="toggle"><input type="checkbox" id="doubao-listen-dance"> 识别麦克风里的跳舞请求</label>
+        <div class="row">
+          <button id="doubao-caption-start" type="button">开始字幕</button>
+          <button id="doubao-caption-stop" type="button" disabled>停止字幕</button>
+          <button id="doubao-caption-privacy" type="button">系统录制权限…</button>
+        </div>
+        <p id="doubao-caption-status" class="feedback" role="status"></p>
+        <p id="doubao-mic-status" class="feedback" role="status" hidden></p>
+        <p id="doubao-caption-text"></p>
+      </section>
+
+      <section id="doubao-panel" class="settings-grid" hidden>
+        <form id="doubao-configuration" class="card form-grid">
+          <label>实时语音 API Key <input name="apiKey" type="password" autocomplete="off" maxlength="1024"></label>
+          <label>实时语音音色 ID <input name="voice" type="text" maxlength="160"></label>
+          <label class="wide">附加 Prompt <textarea name="prompt" rows="2" maxlength="5000"></textarea></label>
+          <label class="toggle"><input name="allowDance" type="checkbox"> 允许豆包根据对话决定是否跳舞</label>
+          <div class="end"><button type="submit">保存豆包设置</button></div>
+          <label id="doubao-clear" class="toggle wide" hidden><input name="clearKey" type="checkbox"> 清除已保存的 API Key</label>
+        </form>
+        <div class="card conversation">
+          <div class="section-head">
+            <h2>实时语音</h2>
+            <div class="row">
+              <button id="doubao-stop" type="button" disabled>结束</button>
+              <button id="doubao-start" type="button" class="primary" disabled>开始语音对话</button>
+            </div>
+          </div>
+          <p>通话开启后，麦克风音频会发送给火山引擎。</p>
+          <p id="doubao-status" class="feedback" role="status"></p>
+          <ol id="doubao-history" class="chat-history" aria-label="豆包对话字幕"></ol>
+        </div>
+      </section>
+
+      <div id="api-panel" class="card" hidden>
+        <div class="section-head"><h2>API 配置</h2>
+          <div class="row"><button id="refresh-profiles" type="button">重新扫描 CLI</button><button id="add-profile" class="primary" type="button">添加配置…</button></div>
+        </div>
+        <ul id="profiles" class="profiles" aria-label="模型 API 配置"></ul>
+        <p id="profile-empty" class="empty" hidden>添加一个 API 配置，或选用检测到的 CLI 配置。</p>
+      </div>
+
+      <form id="route-configuration" class="card form-grid" hidden>
+        <p class="wide">在目标频道运行 <code>/va route</code> 获取路由。VA 展示机器人已经发送的回复。</p>
+        <label class="wide">目标频道 <input name="target" type="text" required maxlength="240"></label>
+        <div id="openclaw-fields" class="form-grid wide">
+          <label>渠道 <input name="channel" type="text" maxlength="100"></label>
+          <label>账号 ID <input name="accountId" type="text" maxlength="160"></label>
+          <label class="wide">会话 Key <input name="sessionKey" type="text" maxlength="240"></label>
+        </div>
+        <label class="toggle"><input name="speak" type="checkbox"> 朗读机器人回复</label>
+        <div class="end"><button type="submit">保存频道</button></div>
+      </form>
+
+      <div class="card conversation" id="conversation" hidden>
+        <div class="section-head"><h2>对话</h2><button id="new" type="button">新会话</button></div>
+        <ol id="history" class="chat-history" aria-label="聊天记录" aria-live="polite"></ol>
+        <form id="composer">
+          <textarea name="message" aria-label="消息" placeholder="输入消息，⌘↵ 发送" rows="2" maxlength="2200" required></textarea>
+          <div class="row end">
+            <button id="stop" type="button" disabled>停止</button>
+            <button id="send" class="primary" type="submit" disabled>发送</button>
+          </div>
+        </form>
+      </div>
+      <p id="chat-status" class="feedback" role="status"></p>
+    </section>
+
+    <p id="status" class="feedback global-status" role="status"></p>
+  </main>
+
+  <dialog id="profile-dialog" aria-labelledby="profile-title">
+    <form id="profile-form">
+      <div class="section-head"><h2 id="profile-title">添加模型 API 配置</h2><button id="close-profile" type="button" aria-label="关闭">×</button></div>
+      <label>配置名称 <input name="name" type="text" required maxlength="80" placeholder="例如 本地 Ollama" autofocus></label>
+      <nav id="profile-tabs" class="tabs secondary" role="tablist" aria-label="模型用途">
+        <button type="button" role="tab" data-choice="language" aria-selected="true" aria-controls="profile-language">语言模型</button>
+        <button type="button" role="tab" data-choice="vision" aria-selected="false" aria-controls="profile-vision" tabindex="-1">视觉模型（可选）</button>
+      </nav>
+      <div id="profile-language" class="settings-grid" role="tabpanel">
+        <fieldset class="plain"><legend>API 协议</legend><div id="language-protocol" class="choices" role="group" aria-label="语言 API 协议"></div></fieldset>
+        <label>Base URL <input name="language-url" type="url" placeholder="http://127.0.0.1:11434/v1" maxlength="2048"></label>
+        <label>模型名 <input name="language-model" type="text" maxlength="200"></label>
+        <label>API Key <input name="language-key" type="password" autocomplete="off" maxlength="4096"></label>
+        <label class="toggle"><input name="language-clear" type="checkbox"> 清除已保存密钥</label>
+        <label>附加 Prompt <textarea name="prompt" rows="2" maxlength="5000" placeholder="与角色人设一起发给语言模型"></textarea></label>
+        <label class="toggle"><input name="speak" type="checkbox"> 朗读回复</label>
+      </div>
+      <div id="profile-vision" class="settings-grid" role="tabpanel" hidden>
+        <fieldset class="plain"><legend>API 协议</legend><div id="vision-protocol" class="choices" role="group" aria-label="视觉 API 协议"></div></fieldset>
+        <label>Base URL <input name="vision-url" type="url" placeholder="http://127.0.0.1:11434/v1" maxlength="2048"></label>
+        <label>模型名 <input name="vision-model" type="text" maxlength="200"></label>
+        <label>API Key <input name="vision-key" type="password" autocomplete="off" maxlength="4096"></label>
+        <label class="toggle"><input name="vision-clear" type="checkbox"> 清除已保存密钥</label>
+        <label class="toggle"><input name="remote" type="checkbox"> 允许发截图到远端视觉模型</label>
+      </div>
+      <p id="profile-status" class="feedback" role="status"></p>
+      <div class="section-head dialog-actions">
+        <button id="remove-profile" class="danger" type="button" hidden>删除配置</button>
+        <button id="save-profile" class="primary" type="submit">保存配置</button>
+      </div>
+    </form>
+  </dialog>
+</body>
+</html>

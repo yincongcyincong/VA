@@ -1,0 +1,12 @@
+node_modules/
+.env
+.DS_Store
+*.pmx
+*.vmd
+
+dist/
+va-*.png
+
+build/
+
+model-samples/

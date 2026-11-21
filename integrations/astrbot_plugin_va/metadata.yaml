@@ -1,0 +1,5 @@
+name: astrbot_plugin_va
+display_name: VA 桌面角色
+desc: 把所选 AstrBot 频道发送的回复镜像到 VA。
+version: v0.2.0
+author: VA
