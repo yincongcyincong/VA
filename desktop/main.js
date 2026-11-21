@@ -4,7 +4,8 @@ import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { actions, danceActions, expressions } from './actions.js';
+import { danceActions } from './actions.js';
+import { actionSupported, compilePerformance, describePerformance, performanceDefaults } from './performance-config.js';
 import { danceIntent } from './dance-intent.js';
 import { ControlError, startControl } from '../lib/control.js';
 import { defaultScale, isScale, minScale, maxScale,
@@ -15,23 +16,27 @@ import { apiProfileSnapshot, editApiProfiles, resolveApiConfig, selectedApiId } 
 import { createSenses } from './senses.js';
 import { botRoute, checkBotRoute, configureIntegration, createApiChat, externalModes, integrationMode, integrationSnapshot } from './integration.js';
 import { createLocalAgent } from './local-agent.js';
-import { importReference, systemSpeech } from './speech.js';
+import { importReference, sampleLimit, systemSpeech } from './speech.js';
 import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
 import { configureDoubao, createDoubaoConversation, doubaoConfig, doubaoSnapshot } from './doubao.js';
 import { callDoubaoClient, createDoubaoClient } from './doubao-client.js';
 import { doubaoDanceContext } from './doubao-context.js';
 import { createDoubaoCaptions } from './doubao-captions.js';
 import { bindModel, modelFormats, modelMime, modelResource } from './model-files.js';
+import { createModelLibrary, modelPage, modelSources } from './model-library.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
+const mac = process.platform === 'darwin';
+const appIconPath = join(root, 'assets', 'app-icon.png');
 const launchDirectory = resolve(process.env.VA_START_CWD || process.cwd());
 const pageURL = 'va-app://desktop/index.html';
 const bubbleURL = 'va-app://desktop/bubble.html';
 const settingsURL = 'va-app://desktop/settings.html';
 const controlsURL = 'va-app://desktop/controls.html';
-const modelDir = process.env.AVATAR_DIR || join(homedir(), 'Downloads',
-  '星穹铁道-阿哈_by_崩坏：星穹铁道_df69373aacbea0a160459be2ce0eb56e');
-const defaultModelPath = resolve(modelDir, '星穹铁道-阿哈2.pmx');
+const bundledModelPath = join(root, 'assets', 'models', 'Gemini 娘.glb');
+const ahaPack = '星穹铁道-阿哈_by_崩坏：星穹铁道_df69373aacbea0a160459be2ce0eb56e';
+const ahaFile = '星穹铁道-阿哈2.pmx';
+let defaultModelPath = bundledModelPath;
 const mime = {
   ...modelMime,
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -40,7 +45,7 @@ const mime = {
 const pages = new Set(['index.html', 'style.css', 'renderer.js', 'voice.js', 'avatar.js', 'actions.js',
   'speech-motion.js', 'dance-motion.js', 'bubble.html', 'bubble.css', 'bubble.js', 'chat.js', 'settings-tabs.js', 'preferences.js',
   'model-loaders.js', 'settings.html', 'settings.css', 'settings.js', 'controls.html', 'controls.css', 'controls.js',
-  'doubao-chat.js', 'doubao-mic.js', 'doubao-playback.js']);
+  'doubao-chat.js', 'doubao-mic.js', 'doubao-playback.js', 'model-gallery.js']);
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'va-app',
@@ -50,6 +55,7 @@ app.setName('VA');
 app.setPath('userData', join(app.getPath('appData'), 'VA Desktop'));
 const settingsPath = join(app.getPath('userData'), 'settings.json');
 const characterPath = resolve(process.env.VA_CHARACTER_CONFIG || join(app.getPath('userData'), 'character.json'));
+const performancePath = resolve(process.env.VA_PERFORMANCE_CONFIG || join(app.getPath('userData'), 'performance.json'));
 const agentPath = resolve(process.env.VA_AGENT_CONFIG || join(app.getPath('userData'), 'agent.json'));
 const voicePath = resolve(process.env.VA_VOICE_CONFIG || join(app.getPath('userData'), 'voice.json'));
 const saveSettings = settingsWriter(settingsPath);
@@ -60,6 +66,7 @@ const launchHidden = process.argv.includes('--va-hidden');
 
 let window;
 let settingsWindow;
+let modelLibrary;
 let settingsSection = 'avatar';
 let screenRevision = 0;
 let controlsWindow;
@@ -68,7 +75,9 @@ let controlsPosition;
 let tray;
 let server;
 let defaultCharacter;
-let characterName = '阿哈';
+let performanceCatalog = compilePerformance({});
+let performanceWarning;
+let characterName = 'Gemini 娘';
 let nameEdits = Promise.resolve();
 let defaultVoice;
 let voiceEdits = Promise.resolve();
@@ -114,6 +123,8 @@ const controlsHeight = 28;
 let view = 'full';
 let modelPath;
 let selectedModel;
+let galleryPreview;
+let galleryRevision = 0;
 let modelWarning;
 let changingModel = false;
 const assets = new Map();
@@ -151,6 +162,7 @@ async function asset(request) {
   let local;
   const extension = extname(path).toLowerCase();
   if (pages.has(path)) local = join(root, 'desktop', path);
+  if (path === 'app-icon.png') local = appIconPath;
   if (path === 'three/three.module.js') local = join(root, 'node_modules/three/build/three.module.js');
   if (path === 'vendor/three-vrm.js') local = join(root, 'node_modules/@pixiv/three-vrm/lib/three-vrm.module.js');
   if (path.startsWith('three/addons/') && (extension === '.js'
@@ -244,7 +256,9 @@ function controlsAuthorized(event) {
 
 ipcMain.on('va:ready', (event, value) => {
   if (!authorized(event)) return;
+  const firstLoad = state.state === 'loading';
   state = value;
+  if (firstLoad && state.state === 'error' && !launchHidden) openSettings();
   updateTray();
   drainAutomatic();
 });
@@ -398,15 +412,84 @@ ipcMain.handle('va:settings', (event, change) => {
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
   return applySettings(change);
 });
-ipcMain.handle('va:choose-model', async event => {
-  if (!settingsAuthorized(event)) throw new Error('无效的模型请求。');
+async function pickModelFile(title) {
   const { canceled, filePaths: [file] } = await dialog.showOpenDialog(settingsWindow, {
-    title: '选择 3D 模型',
+    title,
+    defaultPath: app.getPath('downloads'),
     properties: ['openFile'],
     filters: [{ name: '支持的 3D 模型', extensions: modelFormats }],
   });
-  if (!canceled && file) await changeModel(file);
-  return settingsSnapshot();
+  return canceled ? null : file;
+}
+
+ipcMain.handle('va:choose-model', async (event, checkOnly = false) => {
+  if (!settingsAuthorized(event)) throw new Error('无效的模型请求。');
+  const file = await pickModelFile(checkOnly === true ? '检测 3D 模型' : '选择 3D 模型');
+  if (!file) return null;
+  return changeModel(file, checkOnly === true);
+});
+
+function dropGalleryPreview() {
+  galleryRevision++;
+  if (galleryPreview) assets.delete(galleryPreview.id);
+  galleryPreview = undefined;
+}
+
+ipcMain.handle('va:model-library', async (event, operation, value) => {
+  if (!settingsAuthorized(event)) throw new Error('无效的模型库请求。');
+  switch (operation) {
+    case 'list': return modelLibrary.list();
+    case 'provider': {
+      if (!Object.hasOwn(modelSources, value)) throw new ControlError('MODEL_LINK', '请选择模型来源。');
+      return shell.openExternal(modelSources[value]);
+    }
+    case 'link': return shell.openExternal(modelPage(value));
+    case 'import-pack': {
+      const { canceled, filePaths: [folder] } = await dialog.showOpenDialog(settingsWindow, {
+        title: '选择解压后的 AI 娘全家桶目录',
+        defaultPath: app.getPath('downloads'),
+        properties: ['openDirectory'],
+      });
+      if (canceled || !settingsAuthorized(event)) return null;
+      return modelLibrary.importPack(folder, path => changeModel(path, true));
+    }
+    case 'release': return dropGalleryPreview();
+    case 'use': {
+      if (!galleryPreview || value !== galleryPreview.url) {
+        throw new ControlError('MODEL_LIBRARY', '请重新预览要使用的模型。');
+      }
+      return changeModel(galleryPreview.path === defaultModelPath ? null : galleryPreview.path);
+    }
+    case 'preview-file':
+    case 'preview-pack': {
+      const revision = ++galleryRevision;
+      const entry = operation === 'preview-pack' ? await modelLibrary.preview(value) : undefined;
+      const path = entry?.path ?? await pickModelFile('预览本机 3D 模型');
+      if (!path) return null;
+      const next = await bindModel(path, entry?.builtIn === true);
+      if (entry) next.name = entry.label;
+      if (!settingsAuthorized(event) || revision !== galleryRevision) return null;
+      dropGalleryPreview();
+      galleryPreview = next;
+      assets.set(next.id, next);
+      return publicModel(next);
+    }
+    default: throw new Error('无效的模型库操作。');
+  }
+});
+ipcMain.handle('va:performance', async (event, operation, value) => {
+  if (!settingsAuthorized(event)) throw new Error('无效的动作配置请求。');
+  switch (operation) {
+    case 'open':
+      await readConfig(performancePath, performanceDefaults, 'PERFORMANCE_CONFIG', 'performance.json').catch(() => {});
+      return shell.openPath(performancePath);
+    case 'reload':
+      await reloadPerformance();
+      return settingsSnapshot();
+    case 'preview':
+      return perform({ action: value?.action, expression: value?.expression, wait: false }, { readAloud: false });
+    default: throw new Error('无效的动作配置操作。');
+  }
 });
 ipcMain.handle('va:open-character', async event => {
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
@@ -430,7 +513,7 @@ ipcMain.handle('va:character-name', async (event, value) => {
 });
 ipcMain.handle('va:open-capture-privacy', event => {
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
-  return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  if (mac) return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
 });
 ipcMain.handle('va:voice-config', async (event, change) => {
   if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
@@ -461,7 +544,7 @@ ipcMain.handle('va:voice-file', async event => {
   const { canceled, filePaths: [selected] } = await dialog.showOpenDialog(settingsWindow, {
     title: '选择一段参考录音',
     properties: ['openFile'],
-    filters: [{ name: '参考录音', extensions: ['wav', 'm4a', 'mp3'] }],
+    filters: [{ name: '参考录音', extensions: mac ? ['wav', 'm4a', 'mp3'] : ['wav'] }],
   });
   if (canceled || !selected) return voiceSnapshot(await getVoiceConfig());
   const reference = await importReference(selected, join(dirname(voicePath), 'voice-samples'));
@@ -482,7 +565,9 @@ ipcMain.handle('va:voice-reference-preview', async event => {
   const path = (await getVoiceConfig()).reference.referenceAudio;
   if (typeof path !== 'string' || !path) throw new ControlError('VOICE_REFERENCE', '请先选择参考录音。');
   const info = await stat(path).catch(() => null);
-  if (!info?.isFile() || info.size > 700_000) throw new ControlError('VOICE_REFERENCE', '参考录音不可用，请重新导入。');
+  if (!info?.isFile() || info.size > (mac ? 700_000 : sampleLimit)) {
+    throw new ControlError('VOICE_REFERENCE', '参考录音不可用，请重新导入。');
+  }
   const audio = await readFile(path).catch(() => null);
   if (!audio || audio.length > 700_000 || audio.toString('ascii', 0, 4) !== 'RIFF' ||
       audio.toString('ascii', 8, 12) !== 'WAVE') {
@@ -517,7 +602,7 @@ function failPending(detail) {
 }
 
 function renderer(command, timeout = 6000) {
-  if (state.state !== 'ready' && !(command.type === 'model' && state.state === 'error')) {
+  if (state.state !== 'ready' && !(command.type.startsWith('model-') && state.state === 'error')) {
     throw new ControlError('NOT_READY', state.detail || '角色正在加载。');
   }
   return new Promise((resolve, reject) => {
@@ -545,7 +630,7 @@ function status() {
     senses: senses?.status(),
     speech: captionText || speechText || null,
     doubaoCaptions: currentMode === 'doubao-client' ? doubaoCaptions?.state() : undefined,
-    settingsShortcut: shortcutRegistered ? 'Control+Option+V' : null,
+    settingsShortcut: shortcutRegistered ? (mac ? 'Control+Option+V' : 'Ctrl+Alt+V') : null,
     view,
     model: modelSnapshot(),
     character: characterName,
@@ -559,6 +644,8 @@ function menu() {
   const run = command => handle(command).catch(error => console.error(error.message));
   return Menu.buildFromTemplate([
     { label: '智能体与模型…', click: () => openChat() },
+    { label: '动作与表情…', click: () => openSettings('performance') },
+    { label: '模型库…', click: () => openSettings('models') },
     { label: '设置…', click: () => openSettings() },
     { label: (window.isVisible() ? '隐藏' : '显示') + characterName,
       click: () => run({ type: window.isVisible() ? 'hide' : 'show' }) },
@@ -566,17 +653,17 @@ function menu() {
       click: item => run({ type: 'click-through', enabled: item.checked }) },
     { label: `看屏幕 · ${screenIntervalLabel(screenInterval)}`, type: 'checkbox', checked: screenWatch,
       click: item => run({ type: 'sense', channel: 'screen', enabled: item.checked }) },
-    { label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance,
-      click: item => run({ type: 'sense', channel: 'music', enabled: item.checked }) },
+    ...(mac ? [{ label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance,
+      click: item => run({ type: 'sense', channel: 'music', enabled: item.checked }) }] : []),
     { label: view === 'full' ? '半身视角' : '全身视角',
       click: () => run({ type: 'view', mode: view === 'full' ? 'portrait' : 'full' }) },
     { type: 'separator' },
     { label: '打招呼', enabled: state.state === 'ready', click: () => run({
       type: 'perform', action: 'wave', expression: 'smile',
     }) },
-    { label: '跳舞', enabled: state.state === 'ready', submenu: danceActions.map(action => ({
-      label: actions[action].label,
-      click: () => run({ type: 'perform', action, expression: 'amused' }),
+    { label: '跳舞', enabled: supportedDances().length > 0, submenu: danceActions.map(action => ({
+      label: performanceCatalog.actions[action].label, enabled: actionSupported(performanceCatalog.actions[action], state.media),
+      click: () => run({ type: 'perform', action }),
     })) },
     { label: '复制角色照片', enabled: state.state === 'ready',
       click: () => run({ type: 'photo', clipboard: true }) },
@@ -592,7 +679,7 @@ function updateTray() {
   tray?.setContextMenu(menu());
 }
 
-async function chooseLine(action, speech) {
+async function chooseLine(action, speech, configured) {
   const line = speech.trim();
   if (line || action === 'idle') return line;
   const character = await getCharacter().catch(error => {
@@ -600,30 +687,60 @@ async function chooseLine(action, speech) {
     return { dialogue: Object.fromEntries(Object.entries(defaultCharacter.dialogue).map(([key, value]) =>
       [key, value.map(line => line.replaceAll('{{name}}', () => characterName))])) };
   });
-  const lines = character.dialogue[action];
-  return lines[Math.floor(Math.random() * lines.length)];
+  const lines = configured ?? character.dialogue[action] ?? [];
+  return lines[Math.floor(Math.random() * lines.length)]?.replaceAll('{{name}}', () => characterName) ?? '';
+}
+
+async function reloadPerformance() {
+  try {
+    const config = await readConfig(performancePath, performanceDefaults, 'PERFORMANCE_CONFIG', 'performance.json');
+    performanceCatalog = compilePerformance(config);
+    performanceWarning = undefined;
+    updateTray();
+  } catch (error) {
+    performanceWarning = error.message;
+    throw new ControlError('PERFORMANCE_CONFIG', error.message);
+  }
+}
+
+function performanceSnapshot(media = state.media) {
+  return { ...describePerformance(performanceCatalog, media), warning: performanceWarning };
+}
+
+function performancePlan(action, selectedExpression) {
+  const definition = Object.hasOwn(performanceCatalog.actions, action) ? performanceCatalog.actions[action] : undefined;
+  const expression = selectedExpression ?? definition?.expression;
+  if (!definition || typeof expression !== 'string' || !Object.hasOwn(performanceCatalog.faces, expression)) {
+    throw new ControlError('INVALID_REQUEST', '动作或表情不存在。请用 va actions 查看可用编号。');
+  }
+  const { motion, seconds, clip, bones } = definition;
+  if ((clip || Object.keys(bones ?? {}).length) && state.state === 'ready' && !actionSupported(definition, state.media)) {
+    throw new ControlError('MODEL_ACTION', '当前模型缺少此动作需要的动画片段或骨骼。');
+  }
+  return { motion, seconds: seconds || (expression === 'neutral' ? 0 : 2), clip, bones,
+    face: performanceCatalog.faces[expression] };
 }
 
 async function perform(command, { selfie = false, source = 'manual', readAloud = true } = {}) {
   if (doubao?.running()) throw new ControlError('BUSY', '角色正在进行豆包语音对话。');
-  const { action = 'idle', expression = 'neutral', speech = '', wait = true } = command;
-  if (typeof action !== 'string' || typeof expression !== 'string' ||
-      !Object.hasOwn(actions, action) || !Object.hasOwn(expressions, expression) ||
+  const { action = 'idle', expression, speech = '', wait = true } = command;
+  if (typeof action !== 'string' || (expression !== undefined && typeof expression !== 'string') ||
       typeof speech !== 'string' || speech.length > 300 || typeof wait !== 'boolean') {
     throw new ControlError('INVALID_REQUEST', '动作、表情或台词无效。台词最多 300 字。');
   }
   if (changingModel) throw new ControlError('BUSY', '正在切换模型，请稍后再试。');
   if (active) throw new ControlError('BUSY', '角色正在表演。等表演结束，或使用 va stop。');
+  const plan = performancePlan(action, expression);
   const job = { id: ++nextId, action, speech: speech.trim(), source };
   active = job;
   updateTray();
-  const selected = chooseLine(action, speech);
+  const selected = chooseLine(action, speech, performanceCatalog.actions[action].dialogue);
   const result = selected.then(async line => {
     job.speech = line;
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     job.started = true;
     const automatedReply = ['local-agent', 'api-chat', 'bot-chat'].includes(source);
-    const data = await renderer({ type: 'perform', action, expression, speech: line, selfie, readAloud, speakingStyle,
+    const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud, speakingStyle,
       showWhilePreparing: automatedReply }, automatedReply ? 120_000 : 80_000);
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     return {
@@ -665,25 +782,35 @@ function queueSpeech(speech, source, readAloud = true) {
   return true;
 }
 
-function nextDance() {
-  const action = danceActions[danceIndex];
-  danceIndex = (danceIndex + 1) % danceActions.length;
-  return action;
+function supportedDances() {
+  return danceActions.filter(action => actionSupported(performanceCatalog.actions[action], state.media));
 }
 
-function danceAlongsideSpeech(action = nextDance(), replaceDance = false) {
-  return renderer({ type: 'doubao-dance', action, replaceDance });
+function nextDance() {
+  const choices = supportedDances();
+  return choices.length ? choices[danceIndex++ % choices.length] : undefined;
+}
+
+async function danceAlongsideSpeech(action = nextDance(), replaceDance = false) {
+  if (!action || !actionSupported(performanceCatalog.actions[action], state.media)) return false;
+  return renderer({ type: 'doubao-dance', plan: performancePlan(action), replaceDance });
 }
 
 function queueInputDance(text) {
   const intent = danceIntent(text, characterName);
   if (!intent) return;
+  const usable = supportedDances();
+  if (!usable.length || (intent.action && !usable.includes(intent.action))) {
+    throw new ControlError('MODEL_ACTION', '当前模型不支持这个舞步，可在「动作与表情」查看可用动作。');
+  }
   if (inputDances.length + intent.count > 4) {
     throw new ControlError('BUSY', '舞步已经排满，等这几段跳完再试。');
   }
   inputDances.push(...Array.from({ length: intent.count }, () => intent.action));
   lastInputDanceAt = Date.now();
-  if (currentMode === 'doubao-client') doubaoClient.noteDance(intent.count, actions[intent.action]?.label);
+  if (currentMode === 'doubao-client') {
+    doubaoClient.noteDance(intent.count, intent.action && performanceCatalog.actions[intent.action].label);
+  }
   drainAutomatic();
   return { reply: intent.count > 1 ? `好呀，跳 ${intent.count} 段给你看！` : '好呀，跳给你看！', handled: 'dance' };
 }
@@ -703,15 +830,19 @@ function drainAutomatic() {
   if (!senses || window.isDestroyed() || state.state !== 'ready' || changingModel || active || petting || voiceDanceTimer) return;
   if (inputDances.length) {
     const action = inputDances.shift() ?? nextDance();
+    if (!action || !actionSupported(performanceCatalog.actions[action], state.media)) {
+      inputDances.length = 0;
+      return;
+    }
     if (doubao.running() || doubaoCaptions.running()) {
       // Keep the live voice and lip sync active while the avatar dances.
       voiceDanceTimer = setTimeout(() => {
         voiceDanceTimer = undefined;
         drainAutomatic();
-      }, actions[action].seconds * 1000 + 100);
+      }, performanceCatalog.actions[action].seconds * 1000 + 100);
       void danceAlongsideSpeech(action, true).catch(reportAutomaticError);
     } else {
-      void perform({ action, expression: 'amused' }, { source: 'input-dance', readAloud: false }).catch(reportAutomaticError);
+      void perform({ action }, { source: 'input-dance', readAloud: false }).catch(reportAutomaticError);
     }
     return;
   }
@@ -728,7 +859,8 @@ function drainAutomatic() {
   if (speech) {
     perform({ speech, expression: 'smile' }, { source: 'screen' }).catch(reportAutomaticError);
   } else if (musicDance && !musicPaused && senses.status().music.detected) {
-    perform({ action: nextDance(), expression: 'amused' }, { source: 'music' }).catch(reportAutomaticError);
+    const action = nextDance();
+    if (action) perform({ action }, { source: 'music' }).catch(reportAutomaticError);
   }
 }
 
@@ -749,7 +881,7 @@ function requireMode(mode) {
 
 async function chatStatus() {
   const config = await getAgentConfig();
-  const integration = integrationSnapshot(config);
+  const integration = { ...integrationSnapshot(config), nativeDoubao: mac };
   if (integration.mode === 'local') return { integration, ...await localAgent.status() };
   if (integration.mode === 'doubao-client') return { integration, ...doubaoClient.state(),
     captions: doubaoCaptions.state(), autoDance: config.doubaoClient?.autoDance !== false,
@@ -761,6 +893,9 @@ async function chatStatus() {
 }
 
 async function changeIntegration(value) {
+  if (!mac && value?.mode === 'doubao-client') {
+    throw new ControlError('UNSUPPORTED_PLATFORM', '豆包客户端联动需要 macOS。');
+  }
   const next = await editAgentConfig(config => configureIntegration(config, value));
   if (currentMode !== next.mode) {
     doubaoStartRevision++;
@@ -873,6 +1008,12 @@ async function handle(command) {
   }
   switch (command.type) {
     case 'status': return status();
+    case 'actions':
+      if (command.reload === true) await reloadPerformance();
+      return { ...performanceSnapshot(), ...(command.includeConfigPath === true && { configPath: performancePath }) };
+    case 'model-check':
+      if (typeof command.path !== 'string') throw new ControlError('MODEL_PATH', '请选择一个模型文件。');
+      return { model: await changeModel(command.path, true) };
     case 'model':
       if (command.path === null || typeof command.path === 'string') await changeModel(command.path);
       else if (command.path !== undefined) throw new ControlError('MODEL_PATH', '请选择一个模型文件。');
@@ -984,24 +1125,44 @@ function publicModel({ url, format, name, builtIn }) {
   return { url, format, name, builtIn };
 }
 
-function modelSnapshot() {
-  const { name, path, format, builtIn } = selectedModel;
-  return { name, path, format, builtIn, ...(state.media ?? {}), warning: modelWarning };
+async function findLocalAha() {
+  const directories = [process.env.AVATAR_DIR, ...['documents', 'downloads']
+    .map(location => join(app.getPath(location), ahaPack))];
+  for (const directory of directories) {
+    if (!directory) continue;
+    const model = await bindModel(resolve(directory, ahaFile), true).catch(() => undefined);
+    if (model) return model;
+  }
+}
+
+function modelSnapshot(binding = selectedModel, report = state) {
+  const { name, path, format, builtIn } = binding;
+  const media = report.media;
+  return { name, path, format, builtIn, ...media,
+    checked: Boolean(media), textureWarning: report.textureWarning === true,
+    warning: binding === selectedModel ? modelWarning : undefined };
 }
 
 function persistSettings() {
   return saveSettings({ theme, speakingStyle, scale, view, modelPath, clickThrough, screenWatch, screenInterval, musicDance });
 }
 
-async function changeModel(path) {
+async function changeModel(path, checkOnly = false) {
   if (changingModel || doubao?.running()) throw new ControlError('BUSY', '正在切换模型或进行语音对话，请稍后再试。');
   changingModel = true;
   let next;
+  let staged = false;
   try {
-    next = await bindModel(path ?? defaultModelPath, path === null);
-    if (active) await stopPerformance();
+    const selectedPath = path ?? defaultModelPath;
+    next = await bindModel(selectedPath, selectedPath === bundledModelPath || selectedPath === defaultModelPath);
     assets.set(next.id, next);
-    const info = await renderer({ type: 'model', model: publicModel(next), deadline: Date.now() + 65_000 }, 70_000);
+    const info = await renderer({ type: 'model-check', model: publicModel(next), checkOnly,
+      deadline: Date.now() + 65_000 }, 70_000);
+    if (checkOnly) return modelSnapshot(next, info);
+    staged = true;
+    if (active) await stopPerformance();
+    await renderer({ type: 'model-activate', key: next.url, portrait: view === 'portrait' });
+    staged = false;
     assets.delete(selectedModel.id);
     selectedModel = next;
     state = { state: 'ready', ...info };
@@ -1010,7 +1171,9 @@ async function changeModel(path) {
     settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
     updateTray();
     await persistSettings();
+    return modelSnapshot();
   } finally {
+    if (staged) await renderer({ type: 'model-discard' }).catch(reportAutomaticError);
     if (next && selectedModel !== next) assets.delete(next.id);
     changingModel = false;
     drainAutomatic();
@@ -1019,7 +1182,8 @@ async function changeModel(path) {
 
 function settingsSnapshot() {
   return { theme, speakingStyle, scale, view, model: modelSnapshot(), characterName, clickThrough, minScale, maxScale,
-    screenWatch, screenInterval, integrationMode: currentMode, musicDance, senses: senses?.status() };
+    screenWatch, screenInterval, integrationMode: currentMode, nativeSenses: mac, musicDance, senses: senses?.status(),
+    performance: performanceSnapshot() };
 }
 
 async function applySettings(change) {
@@ -1062,6 +1226,7 @@ async function applySettings(change) {
     changedSensors = true;
   }
   if (Object.hasOwn(change, 'musicDance')) {
+    if (!mac && change.musicDance) throw new ControlError('UNSUPPORTED_PLATFORM', '系统音乐检测需要 macOS。');
     if (musicDance !== (change.musicDance === true)) musicPaused = false;
     musicDance = change.musicDance === true;
     changedSensors = true;
@@ -1090,6 +1255,7 @@ function openSettings(section = 'avatar') {
   }
   settingsWindow = new BrowserWindow({
     title: 'VA 设置',
+    icon: appIconPath,
     width: 780,
     height: 680,
     minWidth: 520,
@@ -1101,9 +1267,13 @@ function openSettings(section = 'avatar') {
   localWindow(settingsWindow.webContents);
   settingsWindow.on('closed', () => {
     settingsWindow = undefined;
+    dropGalleryPreview();
     doubao?.stop();
   });
-  settingsWindow.webContents.on('render-process-gone', () => doubao?.stop());
+  settingsWindow.webContents.on('render-process-gone', () => {
+    dropGalleryPreview();
+    doubao?.stop();
+  });
   settingsWindow.once('ready-to-show', () => settingsWindow.show());
   settingsWindow.loadURL(settingsURL).catch(console.error);
 }
@@ -1115,7 +1285,7 @@ function openChat() {
 
 async function captureScreen() {
   const message = '读取屏幕需要 macOS「屏幕与系统音频录制」权限。授权后退出并重新启动 VA。';
-  const permission = systemPreferences.getMediaAccessStatus('screen');
+  const permission = mac ? systemPreferences.getMediaAccessStatus('screen') : 'granted';
   if (['denied', 'restricted'].includes(permission)) throw new ControlError('SCREEN_PERMISSION', message);
   const display = screen.getPrimaryDisplay();
   const { width, height } = display.size;
@@ -1127,7 +1297,7 @@ async function captureScreen() {
   const source = sources.find(item => item.display_id === String(display.id))
     ?? (screen.getAllDisplays().length === 1 ? sources[0] : undefined);
   if (!source || source.thumbnail.isEmpty()) {
-    if (systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+    if (mac && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
       throw new ControlError('SCREEN_PERMISSION', message);
     }
     throw new ControlError('SCREEN_UNAVAILABLE', '暂时无法读取主显示器画面。');
@@ -1369,6 +1539,7 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     await mkdir(app.getPath('userData'), { recursive: true });
+    await reloadPerformance().catch(reportAutomaticError);
     defaultCharacter = JSON.parse(await readFile(join(root, 'config/character.json'), 'utf8'));
     defaultVoice = JSON.parse(await readFile(join(root, 'config/voice.json'), 'utf8'));
     const defaultAgent = JSON.parse(await readFile(join(root, 'config/agent.json'), 'utf8'));
@@ -1384,15 +1555,22 @@ if (!app.requestSingleInstanceLock()) {
       return result;
     };
     ({ theme, speakingStyle, scale, view, modelPath, clickThrough, screenWatch, screenInterval, musicDance } = await readSettings(settingsPath));
+    if (!mac) musicDance = false;
+    const localAha = await findLocalAha();
+    defaultModelPath = localAha?.path ?? bundledModelPath;
+    if (localAha) defaultCharacter.name = '阿呆';
+    modelLibrary = createModelLibrary(join(app.getPath('userData'), 'ai-girls.json'), { bundledModel: bundledModelPath, localAha });
     if (modelPath) {
-      selectedModel = await bindModel(modelPath).catch(error => { modelWarning = error.message + ' 已显示默认阿哈。'; });
+      selectedModel = await bindModel(modelPath, modelPath === bundledModelPath || modelPath === defaultModelPath)
+        .catch(error => { modelWarning = error.message + ' 已显示默认角色。'; });
     }
-    selectedModel ??= await bindModel(defaultModelPath, true);
+    selectedModel ??= localAha ?? await bindModel(bundledModelPath, true, { allowMissing: true });
     assets.set(selectedModel.id, selectedModel);
     await getCharacter().catch(error => console.error(error.message));
     try {
       const stored = await getAgentConfig();
       currentMode = integrationMode(stored);
+      if (!mac && currentMode === 'doubao-client') currentMode = 'off';
       if (stored?.mode !== currentMode) await saveAgent({ ...defaultAgent, ...stored, mode: currentMode });
     } catch (error) {
       console.error(error.message);
@@ -1437,10 +1615,16 @@ if (!app.requestSingleInstanceLock()) {
     createWindow();
     createBubble();
     createControls();
-    const icon = nativeImage.createFromNamedImage('NSActionTemplate').resize({ width: 17, height: 17 });
-    icon.setTemplateImage(true);
+    const portrait = nativeImage.createFromPath(appIconPath);
+    const icon = nativeImage.createEmpty();
+    for (const scaleFactor of [1, 2]) {
+      const size = (mac ? 18 : 20) * scaleFactor;
+      icon.addRepresentation({
+        scaleFactor, buffer: portrait.resize({ width: size, height: size, quality: 'best' }).toPNG(),
+      });
+    }
     tray = new Tray(icon);
-    tray.setTitle('VA');
+    if (mac) tray.setTitle('VA');
     tray.setToolTip('VA · ' + characterName);
     shortcutRegistered = globalShortcut.register('Control+Alt+V', openSettings);
     updateTray();

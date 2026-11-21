@@ -27,11 +27,85 @@ const original = document.getElementById('voice-original');
 const modelSummary = document.getElementById('model-summary');
 const modelStatus = document.getElementById('model-status');
 const modelFile = document.getElementById('model-file');
+const modelCheck = document.getElementById('model-check');
+const modelCapabilities = document.getElementById('model-capabilities');
+const performanceActions = document.getElementById('performance-actions');
+const performanceExpressions = document.getElementById('performance-expressions');
+const performancePreview = document.getElementById('performance-preview');
+const performanceStatus = document.getElementById('performance-status');
 const nameForm = document.getElementById('character-name-form');
 const nameInput = document.getElementById('character-name');
 const nameStatus = document.getElementById('character-name-status');
 let lastName;
 let modelPending = false;
+let inspectedModel;
+let actionCatalog;
+let catalogKey;
+let previewAction = 'idle';
+let previewExpression = '';
+
+function renderModelReport(model) {
+  const checked = model?.checked;
+  modelCapabilities.hidden = !checked;
+  if (!checked) return;
+  const format = (label, values) => label + '　' + (values?.length ? values.join('、') : '无');
+  document.getElementById('model-clips').textContent = format('动画片段', model.clips);
+  document.getElementById('model-morphs').textContent = format('表情目标', model.morphs);
+  document.getElementById('model-bones').textContent = format('骨骼', model.bones);
+}
+
+function renderPerformance(next, ready) {
+  actionCatalog = next;
+  const key = JSON.stringify({ next, ready });
+  if (catalogKey === key) return;
+  catalogKey = key;
+  performanceActions.replaceChildren();
+  performanceExpressions.replaceChildren();
+  choices(performanceActions, Object.entries(next.actions).map(([id, item]) => [id, item.label]));
+  choices(performanceExpressions, [['', '动作默认表情'], ...Object.entries(next.expressions)]);
+  if (!next.actions[previewAction]?.supported) previewAction = 'idle';
+  if (previewExpression && !next.supportedExpressions.includes(previewExpression)) previewExpression = '';
+  for (const action of performanceActions.children) {
+    const entry = next.actions[action.dataset.choice];
+    action.disabled = !ready || !entry.supported;
+    if (!entry.supported) action.title = '当前模型缺少此动作需要的骨骼或动画';
+  }
+  for (const expression of performanceExpressions.children) {
+    expression.disabled = !ready || (Boolean(expression.dataset.choice) && !next.supportedExpressions.includes(expression.dataset.choice));
+  }
+  markChoice(performanceActions, previewAction);
+  markChoice(performanceExpressions, previewExpression);
+  performancePreview.disabled = !ready;
+  if (next.warning) performanceStatus.textContent = next.warning;
+}
+
+onChoice(performanceActions, id => {
+  previewAction = id;
+  previewExpression = '';
+  markChoice(performanceActions, previewAction);
+  markChoice(performanceExpressions, previewExpression);
+});
+onChoice(performanceExpressions, id => {
+  previewExpression = id;
+  markChoice(performanceExpressions, previewExpression);
+});
+for (const operation of ['open', 'reload', 'preview']) {
+  document.getElementById('performance-' + operation).addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const result = await window.va.performance(operation, operation === 'preview'
+        ? { action: previewAction, expression: previewExpression || undefined } : undefined);
+      if (operation === 'reload') render(result);
+      performanceStatus.textContent = operation === 'open' ? result || '' :
+        operation === 'reload' ? '配置已加载。' : '正在预览「' + actionCatalog.actions[previewAction].label + '」。';
+    } catch (error) {
+      performanceStatus.textContent = error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+    } finally {
+      button.disabled = operation === 'preview' && !actionCatalog?.actions.idle.supported;
+    }
+  });
+}
 
 const tabs = document.getElementById('settings-tabs');
 function showSection(section) {
@@ -63,6 +137,8 @@ function render(settings) {
   screenWatch.checked = settings.screenWatch;
   markChoice(screenInterval, settings.screenInterval);
   musicDance.checked = settings.musicDance;
+  document.getElementById('music-settings').hidden = !settings.nativeSenses;
+  document.getElementById('privacy').hidden = !settings.nativeSenses;
   scale.disabled = clickThrough.disabled = screenWatch.disabled = musicDance.disabled = false;
   const canObserve = ['local', 'api'].includes(settings.integrationMode);
   screenWatch.disabled = musicDance.disabled = !canObserve;
@@ -79,8 +155,14 @@ function render(settings) {
     const mode = modes[model.mode] ?? '';
     modelSummary.textContent = [model.name, model.format.toUpperCase(), mode,
       model.animationCount ? model.animationCount + ' 段动画' : ''].filter(Boolean).join(' · ');
-    modelFile.disabled = modelPending;
-    if (!modelPending) modelStatus.textContent = model.warning || '';
+    modelFile.disabled = modelCheck.disabled = modelPending;
+    renderModelReport(inspectedModel ?? model);
+    if (!modelPending) {
+      const report = inspectedModel ?? model;
+      modelStatus.textContent = (inspectedModel ? '检测通过 · ' + report.name : report.checked ? '已通过显示检测' : '') +
+        (report.textureWarning ? ' · 部分贴图或材质缺失' : '') + (model.warning ? ' · ' + model.warning : '');
+    }
+    renderPerformance(settings.performance, model.checked);
   }
 }
 
@@ -239,12 +321,13 @@ document.getElementById('voice-config').addEventListener('click', async () => {
 await update();
 await updateVoice();
 
-modelFile.addEventListener('click', async () => {
-  modelPending = modelFile.disabled = true;
-  modelStatus.textContent = '正在加载模型…';
+async function pickModel(checkOnly) {
+  modelPending = modelFile.disabled = modelCheck.disabled = true;
+  modelStatus.textContent = '正在检测模型…';
   let errorMessage;
   try {
-    await window.va.chooseModel();
+    const report = await window.va.chooseModel(checkOnly);
+    if (report) inspectedModel = checkOnly ? report : undefined;
   } catch (error) {
     errorMessage = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
   } finally {
@@ -252,4 +335,6 @@ modelFile.addEventListener('click', async () => {
     await update();
     if (errorMessage) modelStatus.textContent = errorMessage;
   }
-});
+}
+modelFile.addEventListener('click', () => void pickModel(false));
+modelCheck.addEventListener('click', () => void pickModel(true));

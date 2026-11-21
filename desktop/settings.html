@@ -2,21 +2,25 @@
 <html lang="zh-CN">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; media-src blob:; worker-src 'self'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self' 'wasm-unsafe-eval' 'sha256-Ozra/4VaDMcVXZ0Ef92pkeJsAUre3RkxUdCzwy9qFFs='; style-src 'self'; img-src 'self' data: blob:; connect-src 'self' blob: data:; media-src blob:; worker-src 'self' blob:">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>VA 设置</title>
   <link rel="stylesheet" href="/settings.css">
+  <script type="importmap">{"imports":{"three":"/three/three.module.js","three/addons/":"/three/addons/"}}</script>
   <script type="module" src="/settings.js"></script>
   <script type="module" src="/chat.js"></script>
+  <script type="module" src="/model-gallery.js"></script>
 </head>
 <body>
   <main class="workspace">
     <header class="window-header">
-      <span class="brand" aria-hidden="true">VA</span>
+      <img class="brand" src="/app-icon.png" alt="" width="40" height="40">
       <h1>设置</h1>
     </header>
     <nav id="settings-tabs" class="tabs" role="tablist" aria-label="设置">
       <button type="button" role="tab" data-choice="avatar" id="tab-avatar" aria-controls="panel-avatar" aria-selected="true">桌面角色</button>
+      <button type="button" role="tab" data-choice="models" id="tab-models" aria-controls="panel-models" aria-selected="false" tabindex="-1">模型库</button>
+      <button type="button" role="tab" data-choice="performance" id="tab-performance" aria-controls="panel-performance" aria-selected="false" tabindex="-1">动作与表情</button>
       <button type="button" role="tab" data-choice="senses" id="tab-senses" aria-controls="panel-senses" aria-selected="false" tabindex="-1">屏幕与音乐</button>
       <button type="button" role="tab" data-choice="voice" id="tab-voice" aria-controls="panel-voice" aria-selected="false" tabindex="-1">参考音色</button>
       <button type="button" role="tab" data-choice="agent" id="tab-agent" aria-controls="panel-agent" aria-selected="false" tabindex="-1">智能体与模型</button>
@@ -26,9 +30,18 @@
       <div class="card">
         <div class="section-head">
           <div><h2>桌面模型</h2><p id="model-summary"></p></div>
-          <button id="model-file" type="button">选择模型…</button>
+          <div class="row">
+            <button id="model-check" type="button">检测模型…</button>
+            <button id="model-file" type="button">选择模型…</button>
+          </div>
         </div>
         <p id="model-status" class="feedback" role="status"></p>
+        <details id="model-capabilities" hidden>
+          <summary>模型的骨骼、表情和动画</summary>
+          <p id="model-clips"></p>
+          <p id="model-morphs"></p>
+          <p id="model-bones"></p>
+        </details>
       </div>
       <form id="character-name-form" class="card row">
         <label>角色名称 <input id="character-name" type="text" maxlength="40" required autocomplete="off"></label>
@@ -63,6 +76,72 @@
       </div>
     </section>
 
+    <section id="panel-models" class="panel" role="tabpanel" aria-labelledby="tab-models" hidden>
+      <div class="card settings-grid">
+        <div class="section-head gallery-heading">
+          <h2>寻找模型</h2>
+          <button id="gallery-local" type="button">预览本机文件…</button>
+        </div>
+        <div class="row gallery-buttons">
+          <button type="button" data-gallery-provider="aplaybox">浏览模之屋</button>
+          <button type="button" data-gallery-provider="vroid">浏览 VRoid Hub</button>
+        </div>
+        <form id="gallery-link" class="binding row">
+          <label>模型详情链接 <input name="url" type="url" maxlength="2000" placeholder="粘贴模之屋或 VRoid Hub 链接" required></label>
+          <button type="submit">打开下载页</button>
+        </form>
+        <p>网页下载后，解压并保留贴图，再从本机文件预览。</p>
+      </div>
+      <p id="gallery-status" class="feedback" role="status"></p>
+      <div class="gallery-layout">
+        <div class="card gallery-view">
+          <div class="section-head">
+            <div><h2 id="gallery-title">3D 预览</h2><p id="gallery-details"></p></div>
+          </div>
+          <div id="gallery-stage" class="gallery-stage" aria-label="可旋转的 3D 模型预览">
+            <p id="gallery-placeholder">选择一个角色，或打开本机文件。</p>
+          </div>
+          <div class="row gallery-buttons" id="gallery-controls" hidden>
+            <button type="button" id="gallery-use" class="primary">设为桌面角色</button>
+            <p>拖动旋转 · 滚轮缩放</p>
+          </div>
+        </div>
+        <div class="card gallery-collection">
+          <h2>默认3D模型</h2>
+          <div class="row gallery-buttons">
+            <button id="gallery-import" type="button">导入解压目录…</button>
+          </div>
+          <p id="gallery-empty">下载并解压模型包后，可以导入其他角色。</p>
+          <ul id="gallery-list" class="gallery-list"></ul>
+        </div>
+      </div>
+    </section>
+
+    <section id="panel-performance" class="panel" role="tabpanel" aria-labelledby="tab-performance" hidden>
+      <div class="card settings-grid">
+        <div class="section-head">
+          <h2>动作与表情</h2>
+          <div class="row">
+            <button id="performance-open" type="button">打开配置文件…</button>
+            <button id="performance-reload" type="button">重新加载配置</button>
+          </div>
+        </div>
+        <p>配置文件可添加动作、表情和台词。修改并保存后，点「重新加载配置」。</p>
+        <fieldset class="plain">
+          <legend>动作</legend>
+          <div id="performance-actions" class="choices" role="group" aria-label="动作"></div>
+        </fieldset>
+        <fieldset class="plain">
+          <legend>表情</legend>
+          <div id="performance-expressions" class="choices" role="group" aria-label="表情"></div>
+        </fieldset>
+        <div class="row">
+          <button id="performance-preview" type="button" class="primary" disabled>预览</button>
+          <p id="performance-status" class="feedback" role="status"></p>
+        </div>
+      </div>
+    </section>
+
     <section id="panel-senses" class="panel" role="tabpanel" aria-labelledby="tab-senses" hidden>
       <div class="card settings-grid">
         <div class="section-head"><h2>看屏幕</h2>
@@ -77,7 +156,7 @@
         <p id="screen-timing"></p>
         <div><button id="privacy" type="button">打开系统录制权限…</button></div>
       </div>
-      <div class="card settings-grid">
+      <div id="music-settings" class="card settings-grid">
         <div class="section-head"><h2>跟随音乐</h2>
           <label class="toggle"><input id="music-dance" type="checkbox" disabled> 检测音乐并自动跳舞</label>
         </div>
@@ -94,7 +173,7 @@
       <div class="card settings-grid">
         <h2>朗读音色</h2>
         <div id="voice-provider" class="choices" role="group" aria-label="朗读音色">
-          <button type="button" data-choice="system" aria-pressed="false">macOS 普通话</button>
+          <button type="button" data-choice="system" aria-pressed="false">系统普通话</button>
           <button type="button" data-choice="volc" aria-pressed="false">火山 TTS</button>
         </div>
         <form id="volc-form" class="form-grid" hidden>

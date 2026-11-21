@@ -2,7 +2,7 @@
 import { writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { actions, expressions } from '../desktop/actions.js';
+import { listActions } from '../lib/catalog.js';
 import { ControlError, request } from '../lib/control.js';
 import { startDesktop, takeSelfie } from '../lib/start.js';
 
@@ -10,7 +10,7 @@ const usage = `VA · 桌面角色
 
   va start                              启动或显示角色
   va status [--json]                    查看桌面状态
-  va actions [--json]                   列出动作和表情
+  va actions [--reload] [--config-path] [--json]   列出动作和表情，可重新加载或查看配置路径
   va act <动作> [--expression <表情>] [--no-wait]
   va say <台词>                          朗读中文台词
   va perform [--action <动作>] [--say <台词>] [--expression <表情>] [--no-wait]
@@ -24,6 +24,7 @@ const usage = `VA · 桌面角色
   va chat-use <codex|claude|deepseekharness|omp|custom|none>
   va integration [off|local|doubao-client|doubao|api|astrbot|openclaw]
   va model [文件|default]                查看、选择模型或恢复默认模型
+  va model-check <文件>                  检测模型、骨骼、表情和内置动画
   va senses [--json]                    查看屏幕观察和音乐状态
   va sense <screen|music> <on|off>       控制屏幕观察或自动跳舞
   va sense interval <秒>                可选 10、30、60、300、600、1800、3600、21600、86400
@@ -67,8 +68,14 @@ async function execute() {
     return;
   }
   if (command === 'actions') {
-    count(options().positionals, 0);
-    return { actions, expressions };
+    const { positionals, values } = options({ reload: { type: 'boolean' }, 'config-path': { type: 'boolean' } });
+    count(positionals, 0);
+    return listActions(values.reload, values['config-path']);
+  }
+  if (command === 'model-check') {
+    const { positionals } = options();
+    count(positionals, 1);
+    return request({ type: 'model-check', path: resolve(positionals[0]) });
   }
   if (command === 'start') {
     count(options().positionals, 0);

@@ -2,15 +2,13 @@ import * as THREE from 'three';
 import { MMDLoader } from 'three/addons/loaders/MMDLoader.js';
 
 function preparePmx(mesh) {
-  const allowed = ['まばたき', 'あ', 'お', 'にやり', '笑い', 'びっくり'];
-  const positions = mesh.geometry.morphAttributes.position ?? [];
-  mesh.geometry.morphAttributes.position = allowed
-    .filter(name => Object.hasOwn(mesh.morphTargetDictionary ?? {}, name))
-    .map(name => positions[mesh.morphTargetDictionary[name]]);
-  mesh.updateMorphTargets();
+  const base = mesh.geometry.attributes.position.array;
+  const pmxMorphs = new Map((mesh.geometry.morphAttributes.position ?? [])
+    .filter(attribute => attribute.array.some((value, index) => value !== base[index]))
+    .map(attribute => [attribute.name, attribute]));
   mesh.frustumCulled = false;
   for (const material of mesh.material) material.visible = material.opacity > 0;
-  return { object: mesh, clips: [] };
+  return { object: mesh, clips: [], pmxMorphs };
 }
 
 async function loadGltf(manager, model, renderer) {

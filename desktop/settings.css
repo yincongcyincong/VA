@@ -48,10 +48,7 @@ body { margin: 0; }
 .workspace { max-width: 980px; margin: auto; padding: 24px 28px 32px; }
 .window-header, .section-head, .row, .toggle { display: flex; align-items: center; gap: 10px; }
 .window-header { margin-bottom: 18px; gap: 12px; }
-.brand {
-  display: grid; place-items: center; width: 34px; height: 34px; border-radius: 11px;
-  background: var(--fill); color: var(--fill-text); font-weight: 750; font-size: 12px;
-}
+.brand { display: block; width: 40px; height: 40px; flex: none; }
 h1, h2, p, ol, ul { margin: 0; }
 h1 { font-size: 24px; letter-spacing: -.04em; }
 h2 { font-size: 15px; }
@@ -111,6 +108,27 @@ legend { margin-bottom: 6px; }
 .feedback:empty, .settings-grid > p:empty { display: none; }
 .global-status { margin-top: 12px; }
 #model-status:not(:empty) { margin-top: 8px; }
+.gallery-layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); gap: 14px; }
+.gallery-view, .gallery-collection { min-width: 0; }
+.gallery-view { display: grid; gap: 12px; align-content: start; }
+.gallery-stage {
+  position: relative; display: grid; place-items: center; min-height: 260px; aspect-ratio: 1 / 1;
+  border: 1px solid var(--line); border-radius: 10px; overflow: hidden;
+  background: radial-gradient(ellipse at 50% 38%, var(--surface) 0%, var(--subtle) 82%);
+}
+.gallery-stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: grab; touch-action: none; }
+.gallery-stage canvas:active { cursor: grabbing; }
+.gallery-stage p { padding: 14px; text-align: center; }
+.gallery-buttons { flex-wrap: wrap; gap: 6px; }
+.gallery-list { display: grid; gap: 10px; padding: 0; margin-top: 8px; list-style: none; }
+.gallery-list li { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 4px 12px; border-top: 1px solid var(--line); padding-top: 9px; }
+.gallery-list h3 { font: 650 14px/1.3 -apple-system, BlinkMacSystemFont, sans-serif; margin: 0; }
+.gallery-list p { font-size: 12px; }
+.gallery-list button { grid-column: 2; grid-row: 1 / 3; align-self: center; }
+@media (max-width: 650px) {
+  .gallery-layout { grid-template-columns: minmax(0, 1fr); }
+  .gallery-stage { max-height: 360px; aspect-ratio: 5 / 4; }
+}
 .binding { align-items: end; border-top: 1px solid var(--line); padding-top: 10px; }
 .binding label { flex: 1; }
 .profiles { padding: 0; list-style: none; margin-top: 10px; }

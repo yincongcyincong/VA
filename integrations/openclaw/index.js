@@ -49,14 +49,13 @@ function makeBridge(config) {
   };
 }
 
-const action = { type: 'string', enum: [
-  'wave', 'nod', 'bow', 'laugh', 'dance', 'dance-side', 'dance-spin', 'dance-bounce', 'pose', 'pet',
-] };
+const presetId = { type: 'string', pattern: '^[a-z][a-z0-9-]{0,39}$' };
 const speech = { type: 'string', maxLength: 300 };
 const definition = [
-  ['say', 'Speak on VA', '让 VA 朗读指定台词。', { speech }, ['speech']],
-  ['act', 'Animate VA', '让 VA 做动作，可提供一句台词。', { action, speech }, ['action']],
-  ['selfie', 'VA selfie', '用户请求自拍时让 VA 拍照并返回 PNG。', { speech }, []],
+  ['say', 'Speak on VA', '让 VA 朗读指定台词。', { speech, expression: presetId }, ['speech']],
+  ['act', 'Animate VA', '使用 va_desktop_actions 返回的编号做动作。', { action: presetId, expression: presetId, speech }, ['action']],
+  ['selfie', 'VA selfie', '用户请求自拍时让 VA 拍照并返回 PNG。', { speech, expression: presetId }, []],
+  ['actions', 'VA actions', '列出 VA 的动作和表情，包括用户添加的配置。', {}, []],
   ['status', 'VA status', '读取 VA 桌面角色状态。', {}, []],
 ];
 

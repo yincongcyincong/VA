@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { realpath, stat } from 'node:fs/promises';
+import { open, realpath, stat } from 'node:fs/promises';
 import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
 import { ControlError } from '../lib/control.js';
 
@@ -25,7 +25,7 @@ export const modelMime = {
   '.ktx2': 'image/ktx2',
 };
 
-export async function bindModel(path, builtIn = false) {
+export async function bindModel(path, builtIn = false, { allowMissing = false } = {}) {
   if (typeof path !== 'string' || !isAbsolute(path)) {
     throw new ControlError('MODEL_PATH', '请选择模型的绝对路径。');
   }
@@ -33,14 +33,28 @@ export async function bindModel(path, builtIn = false) {
   if (!modelFormats.includes(format)) {
     throw new ControlError('MODEL_FORMAT', '支持 PMX、VRM、GLB、glTF、FBX 和 OBJ。');
   }
-  const resolved = builtIn ? resolve(path) : await realpath(path).catch(() => undefined);
-  if (!resolved || (!builtIn && !(await stat(resolved).catch(() => undefined))?.isFile())) {
+  const resolved = await realpath(path).catch(() => undefined);
+  const file = resolved && await stat(resolved).catch(() => undefined);
+  if ((!file?.isFile() || !file.size) && !allowMissing) {
     throw new ControlError('MODEL_PATH', '模型文件不存在或无法读取。');
   }
+  if (!allowMissing && file?.size && ['pmx', 'glb', 'vrm'].includes(format)) {
+    const handle = await open(resolved, 'r');
+    try {
+      const prefix = Buffer.alloc(4);
+      const { bytesRead } = await handle.read(prefix);
+      if (bytesRead !== 4 || prefix.toString('ascii') !== (format === 'pmx' ? 'PMX ' : 'glTF')) {
+        throw new ControlError('MODEL_FORMAT', '文件内容与 .' + format + ' 格式不符。');
+      }
+    } finally {
+      await handle.close();
+    }
+  }
+  const modelPath = resolved ?? resolve(path);
   const name = basename(path);
   const id = randomUUID();
-  return { id, path: resolved, root: dirname(resolved), name, format, builtIn,
-    url: '/assets/' + id + '/' + encodeURIComponent(basename(resolved)) };
+  return { id, path: modelPath, root: dirname(modelPath), name, format, builtIn,
+    url: '/assets/' + id + '/' + encodeURIComponent(basename(modelPath)) };
 }
 
 export async function modelResource(binding, parts) {

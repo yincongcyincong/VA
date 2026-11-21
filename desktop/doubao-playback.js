@@ -1,5 +1,3 @@
-import { actions, danceActions } from './actions.js';
-
 export function createDoubaoPlayback({ getAvatar, bubble }) {
   let context;
   let analyser;
@@ -77,7 +75,7 @@ export function createDoubaoPlayback({ getAvatar, bubble }) {
     if (!danceTimer) return;
     clearTimeout(danceTimer);
     danceTimer = undefined;
-    getAvatar()?.play('idle', 'neutral');
+    getAvatar()?.play();
   }
 
   function stopClientSpeech() {
@@ -122,11 +120,11 @@ export function createDoubaoPlayback({ getAvatar, bubble }) {
           break;
       }
     },
-    dance(action) {
+    dance(plan) {
       const avatar = getAvatar();
-      if (!avatar || danceTimer || !danceActions.includes(action)) return false;
-      avatar.play(action, 'amused');
-      danceTimer = setTimeout(stopDance, actions[action].seconds * 1000);
+      if (!avatar || danceTimer) return false;
+      avatar.play(plan);
+      danceTimer = setTimeout(stopDance, plan.seconds * 1000);
       return true;
     },
     stopDance,

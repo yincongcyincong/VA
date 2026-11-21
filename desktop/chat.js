@@ -56,7 +56,7 @@ function controls() {
   const local = current?.integration.mode === 'local';
   const api = current?.integration.mode === 'api';
   const client = current?.integration.mode === 'doubao-client';
-  for (const button of modes.children) button.disabled = working || !current;
+  for (const button of modes.children) button.disabled = button.hidden || working || !current;
   for (const button of providers.children) button.disabled = Boolean(busy);
   for (const form of [configuration, routeConfiguration]) {
     for (const control of form.elements) control.disabled = Boolean(busy);
@@ -141,6 +141,7 @@ function render(state, syncFields) {
   const api = mode === 'api';
   const doubao = mode === 'doubao';
   const client = mode === 'doubao-client';
+  modes.querySelector('[data-choice="doubao-client"]').hidden = state.integration.nativeDoubao === false;
   const profile = profiles?.find(entry => entry.id === selected);
   current.activeApi = Boolean(profile && !profile.reason);
   current.agentLabel = local ? state.label : api ? (profile?.name ?? '模型 API')

@@ -1,4 +1,3 @@
-import { actions } from './actions.js';
 import { loadAvatar } from './avatar.js';
 import { createVoice } from './voice.js';
 import { textSpeechDuration } from './speech-motion.js';
@@ -10,6 +9,7 @@ const voice = createVoice();
 let avatar;
 let portrait = false;
 let performance;
+let staged;
 const doubao = createDoubaoPlayback({ getAvatar: () => avatar, bubble: window.va.bubble });
 window.va.onDoubaoOutput(event => {
   if (performance && event.type === 'client-speech') return;
@@ -21,25 +21,38 @@ function message(text = '') {
   notice.hidden = !text;
 }
 
-async function setAvatar(model, deadline = Infinity) {
-  message(`正在加载 ${model.name}…`);
+async function checkAvatar(model, deadline = Infinity) {
   try {
     const next = await loadAvatar(stage, model);
     if (Date.now() > deadline) {
       next.dispose();
       throw new Error('模型加载超时。');
     }
-    next.showPortrait(portrait);
-    avatar?.dispose();
-    avatar = next;
-    return { textureWarning: next.textureWarning, media: next.media };
+    return next;
   } catch (error) {
     console.error(error);
     if (error.message?.includes('WebGL')) throw new Error('无法初始化桌面 3D 渲染。');
-    throw new Error(`无法加载 ${model.name}。请检查格式、模型文件和贴图。`);
-  } finally {
-    message();
+    throw new Error(`模型检测失败（${model.name}）。${error.message || '请检查模型和贴图。'}`);
   }
+}
+
+function clearStaged() {
+  clearTimeout(staged?.timer);
+  staged?.avatar.dispose();
+  staged = undefined;
+}
+
+function activateAvatar(next) {
+  try {
+    next.showPortrait(portrait);
+    next.mount();
+  } catch (error) {
+    next.dispose();
+    throw error;
+  }
+  avatar?.dispose();
+  avatar = next;
+  message();
 }
 
 function delay(ms, signal) {
@@ -76,7 +89,7 @@ function startBubble(text) {
   };
 }
 
-async function perform({ action, expression, speech, selfie, speakingStyle, readAloud = true, showWhilePreparing = false }) {
+async function perform({ plan, speech, selfie, speakingStyle, readAloud = true, showWhilePreparing = false }) {
   doubao.stopDance();
   doubao.stopClientSpeech();
   const controller = new AbortController();
@@ -90,8 +103,8 @@ async function perform({ action, expression, speech, selfie, speakingStyle, read
     const textDuration = textSpeechDuration(speech);
     if (speech && showWhilePreparing) {
       dialogue = startBubble(speech);
-      if (action === 'idle') {
-        avatar.play(action, expression);
+      if (plan.motion === 'idle' && !plan.bones && !plan.clip) {
+        avatar.play(plan);
         avatar.speak(speech, speakingStyle, textDuration);
         animatingText = true;
       }
@@ -115,8 +128,8 @@ async function perform({ action, expression, speech, selfie, speakingStyle, read
       dialogue.paginate(duration);
       if (!animatingText || readAloud) avatar.speak(speech, speakingStyle, duration, audio ? voice.level : undefined);
     }
-    avatar.play(action, expression);
-    const motionMs = actions[action].seconds * 1000;
+    avatar.play({ ...plan, seconds: Math.max(plan.seconds, plan.motion === 'idle' && !plan.bones && !plan.clip ? duration / 1000 : 0) });
+    const motionMs = plan.seconds * 1000;
     const shutterMs = Math.max(850, Math.min(duration + 60, motionMs - 500));
     const shot = selfie ? delay(shutterMs, signal).then(() => avatar.capture(true)) : undefined;
     const [image] = await Promise.all([
@@ -130,6 +143,7 @@ async function perform({ action, expression, speech, selfie, speakingStyle, read
     if (performance === controller) {
       performance = undefined;
       avatar?.stopSpeaking();
+      avatar?.play();
       dialogue?.close();
       message();
     }
@@ -154,29 +168,48 @@ window.va.onCommand(async command => {
     case 'doubao-dance':
       if (performance) return false;
       if (command.replaceDance) doubao.stopDance();
-      return doubao.dance(command.action);
+      return doubao.dance(command.plan);
     case 'perform': return await perform(command);
     case 'stop':
       performance?.abort();
       doubao.stopDance();
       doubao.stopClientSpeech();
-      avatar.play('idle', 'neutral');
+      avatar?.play();
       return;
     case 'photo': return avatar.capture();
     case 'view':
       portrait = command.mode === 'portrait';
-      return avatar.showPortrait(portrait);
-    case 'model':
+      return avatar?.showPortrait(portrait);
+    case 'model-check': {
+      clearStaged();
+      const next = await checkAvatar(command.model, command.deadline);
+      const report = { textureWarning: next.textureWarning, media: next.media };
+      if (command.checkOnly) next.dispose();
+      else staged = { key: command.model.url, avatar: next, timer: setTimeout(clearStaged, 12_000) };
+      return report;
+    }
+    case 'model-discard':
+      return clearStaged();
+    case 'model-activate': {
+      if (staged?.key !== command.key) throw new Error('模型检测结果已过期，请重新选择文件。');
+      const next = staged.avatar;
+      clearTimeout(staged.timer);
+      staged = undefined;
+      portrait = command.portrait;
       doubao.stopDance();
       doubao.stopClientSpeech();
-      return await setAvatar(command.model, command.deadline);
+      activateAvatar(next);
+      return;
+    }
   }
 });
 
 try {
   const [initialModel, view] = await Promise.all([window.va.initialModel(), window.va.initialView()]);
   portrait = view === 'portrait';
-  window.va.report({ state: 'ready', ...await setAvatar(initialModel) });
+  const initial = await checkAvatar(initialModel);
+  activateAvatar(initial);
+  window.va.report({ state: 'ready', textureWarning: initial.textureWarning, media: initial.media });
 } catch (error) {
   const detail = error.message;
   message(detail);

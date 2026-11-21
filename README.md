@@ -1,29 +1,37 @@
-# VA · 阿哈桌面角色
+# VA · 桌面 3D 角色
 
-VA 在 macOS 桌面上显示透明悬浮的 3D 阿哈。可以拖动底部的「阿哈」把手移动窗口，拖动角色旋转视角，用滚轮缩放。底部控制条提供缩放和设置。macOS 菜单栏可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
+VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。可以拖动底部把手移动窗口，拖动角色旋转视角，用滚轮缩放。底部控制条提供缩放和设置。macOS 菜单栏和 Windows 系统托盘可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
+
+VA 优先使用本机的 **阿呆（星穹铁道·阿哈）**，并随源码提供 ApprenTice 制作的 **Gemini 娘**。喜欢这些角色，可以到模之屋查看原作者的作品。[阿哈 · 模之屋原帖](https://www.aplaybox.com/details/model/vODgdw8vDdb3) · [AI 娘全家桶 · 模之屋原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
 [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体与模型](#智能体与模型) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型)
 
 ## 启动
 
-本项目构建产物位于 `dist/VA-darwin-arm64/VA.app`（Apple Silicon），可以双击打开。在有 `va` 命令的终端中也可以运行：
-
-```bash
-va start
-va status --json
-```
-
-从源码启动或打包需要 macOS 和 Node.js 22.12 及以上版本：
+在仓库里安装依赖需要 Node.js 22.12 或更新版本。macOS 打包还需要 Xcode Command Line Tools。
 
 ```bash
 npm ci
-npm start
-npm run build:mac
 ```
 
-项目默认直接读取 `~/Downloads/星穹铁道-阿哈_by_崩坏：星穹铁道_df69373aacbea0a160459be2ce0eb56e`，目录内应包含 `星穹铁道-阿哈2.pmx` 与贴图。若移动了素材，在命令行用 `AVATAR_DIR="/绝对路径" va start`。素材使用规则随下载包提供，其中禁止二次分发和商业使用。
+| 操作 | 命令 | 产物或启动入口 |
+| --- | --- | --- |
+| macOS 从源码启动 | `make dev` | 编译 Swift 助手后打开 VA |
+| Windows 从源码启动 | `npm start` | 打开 VA |
+| 打包 macOS | `npm run build:mac` | 双击 `dist/VA-darwin-arm64/VA.app` 或 `dist/VA-darwin-x64/VA.app`，取决于构建用的 Mac |
+| 打包 Windows x64 | `npm run build:win` | 双击 `dist/VA-win32-x64/VA.exe`，分发时保留整个目录 |
+| 打包 Windows ARM64 | `npm run build:win -- --arch=arm64` | 双击 `dist/VA-win32-arm64/VA.exe`，分发时保留整个目录 |
+| 在 macOS 一次打包两个平台 | `npm run build:all` 或 `make build-all` | macOS 本机架构的包和 Windows x64 包 |
 
-如果在另一台 Mac 安装，先把 `./bin/va.js` 链接成 PATH 中的 `va`，或者在项目根目录直接用 `./bin/va.js`：
+macOS 的 Swift 助手需要在目标架构的 Mac 上编译。Windows 上可以打包 Windows 版。Windows 版的豆包对话可以使用火山实时语音；本机豆包客户端联动、通话字幕和系统音乐检测由 macOS 助手提供。
+
+如果已经下载了项目所用版本的 Electron ZIP，可用 `make build-all ELECTRON_ZIP_DIR=/路径/到/ZIP目录` 从本地归档打包。
+
+下载阿哈后，把整个模型包解压到系统的「文稿」或「下载」目录，保留原文件夹名及贴图。VA 启动时自动查找 `星穹铁道-阿哈2.pmx`，也可以用 `AVATAR_DIR` 指定模型目录。原包使用规则禁止二次配布，阿哈文件从本机读取。[阿哈下载页](https://www.aplaybox.com/details/model/vODgdw8vDdb3)
+
+安装后也可以直接使用随包提供的 Gemini 娘。模型是静态 GLB，适合旋转预览和拍照。舞蹈和口型需要相应骨骼和表情的模型，可在「设置 → 桌面角色」切换。内置模型遵循 CC BY-NC-SA 4.0。[模型署名和使用条件](assets/models/ATTRIBUTION.md)
+
+在项目根目录也可用 `node bin/va.js start` 启动已打包的本机版本，或用 `node bin/va.js status --json` 查询状态。在 macOS 可把命令链接成 PATH 中的 `va`：
 
 ```bash
 mkdir -p ~/.local/bin
@@ -43,7 +51,7 @@ va photo --out /tmp/aha.png --clipboard --json
 va stop
 ```
 
-动作包括挥手、点头、鞠躬、大笑、摸摸、摆拍和下列舞步。菜单栏「VA → 跳舞」可以直接选舞步。台词使用设置中选定的 [朗读音色](#语音和口型)。
+默认动作包括挥手、点头、鞠躬、喜悦、生气、难过、大笑、飞吻、摸摸、摆拍和下列舞步。菜单栏「VA → 跳舞」可以直接选舞步。台词使用设置中选定的 [朗读音色](#语音和口型)。
 
 | 命令 | 舞步 |
 | --- | --- |
@@ -52,7 +60,7 @@ va stop
 | `va act dance-spin` | 转身亮相 |
 | `va act dance-bounce` | 弹跳挥手 |
 
-可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」。VA 在本机识别明确的跳舞请求并开始表演。VA 聊天框、`va chat`、已绑定的豆包对话和已配置的机器人频道都支持这种用法。通话中的语音入口见下文。未指定舞步时，VA 轮换这四种舞步。完整动作适用于默认角色及兼容骨骼的 PMX 模型。
+可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」。VA 在本机识别明确的跳舞请求并开始表演。VA 聊天框、`va chat`、已绑定的豆包对话和已配置的机器人频道都支持这种用法。通话中的语音入口见下文。未指定舞步时，VA 轮换四种舞步。可用舞步取决于当前模型的骨骼和动画。
 
 `va act`、`va say`、`va perform` 默认等演出完成后返回。用 `--no-wait` 可立即获取任务 ID，再用 `va status --json` 查询，或在动作进行时另行调用 `va photo`。已有表演时，新表演返回 `BUSY`。用 `va stop` 可打断，等待该任务的调用会收到 `CANCELED`。
 
@@ -64,11 +72,11 @@ va stop
 - **MCP 客户端**可添加名为 `va-desktop` 的本机 stdio 服务，命令填 `va`，参数填 `["mcp"]`。若客户端有独立 PATH，用 `va` 的绝对路径，或用 Node.js 绝对路径作为命令并传入 `bin/va.js` 的绝对路径与 `mcp`。可调用 `va_start`、`va_status`、`va_actions`、`va_perform`、`va_stop` 和 `va_photo`，其中照片直接返回 PNG。
 - **机器人**可以在同一台 Mac 用子进程调用 `va ... --json`。成功会输出 `{"ok":true,...}`，失败会输出 `{"ok":false,"error":{"code":"...","message":"..."}}` 并返回非零退出码。拿到照片的 `path` 后，用自己的渠道上传附件。远端机器人需要在运行 VA 的这台 Mac 上部署一个能调用 `va` 的桥接进程。
 
-桌面控制通过当前用户独占的 Unix socket 完成。启动 VA 会打开桌面窗口和菜单栏入口。Agent 的受限环境若报告 Unix socket `EPERM`，执行环境需要允许本机 IPC。
+桌面控制在 macOS 使用当前用户独占的 Unix socket，在 Windows 使用带随机凭据的本机回环连接。Windows 从项目目录以 `node bin/va.js` 执行命令。Agent 的受限环境需要允许本机 IPC。
 
 ## 配置与互动
 
-项目根目录执行 `make run` 即可启动；`make install` 安装源码依赖，`make dev` 从源码运行，`make build` 生成本机 `.app`，`make stop` 退出。
+macOS 可以用 `make run` 启动已有的打包版本、`make build` 生成本机 `.app`、`make stop` 退出。Windows 可以双击 `VA.exe` 启动，或从托盘菜单退出。
 
 点击角色下方的「设置」、从菜单栏「VA」选择「设置…」、按 **Control + Option + V**，或执行 `va settings`，都可以打开配置窗口。鼠标穿透只作用在角色窗口，底部控制条仍可点击。用控制条的「− / +」可每次调整 5%，设置里的滑块可实时调整 40–110%，也可以执行 `va scale 55`。默认大小为 68%，调整后会保存。关闭穿透时，单击角色触发摸摸反应。拖动模型仍可旋转视角。
 
@@ -76,7 +84,51 @@ va stop
 
 「设置」中的「桌面模型」可以选择 PMX、VRM、GLB、glTF、FBX 或 OBJ。通过终端切换可用 `va model "/path/to/character.vrm"`，查询用 `va model --json`，恢复默认用 `va model default`。导入成功后会记住模型路径。带外部资源的模型请连同贴图、`.bin` 或 `.mtl` 一起解压，保留相对目录结构。
 
-PMX 可使用现有动作所需的同名骨骼和表情。VRM 支持点头和摸摸时的头部动作，具有对应表情时也能眨眼和对口型。GLB、glTF 和 FBX 可以播放文件自带的动画，导入时优先选择待机片段。OBJ 适用于静态展示。导入模型仍可显示对白和拍照。
+导入前会检查文件、可见网格和实际渲染结果，检测通过后才替换当前角色。可先点「检测模型…」或执行 `va model-check "/path/to/character.glb" --json`，预查骨骼、表情目标和动画片段。检测失败会保留当前角色。模型能渲染时，缺少部分贴图会显示提醒。
+
+在「设置 → 模型库 → 默认3D模型」可以预览本机的阿呆和内置的 Gemini 娘。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+
+安装 Blender 5.2 或更新版本后，也可以用命令导出这三个角色。脚本保留已有的 GLB，导出后在模型库重新导入解压目录。
+
+```bash
+blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls.py -- "解压后的 AI 娘全家桶目录"
+```
+
+也可以在系统浏览器打开模之屋或 VRoid Hub，或粘贴两站的模型详情链接。下载其他模型后请保留贴图，用「预览本机文件…」加载。预览通过后可以点「设为桌面角色」。
+
+PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FBX 可以给动作绑定文件自带的片段。OBJ 适用于静态展示。可用动作和表情会在设置的预览页标出。
+
+### 自定义动作与表情
+
+在「设置 → 动作与表情」打开 `performance.json`。编辑并保存后点「重新加载配置」，也可执行 `va actions --reload`。配置出错时，VA 会保留上一份可用配置。配置路径可用 `VA_PERFORMANCE_CONFIG` 指定。
+
+让 Agent 代做时，使用 [Agent 自定义动作指南](docs/agent-custom-actions.md) 或仓库里的 [VA Skill](skills/va-desktop/SKILL.md)。
+
+动作和表情的编号使用小写英文字母、数字和连字符，首位为字母。下例适用于具有对应 PMX 表情的模型，新增的「眨眼问好」可以从设置预览，也可执行 `va act hello-wink`。
+
+```json
+{
+  "actions": {
+    "hello-wink": {
+      "label": "眨眼问好",
+      "seconds": 2.5,
+      "motion": "wave",
+      "expression": "wink",
+      "dialogue": ["嗨，我看到你啦！"]
+    }
+  },
+  "expressions": {
+    "wink": {
+      "label": "单眼眨眼",
+      "pmx": { "ウィンク": 0.8 },
+      "vrm": { "blinkLeft": 0.8 }
+    }
+  }
+}
+```
+
+- `motion` 可复用内置动作，`clip` 可指定模型里的动画片段，例如 `"clip": "Run"`。骨骼姿势可写成 `"bones": {"头骨名称": [0, 12, 8]}`，三个值分别是 X、Y、Z 轴的角度。骨骼、片段和表情目标沿用模型检测显示的名称。
+- 表情的权重为 0 至 1。PMX 用 `pmx`，VRM 用 `vrm`，其他带形变目标的模型用 `morphs`。MCP 的 `va_actions` 和命令行的 `va actions` 会列出当前配置。
 
 | 样本 | 下载来源 |
 | --- | --- |

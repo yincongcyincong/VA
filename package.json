@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "electron .",
-    "build:mac": "node scripts/build-mac.js"
+    "build:mac": "node scripts/build.js darwin",
+    "build:win": "node scripts/build.js win32",
+    "build:all": "npm run build:mac && npm run build:win"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
@@ -22,7 +24,7 @@
     "@electron/packager": "20.3.0",
     "electron": "45.4.1"
   },
-  "description": "阿哈桌面虚拟角色",
+  "description": "桌面 3D 虚拟角色",
   "main": "desktop/main.js",
   "bin": {
     "va": "bin/va.js"
