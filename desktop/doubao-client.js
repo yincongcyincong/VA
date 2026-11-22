@@ -113,7 +113,7 @@ export function createDoubaoClient({ request, onChange, onReply, onInput }) {
       const detail = notice
         ? `【VA 动作反馈】VA 已收到上一条跳舞请求，并在本机安排 ${notice.count} 段${notice.label ? '「' + notice.label + '」' : '舞蹈'}。`
         : '';
-      const userText = sync ? '请简单确认你了解角色可以在 VA 桌面上跳舞。' : message;
+      const userText = sync ? '请用当前角色名简单确认你了解 VA 的动作和表情。' : message;
       const wireText = instruction || detail
         ? [instruction, detail, '【本轮消息】' + userText].filter(Boolean).join('\n\n')
         : userText;

@@ -30,7 +30,9 @@ async function loadGltf(manager, model, renderer) {
       if (!vrm) throw new Error('文件缺少 VRM 人形定义。');
       VRMUtils.rotateVRM0(vrm);
       vrm.scene.traverse(object => { if (object.isSkinnedMesh) object.frustumCulled = false; });
-      return { object: vrm.scene, clips: asset.animations, vrm };
+      const expressions = asset.parser.json.extensions?.VRMC_vrm?.expressions;
+      const vrmExpressions = expressions && { ...expressions.custom, ...expressions.preset };
+      return { object: vrm.scene, clips: asset.animations, vrm, vrmExpressions };
     }
     const asset = await loader.loadAsync(model.url);
     return { object: asset.scene, clips: asset.animations };

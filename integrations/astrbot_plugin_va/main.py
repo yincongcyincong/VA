@@ -6,6 +6,7 @@ import shlex
 from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, MessageChain, filter
 from astrbot.api.message_components import Image, Plain
+from astrbot.api.provider import ProviderRequest
 from astrbot.api.star import Context, Star, register
 
 
@@ -48,7 +49,7 @@ class VAPlugin(Star):
         except (OSError, ValueError) as error:
             raise VAError("无法运行 VA 命令，请检查路径和 SSH 设置。") from error
         try:
-            output, _ = await asyncio.wait_for(process.communicate(payload), 5 if op == "input" else 85)
+            output, _ = await asyncio.wait_for(process.communicate(payload), 5 if op in {"input", "prompt"} else 85)
         except (asyncio.TimeoutError, asyncio.CancelledError) as error:
             if process.returncode is None:
                 process.kill()
@@ -68,14 +69,27 @@ class VAPlugin(Star):
     @filter.event_message_type(filter.EventMessageType.ALL, priority=10)
     async def handle_va_input(self, event: AstrMessageEvent):
         text = event.message_str.strip()
-        if not self.allowed(event) or not re.search(r"跳|舞|\bdance\b", text, re.IGNORECASE):
+        if not self.allowed(event) or not text or len(text) > 2200 or text.startswith("/"):
             return
         try:
-            result = await self.call("input", origin={"target": event.unified_msg_origin}, text=text[:2200])
-            if result.get("accepted"):
+            result = await self.call("input", origin={"target": event.unified_msg_origin}, text=text)
+            if result.get("handled") == "selfie":
+                yield await self.selfie_result(event)
+            elif result.get("accepted"):
                 yield event.plain_result(result["reply"]).stop_event()
         except VAError as error:
             logger.warning("VA 入站消息：%s", error)
+
+    @filter.on_llm_request()
+    async def use_va_prompt(self, event: AstrMessageEvent, req: ProviderRequest):
+        if not self.allowed(event):
+            return
+        try:
+            result = await self.call("prompt", origin={"target": event.unified_msg_origin})
+            if result.get("accepted") and result.get("prompt"):
+                req.system_prompt = "\n\n".join(part for part in (req.system_prompt, result["prompt"]) if part)
+        except VAError as error:
+            logger.warning("VA 角色 Prompt：%s", error)
 
     @filter.after_message_sent()
     async def mirror_reply(self, event: AstrMessageEvent):
@@ -136,20 +150,27 @@ class VAPlugin(Star):
     async def selfie_command(self, event: AstrMessageEvent):
         if not self.allowed(event):
             return
+        yield await self.selfie_result(event)
+
+    async def selfie_result(self, event: AstrMessageEvent):
         try:
             result = await self.call("selfie")
-            yield event.chain_result([Image.fromBase64(result["image"]["data"])]).stop_event()
+            return event.chain_result([Image.fromBase64(result["image"]["data"])]).stop_event()
         except VAError as error:
-            yield event.plain_result(str(error)).stop_event()
+            return event.plain_result(str(error)).stop_event()
 
     @filter.llm_tool(name="va_desktop_selfie")
     async def selfie_tool(self, event: AstrMessageEvent):
-        """用户明确请求自拍时，把 VA 的照片发到当前对话。"""
+        """用户明确请求自拍时，把 VA 的照片作为唯一回复发到当前对话。"""
         if not self.allowed(event):
             return "这个账号没有 VA 控制权限。"
         try:
+            route = (await self.call("route")).get("route")
+            if not route or route["target"] != event.unified_msg_origin:
+                return "请在 VA 绑定的聊天里请求自拍。"
             result = await self.call("selfie")
             await event.send(MessageChain([Image.fromBase64(result["image"]["data"])]))
-            return "VA 自拍已发送到当前对话。"
+            event.stop_event()
+            return ""
         except VAError as error:
             return str(error)

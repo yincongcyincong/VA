@@ -172,6 +172,8 @@
       </div>
       <div class="card settings-grid">
         <h2>朗读音色</h2>
+        <label class="toggle"><input id="action-sound" type="checkbox" disabled> 做动作时发出声音</label>
+        <p>开启后朗读动作自带的台词。对话语音和单独朗读由各自的设置控制。</p>
         <div id="voice-provider" class="choices" role="group" aria-label="朗读音色">
           <button type="button" data-choice="system" aria-pressed="false">系统普通话</button>
           <button type="button" data-choice="volc" aria-pressed="false">火山 TTS</button>
@@ -256,8 +258,8 @@
       <section id="doubao-captions-panel" class="card settings-grid" hidden>
         <h2>通话字幕</h2>
         <p>在豆包客户端通话。VA 用 macOS 在本机转写豆包播放的声音。</p>
-        <label class="toggle"><input type="checkbox" id="doubao-caption-dance" checked> 让本机模型根据通话内容决定是否跳舞</label>
-        <label class="toggle"><input type="checkbox" id="doubao-listen-dance"> 识别麦克风里的跳舞请求</label>
+        <label class="toggle"><input type="checkbox" id="doubao-caption-actions" checked> 让本机模型根据通话内容决定是否做动作</label>
+        <label class="toggle"><input type="checkbox" id="doubao-listen-actions"> 识别麦克风里的动作请求</label>
         <div class="row">
           <button id="doubao-caption-start" type="button">开始字幕</button>
           <button id="doubao-caption-stop" type="button" disabled>停止字幕</button>

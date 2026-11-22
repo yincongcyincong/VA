@@ -248,7 +248,7 @@ func run(_ cmd: Command) throws -> [String: Any] {
         }
     case "send":
         guard let composer, let text = cmd.text,
-              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 2800 else {
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, text.count <= 45_000 else {
             throw ClientError(code: "CLIENT_INPUT", message: "没有找到可用的豆包聊天输入框。")
         }
         try sendText(text.trimmingCharacters(in: .whitespacesAndNewlines), to: composer, in: page,

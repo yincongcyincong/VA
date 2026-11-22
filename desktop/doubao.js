@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import WebSocket from 'ws';
 import { ControlError } from '../lib/control.js';
-import { doubaoDanceContext } from './doubao-context.js';
 
 const endpoint = 'wss://openspeech.bytedance.com/api/v3/duplex/realtime/dialogue';
 const defaultVoice = 'zh_female_vv_jupiter_bigtts';
@@ -41,7 +40,7 @@ export function configureDoubao(config, change) {
     apiKey: clearKey === true ? '' : apiKey.trim() || doubaoConfig(config).apiKey } };
 }
 
-export function createDoubaoConversation({ onState, onOutput, onDance, onInput, connect = (url, options) => new WebSocket(url, options) }) {
+export function createDoubaoConversation({ onState, onOutput, onDance, onInput, onReply, connect = (url, options) => new WebSocket(url, options) }) {
   let session;
   let view = { phase: 'idle', error: '', history: [], input: '', reply: '' };
   let stateTimer;
@@ -198,6 +197,7 @@ export function createDoubaoConversation({ onState, onOutput, onDance, onInput, 
         }
         break;
       case 'response.done':
+        if (!call.danced && view.reply) call.danced = onReply?.(view.reply, call.allowDance) === true;
         endReply('done');
         break;
       case 'response.canceled':
@@ -210,7 +210,7 @@ export function createDoubaoConversation({ onState, onOutput, onDance, onInput, 
     }
   }
 
-  function start(config, character) {
+  function start(config, prompt, characterName) {
     if (session) throw new ControlError('BUSY', '豆包语音正在连接或通话。');
     const key = keyFor(config);
     if (!key) throw new ControlError('DOUBAO_CONFIG', '请填写有实时语音权限的火山 API Key。');
@@ -224,7 +224,7 @@ export function createDoubaoConversation({ onState, onOutput, onDance, onInput, 
       if (session !== call || call.phase !== 'connecting') return;
       send(call, { type: 'session.create', session: {
         model: '1.2.6.1',
-        instructions: [character.prompt, config.prompt, doubaoDanceContext(character.name),
+        instructions: [config.prompt?.replaceAll('{{name}}', () => characterName), prompt,
           '用自然、简短的中文和用户语音聊天。' + (call.allowDance ? '可以用跳舞工具主动表演，每轮最多一次。' : '')].filter(Boolean).join('\n\n'),
         audio: {
           input: { format: { type: 'pcm', rate: 16_000 } },

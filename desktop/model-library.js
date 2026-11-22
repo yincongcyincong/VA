@@ -7,9 +7,10 @@ export const modelSources = {
   aplaybox: 'https://www.aplaybox.com/',
   vroid: 'https://hub.vroid.com/en',
 };
+export const localAhaName = '星神';
 
 const packEntry = /^\d{2}_(.+)_V\d+$/u;
-const modelFile = 'model.glb';
+const packFormats = { 'model.vrm': 'VRM', 'model.glb': 'GLB' };
 
 export function modelPage(value) {
   if (typeof value !== 'string' || value.length > 2000) {
@@ -40,11 +41,14 @@ export function createModelLibrary(manifest, { bundledModel, localAha }) {
     const entries = await Promise.all(pack.models.map(async model => {
       const match = typeof model?.id === 'string' && model.id.match(packEntry);
       if (!match || /[/\\]/u.test(model.id)) return;
-      const path = join(pack.folder, model.id, modelFile);
+      const filename = model.file ?? 'model.glb';
+      if (typeof filename !== 'string' || !Object.hasOwn(packFormats, filename)) return;
+      const path = join(pack.folder, model.id, filename);
       if (await realpath(path).catch(() => undefined) !== path) return;
       const file = await lstat(path).catch(() => undefined);
       if (!file?.isFile() || file.size !== model.size || file.mtimeMs !== model.modified) return;
-      return { path, id: model.id, label: match[1], size: file.size, format: 'GLB',
+      const label = match[1] === 'Gemini' ? 'Gemini 娘' : match[1];
+      return { path, id: model.id, label, size: file.size, format: packFormats[filename],
         rigged: model.rigged, mouthSync: model.mouthSync };
     }));
     return entries.filter(Boolean);
@@ -56,11 +60,13 @@ export function createModelLibrary(manifest, { bundledModel, localAha }) {
       localAha && lstat(localAha.path).catch(() => undefined),
     ]);
     const entries = [];
-    if (aha?.isFile()) entries.push({ path: localAha.path, id: 'aha-default', label: '阿呆（阿哈）', format: 'PMX',
+    if (aha?.isFile()) entries.push({ path: localAha.path, id: 'aha-default', label: localAhaName, format: 'PMX',
       size: aha.size, builtIn: true, isDefault: true, rigged: true, mouthSync: true });
-    if (bundled?.isFile()) entries.push({ path: bundledModel, id: 'gemini-default', label: 'Gemini 娘', format: 'GLB',
+    const hasGeminiVrm = imported.some(model => model.id === '04_Gemini_V2' && model.format === 'VRM');
+    const showBundledGemini = bundled?.isFile() && !hasGeminiVrm;
+    if (showBundledGemini) entries.push({ path: bundledModel, id: 'gemini-default', label: 'Gemini 娘', format: 'GLB',
       size: bundled.size, builtIn: true, isDefault: !entries.length });
-    return entries.concat(bundled?.isFile() ? imported.filter(model => model.label !== 'Gemini') : imported);
+    return entries.concat(showBundledGemini ? imported.filter(model => model.label !== 'Gemini 娘') : imported);
   }
 
   return {
@@ -83,20 +89,23 @@ export function createModelLibrary(manifest, { bundledModel, localAha }) {
         const models = [];
         for (const entry of entries.sort((a, b) => a.name.localeCompare(b.name))) {
           if (!entry.isDirectory() || !packEntry.test(entry.name)) continue;
-          const path = join(folder, entry.name, modelFile);
-          const file = await lstat(path).catch(() => undefined);
-          if (!file?.isFile() || !file.size) continue;
-          try {
-            const result = await checkModel(path);
-            if (!result.checked || result.textureWarning) continue;
-            models.push({ id: entry.name, size: file.size, modified: file.mtimeMs,
-              rigged: Boolean(result.bones?.length), mouthSync: result.mouthSync === true });
-          } catch (error) {
-            if (error.code === 'BUSY') throw error;
+          for (const filename of Object.keys(packFormats)) {
+            const path = join(folder, entry.name, filename);
+            const file = await lstat(path).catch(() => undefined);
+            if (!file?.isFile() || !file.size) continue;
+            try {
+              const result = await checkModel(path);
+              if (!result.checked || result.textureWarning) continue;
+              models.push({ id: entry.name, file: filename, size: file.size, modified: file.mtimeMs,
+                rigged: Boolean(result.bones?.length), mouthSync: result.mouthSync === true });
+              break;
+            } catch (error) {
+              if (error.code === 'BUSY') throw error;
+            }
           }
         }
         if (!models.length) {
-          throw new ControlError('MODEL_LIBRARY', '这个目录没有检测通过的 GLB。请选解压后的 AI 娘全家桶目录。');
+          throw new ControlError('MODEL_LIBRARY', '这个目录没有检测通过的 VRM 或 GLB。请选解压后的 AI 娘全家桶目录。');
         }
         await save({ folder, models });
         return { count: models.length };

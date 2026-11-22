@@ -10,14 +10,17 @@ const usage = `VA · 桌面角色
 
   va start                              启动或显示角色
   va status [--json]                    查看桌面状态
-  va actions [--reload] [--config-path] [--json]   列出动作和表情，可重新加载或查看配置路径
-  va act <动作> [--expression <表情>] [--no-wait]
+  va actions [--supported] [--reload] [--config-path] [--json]
+  va act <动作编号或名称> [--expression <表情>] [--say <台词>] [--no-wait]
+  va <动作编号>                         直接播放动作，内置命令名优先
+  va express <表情编号或名称> [--no-wait]
   va say <台词>                          朗读中文台词
   va perform [--action <动作>] [--say <台词>] [--expression <表情>] [--no-wait]
   va photo [--out <文件.png>] [--clipboard]
   va selfie [--out <文件.png>] [--clipboard] [--say <台词>]
   va settings | character               打开设置或读取人设和默认台词
-  va chat [消息] [--speak]                打开聊天、发送消息或用自然语言让角色跳舞
+  va prompt [--voice]                   输出当前角色和可用动作的完整 Prompt
+  va chat [消息] [--speak]                打开聊天、发送消息或用自然语言让角色做动作
   va chat-status | chat-new | chat-cancel
   va chat-context                        向已绑定的豆包对话同步 VA 角色能力
   va chat-bind <会话ID|current>           续接 Agent 会话，或绑定豆包当前对话
@@ -56,6 +59,50 @@ function count(positionals, length) {
   if (positionals.length !== length) invalid(`va ${command} 需要 ${length} 个位置参数。`);
 }
 
+const normalizeName = name => name.normalize('NFKC').trim().toLowerCase();
+
+function presetId(entries, input, label, labelOf) {
+  const name = normalizeName(input);
+  if (Object.hasOwn(entries, name)) return name;
+  const matches = Object.entries(entries).filter(([, item]) => normalizeName(labelOf(item)) === name);
+  if (matches.length > 1) invalid(`${label}「${input}」对应多个编号，请选用 ${matches.map(([id]) => id).join('、')}。`);
+  if (!matches.length) throw new ControlError('INVALID_REQUEST', `找不到${label}「${input}」。请用 va actions 查看配置。`);
+  return matches[0][0];
+}
+
+async function performFromCli() {
+  const direct = !['act', 'express', 'say', 'perform'].includes(command);
+  const { positionals, values } = options({
+    ...(command === 'perform' && { action: { type: 'string' } }),
+    ...(command !== 'say' && { say: { type: 'string' } }),
+    ...(command !== 'express' && { expression: { type: 'string' } }),
+    'no-wait': { type: 'boolean' },
+  });
+  count(positionals, direct || command === 'perform' ? 0 : 1);
+  const actionName = direct ? command : command === 'act' ? positionals[0] : values.action;
+  const expressionName = command === 'express' ? positionals[0] : values.expression;
+  const speech = command === 'say' ? positionals[0] : values.say;
+  if (command === 'say' && !speech.trim()) invalid('请输入要朗读的台词。');
+  if (!actionName && !expressionName && !speech?.trim()) invalid('请提供动作、表情或台词。');
+
+  let action;
+  let expression;
+  if (actionName !== undefined || expressionName !== undefined) {
+    const catalog = await request({ type: 'actions' });
+    if (actionName !== undefined) {
+      action = presetId(catalog.actions, actionName, '动作', item => item.label);
+      if (catalog.actions[action].supported === false) throw new ControlError('MODEL_ACTION', `当前模型不支持动作「${catalog.actions[action].label}」。`);
+    }
+    if (expressionName !== undefined) {
+      expression = presetId(catalog.expressions, expressionName, '表情', label => label);
+      if (catalog.supportedExpressions && !catalog.supportedExpressions.includes(expression)) {
+        throw new ControlError('MODEL_ACTION', `当前模型不支持表情「${catalog.expressions[expression]}」。`);
+      }
+    }
+  }
+  return await request({ type: 'perform', action, expression, speech, wait: !values['no-wait'] });
+}
+
 async function execute() {
   if (command === 'bridge') {
     count(options().positionals, 0);
@@ -68,9 +115,21 @@ async function execute() {
     return;
   }
   if (command === 'actions') {
-    const { positionals, values } = options({ reload: { type: 'boolean' }, 'config-path': { type: 'boolean' } });
+    const { positionals, values } = options({ supported: { type: 'boolean' }, reload: { type: 'boolean' }, 'config-path': { type: 'boolean' } });
     count(positionals, 0);
+    if (values.supported) {
+      const { actions, expressions, supportedExpressions, ...info } = await request({
+        type: 'actions', reload: values.reload, includeConfigPath: values['config-path'],
+      });
+      return { ...info, actions: Object.fromEntries(Object.entries(actions).filter(([, item]) => item.supported)),
+        expressions: Object.fromEntries(supportedExpressions.map(id => [id, expressions[id]])), supportedExpressions };
+    }
     return listActions(values.reload, values['config-path']);
+  }
+  if (command === 'prompt') {
+    const { positionals, values } = options({ voice: { type: 'boolean' } });
+    count(positionals, 0);
+    return await request({ type: 'prompt', style: values.voice ? 'voice' : 'text' });
   }
   if (command === 'model-check') {
     const { positionals } = options();
@@ -100,21 +159,6 @@ async function execute() {
     const { positionals } = options();
     if (positionals.length > 1) invalid('请选择一种接入方式。');
     return await request({ type: command, mode: positionals[0] });
-  }
-  if (command === 'act' || command === 'say' || command === 'perform') {
-    const { positionals, values } = options({
-      ...(command === 'perform' ? { action: { type: 'string' }, say: { type: 'string' } } : {}),
-      expression: { type: 'string' },
-      'no-wait': { type: 'boolean' },
-    });
-    count(positionals, command === 'perform' ? 0 : 1);
-    const action = command === 'act' ? positionals[0] : values.action;
-    const speech = command === 'say' ? positionals[0] : values.say;
-    if (command === 'say' && !speech.trim()) invalid('请输入要朗读的台词。');
-    if (!action && !speech?.trim() && !values.expression) invalid('请提供动作、表情或台词。');
-    return await request({
-      type: 'perform', action, expression: values.expression, speech, wait: !values['no-wait'],
-    });
   }
   if (command === 'photo' || command === 'selfie') {
     const { positionals, values } = options({
@@ -168,7 +212,7 @@ async function execute() {
     count(options().positionals, 0);
     return await request({ type: command });
   }
-  invalid('未知命令。使用 va --help 查看用法。');
+  return performFromCli();
 }
 
 if (!command || ['help', '-h', '--help'].includes(command)) {
@@ -177,7 +221,7 @@ if (!command || ['help', '-h', '--help'].includes(command)) {
   try {
     const result = await execute();
     if (result) console.log(machine ? JSON.stringify({ ok: true, ...result })
-      : result.reply ?? result.path ?? JSON.stringify(result, null, 2));
+      : result.reply ?? (command === 'prompt' ? result.prompt : result.path) ?? JSON.stringify(result, null, 2));
   } catch (error) {
     const code = error.code || 'ERROR';
     const message = code === 'EEXIST' ? '照片文件已存在，请使用另一个路径。' : error.message;

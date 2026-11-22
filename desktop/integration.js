@@ -61,7 +61,7 @@ export function configureIntegration(config, update) {
   return next;
 }
 
-export function createApiChat({ getConfig, getCharacter }) {
+export function createApiChat({ getConfig, getPrompt, parseReply }) {
   let active;
   let history = [];
   function cancel() {
@@ -80,18 +80,20 @@ export function createApiChat({ getConfig, getCharacter }) {
       const request = new AbortController();
       active = request;
       try {
-        const [config, character] = await Promise.all([getConfig(), getCharacter()]);
+        const config = await getConfig();
         if (integrationMode(config) !== 'api') throw new ControlError('INTEGRATION_MODE', '请先选择模型 API。');
         const message = text.trim();
-        const prompt = [character.prompt, config.language?.prompt].filter(Boolean).join('\n\n');
+        const prompt = await getPrompt(config.language?.prompt);
         const messages = [{ role: 'system', content: prompt },
           ...history.flatMap(turn => [{ role: 'user', content: turn.message }, { role: 'assistant', content: turn.reply }]),
           { role: 'user', content: message }];
-        const reply = (await requestModel(getModelSettings(config, 'language'), messages, request.signal)).trim().slice(0, 20_000);
+        const raw = (await requestModel(getModelSettings(config, 'language'), messages, request.signal)).trim().slice(0, 20_000);
         request.signal.throwIfAborted();
-        if (!reply) throw new ControlError('LANGUAGE_RESPONSE', '模型没有返回文字。');
+        const effect = parseReply(raw);
+        const reply = effect.speech;
+        if (!reply && !effect.action && !effect.expression) throw new ControlError('LANGUAGE_RESPONSE', '模型没有返回文字。');
         history = [...history, { message, reply }].slice(-20);
-        return { reply, readAloud: config.language?.speakReplies === true };
+        return { reply, effect, readAloud: config.language?.speakReplies === true };
       } finally {
         active = undefined;
       }

@@ -25,8 +25,8 @@ const profileStatus = byId('profile-status');
 const captionPanel = byId('doubao-captions-panel');
 const captionStart = byId('doubao-caption-start');
 const captionStop = byId('doubao-caption-stop');
-const captionDance = byId('doubao-caption-dance');
-const listenDance = byId('doubao-listen-dance');
+const captionActions = byId('doubao-caption-actions');
+const listenActions = byId('doubao-listen-actions');
 const captionStatus = byId('doubao-caption-status');
 const micStatus = byId('doubao-mic-status');
 const captionText = byId('doubao-caption-text');
@@ -43,7 +43,7 @@ function errorText(error) {
 
 function renderCaptions(state) {
   const running = state.phase !== 'idle';
-  captionStart.disabled = captionDance.disabled = listenDance.disabled = running;
+  captionStart.disabled = captionActions.disabled = listenActions.disabled = running;
   captionStop.disabled = !running;
   captionStatus.textContent = state.message;
   micStatus.textContent = state.micStatus ?? '';
@@ -152,8 +152,8 @@ function render(state, syncFields) {
   captionPanel.hidden = !client;
   if (client) {
     if (syncFields) {
-      captionDance.checked = state.autoDance;
-      listenDance.checked = state.listenForDance;
+      captionActions.checked = state.autoActions;
+      listenActions.checked = state.listenForActions;
     }
     renderCaptions(state.captions);
   }
@@ -224,9 +224,9 @@ for (const action of ['open', 'bind', 'unbind', 'read']) {
 }
 byId('doubao-client-context').addEventListener('click', () => void edit('doubao-client-context', undefined, '豆包已回复角色能力同步消息。'));
 captionStart.addEventListener('click', async () => {
-  captionStart.disabled = captionDance.disabled = listenDance.disabled = true;
+  captionStart.disabled = captionActions.disabled = listenActions.disabled = true;
   try {
-    renderCaptions(await call('doubao-caption-start', { dance: captionDance.checked, listen: listenDance.checked }));
+    renderCaptions(await call('doubao-caption-start', { autoActions: captionActions.checked, listen: listenActions.checked }));
   } catch (error) {
     renderCaptions({ phase: 'idle', message: errorText(error), text: '' });
   }
@@ -349,7 +349,7 @@ composer.addEventListener('submit', async event => {
   if (send.disabled || !text) return;
   if (responding) {
     try {
-      const result = await call('dance-input', text);
+      const result = await call('action-input', text);
       if (result.handled) {
         if (message.value.trim() === text) message.value = '';
         status.textContent = result.reply;
@@ -364,7 +364,7 @@ composer.addEventListener('submit', async event => {
   controls();
   try {
     const result = await call('send', text);
-    status.textContent = result.handled === 'dance' ? result.reply : '';
+    status.textContent = result.handled ? result.reply : '';
   } catch (error) {
     if (!message.value) message.value = text;
     status.textContent = errorText(error);

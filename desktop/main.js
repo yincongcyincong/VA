@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { danceActions } from './actions.js';
 import { actionSupported, compilePerformance, describePerformance, performanceDefaults } from './performance-config.js';
 import { danceIntent } from './dance-intent.js';
+import { characterPerformancePrompt, chatPerformancePrompt, replyPerformance, requestedPerformance, requestsSelfie } from './character-performance.js';
 import { ControlError, startControl } from '../lib/control.js';
 import { defaultScale, isScale, minScale, maxScale,
   readCharacter, readConfig, readSettings, settingsWriter } from './config.js';
@@ -20,10 +21,9 @@ import { importReference, sampleLimit, systemSpeech } from './speech.js';
 import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
 import { configureDoubao, createDoubaoConversation, doubaoConfig, doubaoSnapshot } from './doubao.js';
 import { callDoubaoClient, createDoubaoClient } from './doubao-client.js';
-import { doubaoDanceContext } from './doubao-context.js';
 import { createDoubaoCaptions } from './doubao-captions.js';
 import { bindModel, modelFormats, modelMime, modelResource } from './model-files.js';
-import { createModelLibrary, modelPage, modelSources } from './model-library.js';
+import { createModelLibrary, localAhaName, modelPage, modelSources } from './model-library.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mac = process.platform === 'darwin';
@@ -88,6 +88,7 @@ let doubaoClient;
 let doubaoCaptions;
 let doubaoStartRevision = 0;
 let captionStartRevision = 0;
+let captionAutoActions = false;
 let getAgentConfig;
 let editAgentConfig;
 let currentMode = 'local';
@@ -95,7 +96,10 @@ let externalHistory = [];
 const channelSpeech = [];
 const inputDances = [];
 let voiceDanceTimer;
+let actionVoiceJob;
 let lastInputDanceAt = 0;
+let lastInputPerformanceAt = 0;
+let lastVoicePerformance;
 let senses;
 let screenWatch = false;
 let screenInterval = defaultScreenInterval;
@@ -184,9 +188,10 @@ async function asset(request) {
 
 async function getVoiceConfig() {
   const stored = await readConfig(voicePath, defaultVoice, 'VOICE_CONFIG', 'voice.json');
-  const { provider, volc, reference, gptSoVits } = stored ?? {};
+  const { provider, actionSound, volc, reference, gptSoVits } = stored ?? {};
   return {
     provider: provider === 'volc' ? 'volc' : 'system',
+    actionSound: actionSound === true,
     volc: { ...volcDefaults, ...volc },
     reference: reference ?? {
       referenceAudio: gptSoVits?.referenceAudio ?? '',
@@ -196,9 +201,10 @@ async function getVoiceConfig() {
 }
 
 function voiceSnapshot(config) {
-  const { provider, volc, reference } = config;
+  const { provider, actionSound, volc, reference } = config;
   return {
     provider,
+    actionSound,
     referenceName: reference.referenceName || (reference.referenceAudio ? basename(reference.referenceAudio) : ''),
     volc: { speaker: volc.speaker, resourceId: volc.resourceId, hasKey: Boolean(volcKey(volc)) },
   };
@@ -287,7 +293,7 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
   switch (operation) {
     case 'status': return chatStatus();
     case 'send': return sendChat(value);
-    case 'dance-input': return queueInputDance(value) ?? { handled: false };
+    case 'action-input': return queueInputPerformance(value) ?? { handled: false };
     case 'bind': return bindChat(value);
     case 'configure': return localConfig(value);
     case 'integration': return changeIntegration(value);
@@ -318,8 +324,8 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
       return chatStatus();
     case 'doubao-caption-start': {
       requireMode('doubao-client');
-      const { dance, listen } = value ?? {};
-      if (typeof dance !== 'boolean' || typeof listen !== 'boolean') {
+      const { autoActions, listen } = value ?? {};
+      if (typeof autoActions !== 'boolean' || typeof listen !== 'boolean') {
         throw new ControlError('INVALID_REQUEST', '请选择通话字幕选项。');
       }
       const revision = ++captionStartRevision;
@@ -327,15 +333,17 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
       if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
       requireMode('doubao-client');
       await editAgentConfig(config => ({ ...config, doubaoClient: {
-        ...config.doubaoClient, autoDance: dance, listenForDance: listen && microphoneAllowed,
+        ...config.doubaoClient, autoActions, listenForActions: listen && microphoneAllowed,
       } }));
       if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
       requireMode('doubao-client');
-      return doubaoCaptions.start({ dance, listen: listen && microphoneAllowed,
+      captionAutoActions = autoActions;
+      return doubaoCaptions.start({ autoActions, listen: listen && microphoneAllowed,
         micStatus: microphoneAllowed ? '' : '请在 macOS 系统设置允许 VA 使用麦克风。' });
     }
     case 'doubao-caption-stop':
       captionStartRevision++;
+      cancelActionVoice();
       doubaoCaptions.stop();
       return doubaoCaptions.state();
     case 'doubao-config':
@@ -357,7 +365,8 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
       if (changingModel || active || petting) {
         throw new ControlError('BUSY', '角色还在忙，请稍后再试。');
       }
-      return await doubao.start(doubaoConfig(config), character);
+      const voice = doubaoConfig(config);
+      return await doubao.start(voice, characterPerformancePrompt(character, performanceSnapshot(), { style: 'voice', dance: voice.allowDance }), character.name);
     }
     case 'doubao-stop':
       doubaoStartRevision++;
@@ -487,7 +496,7 @@ ipcMain.handle('va:performance', async (event, operation, value) => {
       await reloadPerformance();
       return settingsSnapshot();
     case 'preview':
-      return perform({ action: value?.action, expression: value?.expression, wait: false }, { readAloud: false });
+      return perform({ action: value?.action, expression: value?.expression, wait: false });
     default: throw new Error('无效的动作配置操作。');
   }
 });
@@ -519,6 +528,11 @@ ipcMain.handle('va:voice-config', async (event, change) => {
   if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
   if (!change) return voiceSnapshot(await getVoiceConfig());
   return editVoice(config => {
+    if (Object.hasOwn(change, 'actionSound')) {
+      if (typeof change.actionSound !== 'boolean') throw new ControlError('VOICE_CONFIG', '无效的动作发声设置。');
+      config.actionSound = change.actionSound;
+      if (!config.actionSound) cancelActionVoice();
+    }
     if (change.volc) {
       const { speaker, resourceId, apiKey, clearKey } = change.volc;
       if (typeof speaker !== 'string' || !/^[-_a-z0-9.]{1,160}$/i.test(speaker) ||
@@ -721,7 +735,7 @@ function performancePlan(action, selectedExpression) {
     face: performanceCatalog.faces[expression] };
 }
 
-async function perform(command, { selfie = false, source = 'manual', readAloud = true } = {}) {
+async function perform(command, { selfie = false, source = 'manual', readAloud = true, defaultDialogue = true } = {}) {
   if (doubao?.running()) throw new ControlError('BUSY', '角色正在进行豆包语音对话。');
   const { action = 'idle', expression, speech = '', wait = true } = command;
   if (typeof action !== 'string' || (expression !== undefined && typeof expression !== 'string') ||
@@ -731,16 +745,22 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
   if (changingModel) throw new ControlError('BUSY', '正在切换模型，请稍后再试。');
   if (active) throw new ControlError('BUSY', '角色正在表演。等表演结束，或使用 va stop。');
   const plan = performancePlan(action, expression);
+  cancelActionVoice();
   const job = { id: ++nextId, action, speech: speech.trim(), source };
   active = job;
   updateTray();
-  const selected = chooseLine(action, speech, performanceCatalog.actions[action].dialogue);
+  const selected = defaultDialogue
+    ? chooseLine(action, speech, performanceCatalog.actions[action].dialogue)
+      .then(line => line || (source === 'input-action' ? '好呀，看这边。' : ''))
+    : Promise.resolve(speech.trim());
   const result = selected.then(async line => {
     job.speech = line;
+    const actionDialogue = !speech.trim() || source === 'input-action';
+    const speak = readAloud && Boolean(line) && (!actionDialogue || await actionSoundEnabled());
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     job.started = true;
     const automatedReply = ['local-agent', 'api-chat', 'bot-chat'].includes(source);
-    const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud, speakingStyle,
+    const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud: speak, speakingStyle,
       showWhilePreparing: automatedReply }, automatedReply ? 120_000 : 80_000);
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     return {
@@ -775,9 +795,9 @@ async function stopPerformance() {
 
 let musicPaused = false;
 
-function queueSpeech(speech, source, readAloud = true) {
+function queueSpeech(speech, source, readAloud = true, effect = {}) {
   if (channelSpeech.length >= 5) return false;
-  channelSpeech.push({ speech, source, readAloud });
+  channelSpeech.push({ speech, source, readAloud, effect });
   drainAutomatic();
   return true;
 }
@@ -789,11 +809,6 @@ function supportedDances() {
 function nextDance() {
   const choices = supportedDances();
   return choices.length ? choices[danceIndex++ % choices.length] : undefined;
-}
-
-async function danceAlongsideSpeech(action = nextDance(), replaceDance = false) {
-  if (!action || !actionSupported(performanceCatalog.actions[action], state.media)) return false;
-  return renderer({ type: 'doubao-dance', plan: performancePlan(action), replaceDance });
 }
 
 function queueInputDance(text) {
@@ -819,10 +834,81 @@ function clearInputDances() {
   inputDances.length = 0;
   clearTimeout(voiceDanceTimer);
   voiceDanceTimer = undefined;
+  cancelActionVoice();
+  lastVoicePerformance = undefined;
+}
+
+async function actionSoundEnabled() {
+  return (await getVoiceConfig().catch(error => { reportAutomaticError(error); return {}; })).actionSound === true;
+}
+
+function cancelActionVoice() {
+  if (!actionVoiceJob) return;
+  actionVoiceJob.synthesis?.abort();
+  actionVoiceJob = undefined;
+  if (window && !window.isDestroyed()) void renderer({ type: 'action-voice-stop' }).catch(reportAutomaticError);
+}
+
+async function speakVoiceAction(action, job) {
+  try {
+    if (!await actionSoundEnabled() || actionVoiceJob !== job) return;
+    const line = await chooseLine(action, '', performanceCatalog.actions[action]?.dialogue);
+    if (!line || actionVoiceJob !== job) return;
+    const { audio } = await synthesize(line, job);
+    if (actionVoiceJob === job && !changingModel) await renderer({ type: 'action-voice', audio }, 80_000);
+  } catch (error) {
+    if (actionVoiceJob === job) reportAutomaticError(error);
+  } finally {
+    if (actionVoiceJob === job) actionVoiceJob = undefined;
+  }
+}
+
+function queueVoicePerformance({ action, expression }, repeat = false) {
+  if ((!action && !expression) || active || petting || changingModel || voiceDanceTimer || state.state !== 'ready') return false;
+  const key = `${action ?? ''}:${expression ?? ''}`;
+  if (!repeat && lastVoicePerformance?.key === key && Date.now() - lastVoicePerformance.at < 6000) return false;
+  const plan = performancePlan(action ?? 'idle', expression);
+  lastVoicePerformance = { key, at: Date.now() };
+  voiceDanceTimer = setTimeout(() => {
+    voiceDanceTimer = undefined;
+    drainAutomatic();
+  }, plan.seconds * 1000 + 100);
+  cancelActionVoice();
+  const playing = renderer({ type: 'doubao-dance', plan, replaceDance: true });
+  if (action && action !== 'idle') {
+    const job = { source: 'voice-action' };
+    actionVoiceJob = job;
+    void playing.then(started => {
+      if (actionVoiceJob !== job) return;
+      if (started) return speakVoiceAction(action, job);
+      actionVoiceJob = undefined;
+    }).catch(error => {
+      if (actionVoiceJob === job) actionVoiceJob = undefined;
+      reportAutomaticError(error);
+    });
+  } else void playing.catch(reportAutomaticError);
+  return true;
+}
+
+function queueInputPerformance(text) {
+  const effect = requestedPerformance(text, characterName, performanceSnapshot());
+  if (!effect) return;
+  if (effect.dance) {
+    const result = queueInputDance(text);
+    lastInputPerformanceAt = Date.now();
+    return result;
+  }
+  const liveVoice = doubao.running() || doubaoCaptions.running();
+  const reply = '好呀，看这边。';
+  const queued = liveVoice ? queueVoicePerformance(effect)
+    : queueSpeech(effect.action && effect.action !== 'idle' ? '' : reply, 'input-action', true, effect);
+  if (!queued) throw new ControlError('BUSY', '角色正在表演，请稍后再试。');
+  lastInputPerformanceAt = Date.now();
+  return { reply, handled: 'action' };
 }
 
 function onVoiceOrClientInput(text) {
-  try { return Boolean(queueInputDance(text)); }
+  try { return Boolean(queueInputPerformance(text)); }
   catch (error) { reportAutomaticError(error); return false; }
 }
 
@@ -835,21 +921,20 @@ function drainAutomatic() {
       return;
     }
     if (doubao.running() || doubaoCaptions.running()) {
-      // Keep the live voice and lip sync active while the avatar dances.
-      voiceDanceTimer = setTimeout(() => {
-        voiceDanceTimer = undefined;
-        drainAutomatic();
-      }, performanceCatalog.actions[action].seconds * 1000 + 100);
-      void danceAlongsideSpeech(action, true).catch(reportAutomaticError);
+      queueVoicePerformance({ action }, true);
     } else {
-      void perform({ action }, { source: 'input-dance', readAloud: false }).catch(reportAutomaticError);
+      void perform({ action }, { source: 'input-dance' }).catch(reportAutomaticError);
     }
     return;
   }
   if (doubao.running()) return;
   if (channelSpeech.length) {
-    const { speech, source, readAloud } = channelSpeech.shift();
-    perform({ speech, expression: 'smile' }, { source, readAloud })
+    const { speech, source, readAloud, effect } = channelSpeech.shift();
+    const catalog = performanceSnapshot();
+    const action = catalog.actions[effect.action]?.supported ? effect.action : undefined;
+    const expression = catalog.supportedExpressions.includes(effect.expression) ? effect.expression : undefined;
+    if (!speech && !action && !expression) { drainAutomatic(); return; }
+    perform({ speech, action, expression: expression ?? (action ? undefined : 'smile') }, { source, readAloud })
       .catch(reportAutomaticError);
     return;
   }
@@ -884,8 +969,8 @@ async function chatStatus() {
   const integration = { ...integrationSnapshot(config), nativeDoubao: mac };
   if (integration.mode === 'local') return { integration, ...await localAgent.status() };
   if (integration.mode === 'doubao-client') return { integration, ...doubaoClient.state(),
-    captions: doubaoCaptions.state(), autoDance: config.doubaoClient?.autoDance !== false,
-    listenForDance: config.doubaoClient?.listenForDance === true };
+    captions: doubaoCaptions.state(), autoActions: (config.doubaoClient?.autoActions ?? config.doubaoClient?.autoDance) !== false,
+    listenForActions: (config.doubaoClient?.listenForActions ?? config.doubaoClient?.listenForDance) === true };
   if (integration.mode === 'api') return { integration: { ...integration, ...await apiProfileSnapshot(config) }, ...apiChat.state() };
   if (integration.mode === 'doubao') return { integration: { ...integration, doubao: doubaoSnapshot(config) },
     doubao: doubao.state(), history: [], busy: false };
@@ -910,8 +995,9 @@ async function changeIntegration(value) {
     channelSpeech.length = 0;
     clearInputDances();
     lastInputDanceAt = 0;
+    lastInputPerformanceAt = 0;
     queuedSpeech = undefined;
-    if (['screen', 'music', 'local-agent', 'api-chat', 'bot-chat', 'doubao-client', 'input-dance'].includes(active?.source)) {
+    if (['screen', 'music', 'local-agent', 'api-chat', 'bot-chat', 'doubao-client', 'input-dance', 'input-action'].includes(active?.source)) {
       await stopPerformance().catch(reportAutomaticError);
     }
     syncSenses();
@@ -958,27 +1044,53 @@ async function bindChat(id) {
 }
 
 async function sendChat(message, speak) {
-  const dance = queueInputDance(message);
-  if (dance) return dance;
+  const performance = queueInputPerformance(message);
+  if (performance) return performance;
   if (currentMode === 'local') return localAgent.send(message, { speak });
-  if (currentMode === 'doubao-client') return doubaoClient.send(message, { context: doubaoDanceContext(characterName) });
+  if (currentMode === 'doubao-client') return doubaoClient.send(message, { context: await conversationPrompt('voice') });
   if (currentMode === 'doubao') throw new ControlError('INTEGRATION_MODE', '请在 VA 的豆包语音页面点击「开始语音对话」。');
   requireMode('api');
   try {
     const result = await apiChat.send(message);
-    return { reply: result.reply, bubbleQueued: showReply(result.reply, 'api-chat', speak ?? result.readAloud) };
+    return { reply: result.reply, bubbleQueued: showReply(result.reply, 'api-chat', speak ?? result.readAloud, result.effect) };
   } finally {
     settingsWindow?.webContents.send('va:chat-refresh');
   }
 }
 
-function syncDoubaoContext() {
+async function syncDoubaoContext() {
   requireMode('doubao-client');
-  return doubaoClient.send(undefined, { context: doubaoDanceContext(characterName), sync: true });
+  return doubaoClient.send(undefined, { context: await conversationPrompt('voice'), sync: true });
 }
 
-function showReply(text, source, readAloud) {
-  return queueSpeech(text.length > 300 ? text.slice(0, 299) + '…' : text, source, readAloud);
+async function conversationPrompt(style) {
+  return characterPerformancePrompt(await getCharacter(), performanceSnapshot(), { style });
+}
+
+function showReply(text, source, readAloud, effect) {
+  const selection = effect ?? replyPerformance(text, performanceSnapshot());
+  const speech = selection.speech ?? text;
+  return queueSpeech(speech.length > 300 ? speech.slice(0, 299) + '…' : speech, source, readAloud, selection);
+}
+
+function performVoiceReply(text, allowDance) {
+  const effect = replyPerformance(text, performanceSnapshot());
+  const dancing = danceActions.includes(effect.action);
+  if (dancing && (!allowDance || Date.now() - lastInputDanceAt < 10_000)) return false;
+  return queueVoicePerformance(effect);
+}
+
+function canAnimateFromCaption() {
+  return captionAutoActions && !active && !petting && !changingModel && !voiceDanceTimer && state.state === 'ready'
+    && window && !window.isDestroyed() && window.isVisible() && Date.now() - lastInputPerformanceAt > 8000;
+}
+
+function animateFromCaption(text) {
+  if (!canAnimateFromCaption()) return true;
+  const { action, expression } = replyPerformance(text, performanceSnapshot());
+  if (!action && !expression) return false;
+  queueVoicePerformance({ action, expression });
+  return true;
 }
 
 async function presentBot(command) {
@@ -986,19 +1098,23 @@ async function presentBot(command) {
     throw new ControlError('INVALID_REQUEST', '机器人需要提供 1–2000 字的回复。');
   }
   const route = checkBotRoute(await getAgentConfig(), command.platform, command.origin);
-  if (!route || currentMode !== command.platform) return { accepted: false };
-  const reply = command.text.trim();
+  if (!route || currentMode !== command.platform || route.target !== command.origin.target) return { accepted: false };
+  const effect = replyPerformance(command.text, performanceSnapshot());
+  const reply = effect.speech;
   externalHistory = [...externalHistory, { reply }].slice(-20);
-  const queued = showReply(reply, 'bot-chat', route.speakReplies);
+  const queued = showReply(reply, 'bot-chat', route.speakReplies, effect);
   settingsWindow?.webContents.send('va:chat-refresh');
   return { accepted: true, queued };
 }
 
 async function receiveBotInput(command) {
-  if (!danceIntent(command.text, characterName)) return { accepted: false };
+  const selfie = (command.platform === 'astrbot' || command.origin?.channel === 'telegram')
+    && requestsSelfie(command.text, characterName);
+  if (!selfie && !requestedPerformance(command.text, characterName, performanceSnapshot())) return { accepted: false };
   const route = checkBotRoute(await getAgentConfig(), command.platform, command.origin);
   if (!route || currentMode !== command.platform || route.target !== command.origin.target) return { accepted: false };
-  const result = queueInputDance(command.text);
+  if (selfie) return { accepted: true, handled: 'selfie' };
+  const result = queueInputPerformance(command.text);
   return result ? { accepted: true, ...result } : { accepted: false };
 }
 
@@ -1020,11 +1136,18 @@ async function handle(command) {
       return { model: modelSnapshot() };
     case 'bot-events': return { route: null, events: [] };
     case 'bot-chat': throw new ControlError('INTEGRATION_MODE', '请在机器人频道直接对话。VA 负责显示机器人回复。');
-    case 'bot-route':
-      return { route: externalModes.includes(command.platform) && command.platform === currentMode
-        ? botRoute(await getAgentConfig()) : null };
+    case 'bot-route': {
+      const route = externalModes.includes(command.platform) && command.platform === currentMode
+        ? botRoute(await getAgentConfig()) : null;
+      return { route, ...(route && { character: (await getCharacter()).name }) };
+    }
     case 'bot-present': return presentBot(command);
     case 'bot-input': return receiveBotInput(command);
+    case 'bot-prompt': {
+      const route = checkBotRoute(await getAgentConfig(), command.platform, command.origin);
+      if (!route || currentMode !== command.platform || route.target !== command.origin.target) return { accepted: false };
+      return { accepted: true, prompt: await conversationPrompt('voice') };
+    }
     case 'chat':
       if (command.message === undefined) {
         openChat();
@@ -1052,6 +1175,7 @@ async function handle(command) {
       return await applySettings({ [command.channel === 'screen' ? 'screenWatch' : 'musicDance']: command.enabled });
     case 'observe': return await senses.observe();
     case 'character': return { path: characterPath, ...await getCharacter() };
+    case 'prompt': return { prompt: await conversationPrompt(command.style) };
     case 'settings':
       openSettings();
       return { opened: true };
@@ -1083,7 +1207,8 @@ async function handle(command) {
         requireMode(command.platform);
       }
       return await perform({ ...command, action: 'pose', expression: command.expression ?? 'smile', wait: true },
-        { selfie: true, source: command.bot === true ? 'bot-action' : 'manual' });
+        { selfie: true, source: command.bot === true ? 'bot-action' : 'manual',
+          defaultDialogue: command.bot !== true && command.quiet !== true });
     case 'stop':
       clearInputDances();
       if (doubao.running()) {
@@ -1161,6 +1286,7 @@ async function changeModel(path, checkOnly = false) {
     if (checkOnly) return modelSnapshot(next, info);
     staged = true;
     if (active) await stopPerformance();
+    cancelActionVoice();
     await renderer({ type: 'model-activate', key: next.url, portrait: view === 'portrait' });
     staged = false;
     assets.delete(selectedModel.id);
@@ -1503,8 +1629,9 @@ if (!app.requestSingleInstanceLock()) {
       onOutput: value => {
         if (state.state === 'ready' && !window?.isDestroyed()) window?.webContents.send('va:doubao-output', { ...value, speakingStyle });
       },
-      onDance: danceAlongsideSpeech,
+      onDance: () => queueVoicePerformance({ action: nextDance() }),
       onInput: onVoiceOrClientInput,
+      onReply: performVoiceReply,
     });
     const doubaoHelper = join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-client');
     doubaoClient = createDoubaoClient({
@@ -1512,7 +1639,9 @@ if (!app.requestSingleInstanceLock()) {
       onChange: () => settingsWindow?.webContents.send('va:chat-refresh'),
       onInput: onVoiceOrClientInput,
       onReply: reply => {
-        if (!doubaoCaptions.running() || Date.now() - lastCaptionAt > 5000) showReply(reply, 'doubao-client', false);
+        if (doubaoCaptions.running()) {
+          if (Date.now() - lastCaptionAt > 5000) animateFromCaption(reply);
+        } else showReply(reply, 'doubao-client', false);
       },
     });
     doubaoCaptions = createDoubaoCaptions({
@@ -1524,6 +1653,7 @@ if (!app.requestSingleInstanceLock()) {
         lastCaptionAt = text ? Date.now() : 0;
         syncBubble();
         if (text) captionTimer = setTimeout(() => { captionText = ''; syncBubble(); }, final ? 4000 : 6000);
+        return final && text ? animateFromCaption(text) : true;
       },
       onLevel: level => {
         if (state.state !== 'ready' || !window || window.isDestroyed()) return;
@@ -1531,11 +1661,21 @@ if (!app.requestSingleInstanceLock()) {
         window.webContents.send('va:doubao-output', event);
       },
       onInput: onVoiceOrClientInput,
-      onDance: () => {
-        if (!active && !changingModel && state.state === 'ready' && window.isVisible() &&
-            Date.now() - lastInputDanceAt > 10_000) {
-          void danceAlongsideSpeech().catch(reportAutomaticError);
-        }
+      getCandidates: () => {
+        const catalog = performanceSnapshot();
+        return {
+          actions: Object.entries(catalog.actions).filter(([id, action]) => id !== 'idle' && action.supported)
+            .map(([id, action]) => ({ id, label: action.label })),
+          expressions: catalog.supportedExpressions.filter(id => id !== 'neutral')
+            .map(id => ({ id, label: catalog.expressions[id] })),
+        };
+      },
+      onAction: result => {
+        if (!canAnimateFromCaption()) return;
+        const catalog = performanceSnapshot();
+        const action = catalog.actions[result.action]?.supported ? result.action : undefined;
+        const expression = catalog.supportedExpressions.includes(result.expression) ? result.expression : undefined;
+        queueVoicePerformance({ action, expression });
       },
     });
     await mkdir(app.getPath('userData'), { recursive: true });
@@ -1558,7 +1698,7 @@ if (!app.requestSingleInstanceLock()) {
     if (!mac) musicDance = false;
     const localAha = await findLocalAha();
     defaultModelPath = localAha?.path ?? bundledModelPath;
-    if (localAha) defaultCharacter.name = '阿呆';
+    if (localAha) defaultCharacter.name = localAhaName;
     modelLibrary = createModelLibrary(join(app.getPath('userData'), 'ai-girls.json'), { bundledModel: bundledModelPath, localAha });
     if (modelPath) {
       selectedModel = await bindModel(modelPath, modelPath === bundledModelPath || modelPath === defaultModelPath)
@@ -1577,17 +1717,19 @@ if (!app.requestSingleInstanceLock()) {
     }
     await getVoiceConfig().catch(error => console.error(error.message));
     const getApiConfig = async () => resolveApiConfig(await getAgentConfig());
+    const getPrompt = async extra => chatPerformancePrompt(await getCharacter(), performanceSnapshot(), extra);
+    const parseReply = reply => replyPerformance(reply, performanceSnapshot());
     apiChat = createApiChat({
       getConfig: getApiConfig,
-      getCharacter,
+      getPrompt, parseReply,
     });
     localAgent = createLocalAgent({
       getConfig: async () => (await getAgentConfig())?.localAgent,
       updateConfig: edit => editAgentConfig(async config => ({ ...config, localAgent: await edit(config?.localAgent) })),
-      getCharacter,
+      getPrompt, parseReply,
       sessionPath: join(app.getPath('userData'), 'local-agent-sessions.json'),
       launchDirectory,
-      presentReply: (reply, readAloud) => showReply(reply, 'local-agent', readAloud),
+      presentReply: (reply, readAloud, effect) => showReply(reply, 'local-agent', readAloud, effect),
       onChange: () => settingsWindow?.webContents.send('va:chat-refresh'),
     });
     senses = createSenses({

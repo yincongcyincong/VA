@@ -17,16 +17,21 @@ export function createVoice() {
     } finally {
       signal.removeEventListener('abort', cancel);
     }
+    return { audio: await decode(response.audio, signal), warning: response.warning };
+  }
+
+  async function decode(audio, signal) {
+    signal.throwIfAborted();
     if (!context) {
       context = new AudioContext();
       analyser = context.createAnalyser();
       analyser.fftSize = samples.length;
       analyser.connect(context.destination);
     }
-    const buffer = await context.decodeAudioData(response.audio);
+    const buffer = await context.decodeAudioData(audio);
     await context.resume();
     signal.throwIfAborted();
-    return { audio: buffer, warning: response.warning };
+    return buffer;
   }
 
   function play(buffer, signal) {
@@ -59,5 +64,5 @@ export function createVoice() {
     return Math.min(0.95, Math.sqrt(energy / samples.length) * 4.4);
   }
 
-  return { prepare, play, level };
+  return { prepare, decode, play, level };
 }

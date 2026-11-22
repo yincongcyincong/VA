@@ -66,8 +66,10 @@ export async function readCharacter(path, defaults) {
     throw new ControlError('CHARACTER_CONFIG', '角色配置需要填写 name 和 prompt。');
   }
   const displayName = name.trim();
+  const previousNames = [defaults.name, '阿哈', '星神', 'Gemini 娘'];
   const expand = (line, templates) => {
-    const legacy = templates.find(template => template.replaceAll('{{name}}', () => defaults.name) === line);
+    const legacy = templates.find(template => previousNames.some(oldName =>
+      template.replaceAll('{{name}}', () => oldName) === line));
     return (legacy ?? line).replaceAll('{{name}}', () => displayName);
   };
   const lines = {};

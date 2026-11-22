@@ -1,10 +1,19 @@
-# VA · 桌面 3D 角色
+<p align="center"><img src="assets/app-icon.png" width="96" alt="VA 软件图标"></p>
+<h1 align="center">VA · 桌面 3D 角色</h1>
 
 VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。可以拖动底部把手移动窗口，拖动角色旋转视角，用滚轮缩放。底部控制条提供缩放和设置。macOS 菜单栏和 Windows 系统托盘可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
 
-VA 优先使用本机的 **阿呆（星穹铁道·阿哈）**，并随源码提供 ApprenTice 制作的 **Gemini 娘**。喜欢这些角色，可以到模之屋查看原作者的作品。[阿哈 · 模之屋原帖](https://www.aplaybox.com/details/model/vODgdw8vDdb3) · [AI 娘全家桶 · 模之屋原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+VA 优先使用本机的 **星神（星穹铁道）**，并随源码提供 ApprenTice 制作的 **Gemini 娘**。喜欢这些角色，可以到模之屋查看原作者的作品。[阿哈 · 模之屋原帖](https://www.aplaybox.com/details/model/vODgdw8vDdb3) · [AI 娘全家桶 · 模之屋原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
-[启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体与模型](#智能体与模型) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型)
+[角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体与模型](#智能体与模型) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型)
+
+## 3D 角色展示
+
+| 星神 · PMX | DeepSeek 娘 · VRM | Claude 娘 · VRM | GPT 娘 · VRM |
+| :---: | :---: | :---: | :---: |
+| <img src="docs/gallery/star-god.png" width="176" alt="VA 中的星神 3D 模型"> | <img src="docs/gallery/deepseek.png" width="176" alt="VA 中的 DeepSeek 娘 3D 模型"> | <img src="docs/gallery/claude.png" width="176" alt="VA 中的 Claude 娘 3D 模型"> | <img src="docs/gallery/gpt.png" width="176" alt="VA 中的 GPT 娘 3D 模型"> |
+
+图片均由 VA 渲染。星神模型版权归 miHoYo，模型编辑为流云景。AI 娘模型由 ApprenTice 制作，角色设计基于 ZipZipPipe 的《大 AI 与小 AI 们》。AI 娘展示图沿用 CC BY-NC-SA 4.0。 [星神模型原帖](https://www.aplaybox.com/details/model/vODgdw8vDdb3) · [AI 娘全家桶](https://www.aplaybox.com/details/model/3uR3BbUTlkUW) · [AI 娘原包署名及许可](assets/models/ATTRIBUTION.md)
 
 ## 启动
 
@@ -41,17 +50,22 @@ ln -s "$PWD/bin/va.js" ~/.local/bin/va
 ## 命令行
 
 ```bash
-va actions --json
-va act dance
-va say '嗨，我是阿哈。'
-va perform --action wave --expression smile --say '欢迎来到这里！'
+va actions --supported --json
+va wave
+va act '侧步摇摆'
+va express '微笑'
+va perform --action '挥手' --expression '微笑' --say '欢迎来到这里！'
 va view portrait
 va act pose --expression smile --no-wait
-va photo --out /tmp/aha.png --clipboard --json
+va photo --out /tmp/va-photo.png --clipboard --json
 va stop
 ```
 
-默认动作包括挥手、点头、鞠躬、喜悦、生气、难过、大笑、飞吻、摸摸、摆拍和下列舞步。菜单栏「VA → 跳舞」可以直接选舞步。台词使用设置中选定的 [朗读音色](#语音和口型)。
+`va act` 接受动作编号或配置里的显示名称，`va express` 单独播放表情。当前模型支持的动作都可以直接用 `va <动作编号>` 播放。编号与内置命令同名或多个条目使用同一显示名称时，可用 `va act <编号>` 精确选择动作。
+
+`va actions --supported` 列出当前模型能播放的动作和表情。改好 `performance.json` 后可用 `va actions --reload --supported` 重新读取，新增的编号和显示名称随后即可调用。
+
+默认动作包括挥手、点头、鞠躬、喜悦、生气、难过、大笑、飞吻、摸摸、摆拍和下列舞步。菜单栏「VA → 跳舞」可以直接选舞步。[朗读音色](#语音和口型)
 
 | 命令 | 舞步 |
 | --- | --- |
@@ -86,12 +100,19 @@ macOS 可以用 `make run` 启动已有的打包版本、`make build` 生成本�
 
 导入前会检查文件、可见网格和实际渲染结果，检测通过后才替换当前角色。可先点「检测模型…」或执行 `va model-check "/path/to/character.glb" --json`，预查骨骼、表情目标和动画片段。检测失败会保留当前角色。模型能渲染时，缺少部分贴图会显示提醒。
 
-在「设置 → 模型库 → 默认3D模型」可以预览本机的阿呆和内置的 Gemini 娘。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+在「设置 → 模型库 → 默认3D模型」可以预览本机的星神和内置的 Gemini 娘。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 VRM 或 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
 安装 Blender 5.2 或更新版本后，也可以用命令导出这三个角色。脚本保留已有的 GLB，导出后在模型库重新导入解压目录。
 
 ```bash
 blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls.py -- "解压后的 AI 娘全家桶目录"
+```
+
+十款 AI 娘都可以生成带动作和表情的 VRM。启用 Blender 的 VRM 插件后，用下面的命令把动作版写入单独的目录，再从「默认3D模型 → 导入解压目录…」选中该目录。DeepSeek 复用原有骨骼，其余角色按各自的体型绑定。动作版支持内置身体动作、基础表情和五种口型。批量生成的面部变形可在 Blender 中继续细调。[Blender VRM 插件](https://vrm-addon-for-blender.info/en-us/installation/)
+
+```bash
+blender --background --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls-vrm.py -- \
+  "解压后的 AI 娘全家桶目录" "AI 娘动作版目录"
 ```
 
 也可以在系统浏览器打开模之屋或 VRoid Hub，或粘贴两站的模型详情链接。下载其他模型后请保留贴图，用「预览本机文件…」加载。预览通过后可以点「设为桌面角色」。
@@ -139,7 +160,7 @@ PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FB
 
 在「设置 → 桌面角色」修改「角色名称」。保存后，桌面控制条、菜单、默认台词和默认人设都会使用新名称。人物配置位于 `~/Library/Application Support/VA Desktop/character.json`，初次启动从 [默认人设](config/character.json) 创建。也可通过 `VA_CHARACTER_CONFIG` 指定文件。自定义 `prompt` 或 `dialogue` 时，用 `{{name}}` 引用当前名称。MCP 用 `va_character` 读取人设，命令行可用 `va character --json`。
 
-MCP 的 `va_say` 和 `va_perform` 会在角色旁显示对白气泡。执行动作时可自带台词，也可让角色从配置中挑选。自拍用 `va selfie --out /tmp/aha.png --json` 或 MCP 的 `va_selfie`，会等待摆好姿势并返回 780 × 1040 的透明 PNG。角色隐藏时可以自拍，VA 退出后也可以后台启动自拍。当前聊天可直接展示图片，外部机器人可以用自己的附件发送能力。
+MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角色名。改完动作配置后用 `va_reload_actions`，再从 `supported: true` 和 `supportedExpressions` 选择编号。`va_say` 和 `va_perform` 会在角色旁显示对白气泡，表演可以自带台词或使用默认对白。`va_selfie` 成功时只返回 780 × 1040 的透明 PNG，CLI 用 `va selfie --out /tmp/va-selfie.png --json` 获取文件。角色隐藏或 VA 退出时也可以自拍。
 
 ## 智能体与模型
 
@@ -153,7 +174,7 @@ MCP 的 `va_say` 和 `va_perform` 会在角色旁显示对白气泡。执行动�
 
 配置保存在 `~/Library/Application Support/VA Desktop/agent.json`。CLI 可用 `va integration [off|local|doubao-client|doubao|api|astrbot|openclaw]` 查询或切换接入方式。手动编辑 JSON 的 `mode` 后重启 VA。
 
-角色人设提供统一语气和动作的默认台词。本地 Agent 与模型 API 的附加 Prompt 会接在通用人设后面，供该连接的聊天使用。AstrBot 和 OpenClaw 由各自的 Agent 设定人设，VA 直接显示它们发出的文字。
+角色人设提供统一语气和动作的默认台词。人设和接入设置里的 `{{name}}` 会替换成当前显示名。运行 `va prompt` 可以查看当前模型的完整动作和表情 Prompt，复制给语音或外部机器人时可运行 `va prompt --voice`。动作请求可以直接触发，Agent 也能根据自己的回复主动安排表演。[Prompt 与动作配置](docs/agent-custom-actions.md#对话如何触发动作)
 
 在本地 Agent 模式，第一次发送会创建会话。VA 会记住每个 Agent 和工作目录的会话 ID，重启后继续使用。可在界面绑定已有的、当前空闲的会话 ID，或点「新会话」解除当前绑定。聊天窗口保留本次 VA 运行中最近 20 轮。回复也会在桌面角色旁显示气泡，最多 300 字。勾选「让角色朗读回复」可以同时听到语音。
 
@@ -231,12 +252,16 @@ OpenClaw 按频道的配对或访问策略授权，AstrBot 允许管理员或插
 
 | 发送 | 结果 |
 | --- | --- |
-| `/va selfie` | 阿哈摆拍，机器人把 780 × 1040 的透明 PNG 发回当前频道。桌面角色隐藏时也能拍。 |
+| `/va selfie` | VA 摆拍，机器人只发回一张 780 × 1040 的透明 PNG。桌面角色隐藏时也能拍。 |
 | `/va act dance` | 桌面角色跳经典律动并播放默认对白。动作名也可用 `dance-side`、`dance-spin` 或 `dance-bounce`。 |
 | `/va act wave` | 桌面上的阿哈挥手并播放默认对白。 |
 | `/va say 你好，我是阿哈` | 阿哈在桌面显示这句台词并朗读。 |
 
 在 VA 配置的 OpenClaw 或 AstrBot 频道里，授权用户发「让阿哈跳舞」即可让 VA 表演。插件在机器人调用模型前处理这条请求。AstrBot 注册了 `va_desktop_selfie`，Agent 调用后会把照片发到当前频道。也可以用表中的命令直接自拍或选舞步。
+
+绑定 Telegram 后，可以直接发「给我发张自拍」。AstrBot 和 OpenClaw 都会在调用模型前让 VA 拍照，把 PNG 作为唯一回复发回绑定的聊天。更新 Docker 中的机器人插件后，重启对应的容器让修改生效。
+
+给 VA 单独配置了 OpenClaw 工作区时，可开启 `plugins.entries.va-desktop.config.workspacePrompt`。VA 会在绑定对话进入模型前，把当前角色名和动作清单同步到 `agents.defaults.workspace` 下 `SOUL.md` 的 VA 区块。`SOUL.md` 会用于该工作区的会话。AstrBot 会在授权账号的绑定对话里自动追加同样的 Prompt。机器人发出的「我来挥手」等回复会在 VA 上触发对应动作。[OpenClaw 工作区](https://docs.openclaw.ai/concepts/agent-workspace)
 
 ## 视觉 Agent 与系统音乐
 

@@ -9,10 +9,12 @@ const voice = createVoice();
 let avatar;
 let portrait = false;
 let performance;
+let actionVoice;
 let staged;
 const doubao = createDoubaoPlayback({ getAvatar: () => avatar, bubble: window.va.bubble });
 window.va.onDoubaoOutput(event => {
   if (performance && event.type === 'client-speech') return;
+  if (event.type === 'clear') actionVoice?.abort();
   doubao.output(event);
 });
 
@@ -169,9 +171,27 @@ window.va.onCommand(async command => {
       if (performance) return false;
       if (command.replaceDance) doubao.stopDance();
       return doubao.dance(command.plan);
+    case 'action-voice': {
+      actionVoice?.abort();
+      const controller = new AbortController();
+      actionVoice = controller;
+      try {
+        const buffer = await voice.decode(command.audio, controller.signal);
+        await voice.play(buffer, controller.signal);
+      } catch (error) {
+        if (!controller.signal.aborted) throw error;
+      } finally {
+        if (actionVoice === controller) actionVoice = undefined;
+      }
+      return;
+    }
+    case 'action-voice-stop':
+      actionVoice?.abort();
+      return;
     case 'perform': return await perform(command);
     case 'stop':
       performance?.abort();
+      actionVoice?.abort();
       doubao.stopDance();
       doubao.stopClientSpeech();
       avatar?.play();
@@ -196,6 +216,7 @@ window.va.onCommand(async command => {
       clearTimeout(staged.timer);
       staged = undefined;
       portrait = command.portrait;
+      actionVoice?.abort();
       doubao.stopDance();
       doubao.stopClientSpeech();
       activateAvatar(next);

@@ -2,6 +2,28 @@
 
 用户描述的是想看到的动作。Agent 负责检查当前模型、编辑动作配置、重载和试演。仓库内可以用 `node bin/va.js` 代替下面的 `va`。
 
+## 对话如何触发动作
+
+```bash
+va prompt
+va prompt --voice
+```
+
+完整 Prompt 从当前角色名、人设、模型和动作配置生成。`va prompt` 给本地 Agent 和模型 API 使用。`va prompt --voice` 给豆包与机器人频道使用，也适合复制到外部机器人的角色设置。使用 `{{name}}` 编写人设，以便改名后跟随显示名。重载动作或切换模型后重新执行命令即可得到新的清单。
+
+用户可以直接说「挥挥手」「露出微笑」「跳一段侧步摇摆」，也可以直接说自定义动作的名字。Agent 可以根据对话决定是否表演。它应优先照顾明确请求，平常聊天时按需使用表情或保持待机。
+
+本地 Agent 和模型 API 可以在回复最后单独附一行动作标记。VA 会展示和朗读前面的台词，并根据标记播放动作。`action` 和 `expression` 都只填可用编号，其中一个可以省略。
+
+```text
+嘿，见到你真开心！
+[[va action=wave expression=smile]]
+```
+
+机器人频道和语音使用完整的第一人称短句，例如「太好了！我来侧步摇摆。」「我露出微笑。」VA 在收到回复或完整语音字幕后执行对应动作。豆包客户端可在已绑定对话里点「同步角色能力」。
+
+用户明确要求发自拍时走频道的附件能力。摆拍只播放桌面动作。理解结果时要区分已安排表演和已经拍照、送达。
+
 ## 先读取模型和配置
 
 ```bash
@@ -55,9 +77,10 @@ va actions --config-path --json
 ```bash
 va actions --reload --json
 va act hello-wink --json
+va act '歪头眨眼问好' --json
 ```
 
-1. 重载后确认返回的动作有 `supported: true`，并确认表情在 `supportedExpressions` 里。MCP 可以用 `va_reload_actions` 重载，再用 `va_perform` 传入 `{"action":"hello-wink"}`。
+1. 重载后确认返回的动作有 `supported: true`，并确认表情在 `supportedExpressions` 里。`va actions --supported` 可只看当前模型能播放的条目。MCP 可以用 `va_reload_actions` 重载，再用 `va_perform` 传入 `{"action":"hello-wink"}`。
 2. 用户要求播放或验收时试演。用 `--expression` 覆盖本次表情，或单独运行 `va perform --expression wink`。配置阶段保留原模型，预检通过且用户要求切换时再导入。
 3. 遇到 `PERFORMANCE_CONFIG` 时，根据错误修正 JSON 后重新加载。VA 会继续用上一份有效配置。遇到 `MODEL_ACTION` 时，重新核对当前模型的骨骼和片段。遇到 `BUSY` 时，等当前表演结束再试。
 

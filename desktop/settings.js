@@ -18,6 +18,7 @@ const musicState = document.getElementById('music-state');
 const status = document.getElementById('status');
 const voiceName = document.getElementById('voice-name');
 const voiceProvider = document.getElementById('voice-provider');
+const actionSound = document.getElementById('action-sound');
 const volcForm = document.getElementById('volc-form');
 const volcResource = document.getElementById('volc-resource');
 const voiceStatus = document.getElementById('voice-status');
@@ -232,6 +233,8 @@ for (const [id, open] of [
 }
 
 function renderVoice(config) {
+  actionSound.checked = config.actionSound;
+  actionSound.disabled = false;
   voiceName.textContent = config.referenceName || '未选择录音';
   markChoice(voiceProvider, config.provider);
   volcForm.hidden = config.provider !== 'volc';
@@ -250,6 +253,21 @@ async function updateVoice(change) {
     voiceStatus.textContent = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
   }
 }
+
+actionSound.addEventListener('change', async () => {
+  const enabled = actionSound.checked;
+  actionSound.disabled = true;
+  try {
+    const voice = await window.va.voiceConfig({ actionSound: enabled });
+    actionSound.checked = voice.actionSound;
+    voiceStatus.textContent = '';
+  } catch (error) {
+    actionSound.checked = !enabled;
+    voiceStatus.textContent = error.message;
+  } finally {
+    actionSound.disabled = false;
+  }
+});
 
 onChoice(voiceProvider, value => {
   if (value === 'system') void updateVoice({ provider: 'system' });

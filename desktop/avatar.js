@@ -92,12 +92,21 @@ export async function loadAvatar(stage, model) {
     renderer.forceContextLoss();
     throw error;
   }
-  const { object: mesh, textureWarning, clips, vrm, pmxMorphs } = asset;
+  const { object: mesh, textureWarning, clips, vrm, pmxMorphs, vrmExpressions } = asset;
   const origin = modelRoot.position.clone();
   const portraitModel = pmx || Boolean(vrm);
   const head = vrm?.humanoid?.getNormalizedBoneNode('head');
   const chest = vrm?.humanoid?.getNormalizedBoneNode('chest') ?? vrm?.humanoid?.getNormalizedBoneNode('spine');
   const expressionManager = vrm?.expressionManager;
+  const vrmMorphs = (expressionManager?.expressions ?? []).map(expression => expression.expressionName).filter(name => {
+    if (!vrmExpressions) return true;
+    const expression = vrmExpressions[name];
+    return expression?.morphTargetBinds?.length || expression?.materialColorBinds?.length ||
+      expression?.textureTransformBinds?.length;
+  });
+  const vrmMouthSync = vrmExpressions
+    ? ['aa', 'ih', 'ou', 'ee', 'oh'].some(name => vrmExpressions[name]?.morphTargetBinds?.length)
+    : vrmMorphs.includes('aa');
   const mixer = clips.length ? new THREE.AnimationMixer(mesh) : undefined;
   const defaultClip = clips.find(clip => /idle|stand|survey/i.test(clip.name)) ?? clips[0];
   let clipPlaying;
@@ -161,6 +170,7 @@ export async function loadAvatar(stage, model) {
   const rig = Object.fromEntries(Object.keys(pmxBones).map(key => [key, pmx
     ? mesh.skeleton?.getBoneByName(pmxBones[key])
     : vrm?.humanoid?.getNormalizedBoneNode(humanoid[key])]));
+  const proceduralIdle = Boolean(vrm && !defaultClip && rig.leftArm && rig.rightArm);
   const bones = new Map();
   const genericMorphs = new Map();
   mesh.traverse(node => {
@@ -237,7 +247,7 @@ export async function loadAvatar(stage, model) {
     if (plan.seconds && elapsed >= plan.seconds) play();
     const { motion: action, seconds: length, face = {}, clip, bones: offsets } = plan;
     const motionTime = length ? elapsed * actions[action].seconds / length : 0;
-    procedural = Boolean(vrm && action !== 'idle' && !clip);
+    procedural = Boolean(vrm && !clip && (action !== 'idle' || proceduralIdle));
     for (const [bone, rotation] of lastCustomPose) bone.rotation.copy(rotation);
     lastCustomPose.clear();
     mixer?.update(dt);
@@ -246,6 +256,7 @@ export async function loadAvatar(stage, model) {
     const gesture = action === 'idle' ? talking : neutralSpeech(0);
     const strength = length ? smooth(elapsed / Math.min(.38, length / 3)) *
       smooth((length - elapsed) / Math.min(.45, length / 3)) : 0;
+    const armRest = proceduralIdle ? (1 - strength) * .65 : 0;
     const breathing = reducedMotion ? 0 : Math.sin(now * 1.65) * 0.017;
     const wave = action === 'wave' ? strength : 0;
     const nod = action === 'nod' ? strength : 0;
@@ -276,14 +287,14 @@ export async function loadAvatar(stage, model) {
       breathing * 1.6 - sway * 0.16 + pose * 0.14,
       wave * 0.08 + sway * 0.12 + pose * 0.16 + pet * (0.21 + 0.05 * Math.sin(beat * 1.8)) + gesture.tilt + .16 * kiss);
     rotate('rightArm', -0.06 - wave * 0.22 + sway * 0.35 - 0.24 * pose - gesture.hand * .53,
-      -wave * 0.22 - .3 * kiss, 0.42 - wave * 0.69 - rightLift * 0.72 - sway * 0.51 - pose * 0.65 - gesture.hand * .57
+      -wave * 0.22 - .3 * kiss, 0.42 + armRest - wave * 0.69 - rightLift * 0.72 - sway * 0.51 - pose * 0.65 - gesture.hand * .57
         - .68 * happy + .22 * angry - .6 * kiss - .48 * throwKiss);
     rotate('rightElbow', 0.03, 0.08, -wave * 1.53 - rightLift * 0.72 - pose * 1.48 - gesture.hand * 1.22
       - 1.72 * kiss + 1.14 * throwKiss - .62 * angry);
     rotate('rightWrist', 0, wave * 0.32 + pose * 0.4 + gesture.hand * .38,
       wave * Math.sin(motionTime * 13) * 0.37 - pulse * 0.24 + .46 * throwKiss);
     rotate('leftArm', -0.07 - sway * 0.35 - gesture.oppositeHand * .46, 0,
-      -0.42 + laugh * 0.18 + leftLift * 0.72 - sway * 0.51 + gesture.oppositeHand * .6 + .76 * happy - .18 * angry);
+      -0.42 - armRest + laugh * 0.18 + leftLift * 0.72 - sway * 0.51 + gesture.oppositeHand * .6 + .76 * happy - .18 * angry);
     rotate('leftElbow', -pet * 0.4, -0.05 - laugh * 0.50,
       laugh * 0.20 + leftLift * 0.72 + pet * 0.5 + gesture.oppositeHand);
     rotate('leftWrist', 0, 0, pulse * 0.24);
@@ -382,13 +393,12 @@ export async function loadAvatar(stage, model) {
       animationCount: clips.length,
       clips: clips.filter(clip => clip.name && clip.duration > 0).slice(0, 256).map(clip => clip.name),
       bones: [...bones.keys()].slice(0, 1024),
-      morphs: [...(pmxMorphs?.keys() ?? (vrm ? (expressionManager?.expressions ?? []).map(item => item.expressionName)
-        : genericMorphs.keys()))].slice(0, 512),
+      morphs: [...(pmxMorphs?.keys() ?? (vrm ? vrmMorphs : genericMorphs.keys()))].slice(0, 512),
       motions: Object.keys(actions).filter(id => id === 'idle' || (rig.head && ['nod', 'sad', 'pet'].includes(id)) ||
         ((pmx || vrm) && rig.rightArm && ['wave', 'pose', 'kiss', 'happy', 'angry'].includes(id)) ||
         (rig.torso && ['bow', 'laugh'].includes(id)) ||
         (rig.leftArm && rig.rightArm && rig.torso && id.startsWith('dance'))),
-      mouthSync: pmx ? Object.hasOwn(mesh.morphTargetDictionary ?? {}, 'あ') : Boolean(expressionManager?.getExpression('aa')),
+      mouthSync: pmx ? Object.hasOwn(mesh.morphTargetDictionary ?? {}, 'あ') : vrmMouthSync,
     },
     mount() {
       stage.prepend(renderer.domElement);

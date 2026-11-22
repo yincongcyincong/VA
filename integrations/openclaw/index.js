@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 
 const platform = 'openclaw';
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
@@ -49,6 +49,42 @@ function makeBridge(config) {
   };
 }
 
+function matchesRoute(route, origin) {
+  return route && route.channel === origin.channel && route.target === origin.target
+    && (!route.accountId || route.accountId === origin.accountId);
+}
+
+function channelTarget(channel, id) {
+  if (!channel || !id) return;
+  const target = String(id);
+  return target.startsWith(channel + ':') ? target : channel + ':' + target;
+}
+
+const promptStart = '<!-- VA DESKTOP PROMPT START -->';
+const promptEnd = '<!-- VA DESKTOP PROMPT END -->';
+
+export async function syncWorkspacePrompt(workspace, prompt) {
+  const path = join(workspace, 'SOUL.md');
+  const prior = await readFile(path, 'utf8').catch(error => {
+    if (error.code !== 'ENOENT') throw error;
+    return '';
+  });
+  const start = prior.indexOf(promptStart);
+  const end = prior.indexOf(promptEnd);
+  const section = `${promptStart}\n${prompt.trim()}\n${promptEnd}`;
+  if ((start < 0) !== (end < 0) || (start >= 0 && end < start)) throw new Error('SOUL.md 中的 VA Prompt 标记不完整。');
+  const next = start < 0 ? `${prior.trimEnd()}${prior.trim() ? '\n\n' : ''}${section}\n`
+    : prior.slice(0, start) + section + prior.slice(end + promptEnd.length);
+  if (next === prior) return;
+  const temporary = join(workspace, '.va-prompt-' + randomUUID());
+  try {
+    await writeFile(temporary, next, { mode: 0o600, flag: 'wx' });
+    await rename(temporary, path);
+  } finally {
+    await rm(temporary, { force: true }).catch(() => {});
+  }
+}
+
 const presetId = { type: 'string', pattern: '^[a-z][a-z0-9-]{0,39}$' };
 const speech = { type: 'string', maxLength: 300 };
 const definition = [
@@ -66,18 +102,66 @@ export default {
   register(api) {
     const config = api.pluginConfig ?? {};
     const bridge = makeBridge(config);
+    const workspace = api.config?.agents?.defaults?.workspace;
+    const canSyncPrompt = config.workspacePrompt === true && typeof workspace === 'string' && isAbsolute(workspace);
+
+    async function stageSelfie(speech) {
+      const result = await bridge({ op: 'selfie', speech });
+      const state = api.runtime?.state?.resolveStateDir?.(process.env) ?? process.env.OPENCLAW_STATE_DIR
+        ?? join(homedir(), '.openclaw');
+      const folder = join(state, 'media', 'outbound');
+      const path = join(folder, 'va-' + randomUUID() + '.png');
+      await mkdir(folder, { recursive: true, mode: 0o700 });
+      await writeFile(path, Buffer.from(result.image.data, 'base64'), { mode: 0o600, flag: 'wx' });
+      setTimeout(() => { void rm(path, { force: true }).catch(() => {}); }, 15 * 60_000).unref();
+      return { mediaUrl: path, folder };
+    }
+
     api.on('before_dispatch', async (event, ctx) => {
       const text = typeof event.content === 'string' ? event.content.trim() : '';
-      if (!/跳|舞|\bdance\b/iu.test(text) || !ctx.conversationId) return;
+      if (!ctx.conversationId || !text || text.length > 2200 || text.startsWith('/')) return;
       const channel = ctx.channelId ?? event.channel;
-      const conversation = String(ctx.conversationId);
-      const target = conversation.startsWith(channel + ':') ? conversation : channel + ':' + conversation;
+      const target = channelTarget(channel, ctx.conversationId);
+      const origin = { channel, target, accountId: ctx.accountId, sessionKey: ctx.sessionKey };
+      let result;
       try {
-        const result = await bridge({ op: 'input', text: text.slice(0, 2200),
-          origin: { channel, target, accountId: ctx.accountId, sessionKey: ctx.sessionKey } }, undefined, 5000);
-        if (result.accepted) return { handled: true, text: result.reply };
+        result = await bridge({ op: 'input', text, origin }, undefined, 5000);
       } catch (error) {
         api.logger.warn('VA 入站消息：' + error.message);
+        return;
+      }
+      if (result.handled === 'selfie') {
+        const loadAdapter = api.runtime?.channel?.outbound?.loadAdapter;
+        const outbound = await loadAdapter?.(channel).catch(() => undefined);
+        if (!outbound?.sendMedia) return { handled: true, text: 'Telegram 附件通道暂时不可用。可以试试 /va selfie。' };
+        let photo;
+        try {
+          photo = await stageSelfie();
+        } catch (error) {
+          return { handled: true, text: 'VA 自拍失败。' + error.message };
+        }
+        try {
+          // before_dispatch replies carry text only. Send the PNG using the channel's outbound adapter.
+          await outbound.sendMedia({ cfg: api.config, to: target, accountId: ctx.accountId,
+            text: '', mediaUrl: photo.mediaUrl, mediaLocalRoots: [photo.folder],
+            signal: AbortSignal.timeout(30_000) });
+          return { handled: true };
+        } catch {
+          api.logger.warn('VA 自拍：Telegram 附件发送失败。');
+          return { handled: true, text: 'VA 已拍照，Telegram 附件发送失败。请稍后再试。' };
+        } finally {
+          await rm(photo.mediaUrl, { force: true }).catch(() => {});
+        }
+      }
+
+      if (result.accepted) return { handled: true, text: result.reply };
+      if (canSyncPrompt) {
+        try {
+          const { accepted, prompt } = await bridge({ op: 'prompt', origin }, undefined, 5000);
+          if (accepted && prompt) await syncWorkspacePrompt(workspace, prompt);
+        } catch (error) {
+          api.logger.warn('VA 角色 Prompt：' + error.message);
+        }
       }
     });
     api.on('message_sent', async (event, ctx) => {
@@ -85,10 +169,10 @@ export default {
       if (event.success !== true || !content) return;
       try {
         const { route } = await bridge({ op: 'route' }, undefined, 5000);
-        const origin = { channel: ctx?.channelId ?? event.channelId, accountId: ctx?.accountId ?? event.accountId,
-          target: event.to, sessionKey: ctx?.sessionKey };
-        if (!route || origin.channel !== route.channel || (route.accountId && origin.accountId !== route.accountId)) return;
-        if (route.sessionKey && origin.sessionKey ? origin.sessionKey !== route.sessionKey : origin.target !== route.target) return;
+        const channel = ctx?.channelId ?? event.channelId;
+        const origin = { channel, accountId: ctx?.accountId ?? event.accountId,
+          target: channelTarget(channel, event.to), sessionKey: ctx?.sessionKey };
+        if (!matchesRoute(route, origin) || (route.sessionKey && origin.sessionKey && origin.sessionKey !== route.sessionKey)) return;
         await bridge({ op: 'present', origin, text: content.slice(0, 2000) }, undefined, 5000);
       } catch (error) {
         api.logger.warn('VA 回复镜像：' + error.message);
@@ -97,7 +181,7 @@ export default {
 
     api.registerCommand({
       name: 'va',
-      description: '与桌面角色阿哈对话、做动作或自拍。',
+      description: '与 VA 桌面角色对话、做动作或自拍。',
       acceptsArgs: true,
       requireAuth: true,
       async handler(ctx) {
@@ -111,15 +195,8 @@ export default {
             }, null, 2) };
           }
           if (verb === 'selfie') {
-            const result = await bridge({ op: 'selfie', speech: argument || undefined });
-            const state = api.runtime?.state?.resolveStateDir?.(process.env) ?? process.env.OPENCLAW_STATE_DIR
-              ?? join(homedir(), '.openclaw');
-            const folder = join(state, 'media', 'outbound');
-            const path = join(folder, 'va-' + randomUUID() + '.png');
-            await mkdir(folder, { recursive: true, mode: 0o700 });
-            await writeFile(path, Buffer.from(result.image.data, 'base64'), { mode: 0o600, flag: 'wx' });
-            setTimeout(() => { void rm(path, { force: true }).catch(() => {}); }, 15 * 60_000).unref();
-            return { text: result.speech, mediaUrl: path };
+            const { mediaUrl } = await stageSelfie(argument || undefined);
+            return { text: '', mediaUrl };
           }
           if (verb === 'say' || verb === 'act') {
             const result = await bridge(verb === 'say' ? { op: 'say', speech: argument }
@@ -143,8 +220,8 @@ export default {
           try {
             const result = await bridge({ ...params, op: op === 'act' ? 'perform' : op }, signal);
             const { image, ...details } = result;
-            const content = [{ type: 'text', text: details.speech || JSON.stringify(details) }];
-            if (image) content.push({ type: 'image', mimeType: image.mimeType, data: image.data });
+            const content = image ? [{ type: 'image', mimeType: image.mimeType, data: image.data }]
+              : [{ type: 'text', text: details.speech || JSON.stringify(details) }];
             return { content, details };
           } catch (error) {
             return { content: [{ type: 'text', text: error.message }], details: { ok: false } };

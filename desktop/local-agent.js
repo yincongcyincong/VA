@@ -281,7 +281,7 @@ function dispatch(agent, input, signal) {
   return runJsonAgent(agent, input, signal);
 }
 
-export function createLocalAgent({ getConfig, updateConfig, getCharacter, sessionPath, launchDirectory = process.cwd(), presentReply, onChange = () => {} }) {
+export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(), presentReply, onChange = () => {} }) {
   const saveSessions = settingsWriter(sessionPath);
   const history = new Map();
   let active;
@@ -380,15 +380,15 @@ export function createLocalAgent({ getConfig, updateConfig, getCharacter, sessio
         if (sessionId !== null && !validateSession(agent, sessionId)) {
           throw new ControlError('AGENT_SESSION', '已保存的会话 ID 无效，请新建会话。');
         }
-        const character = await getCharacter();
-        const prompt = [`你正在通过 VA 桌面角色「${character.name}」与用户对话。`, character.prompt, agent.prompt]
-          .filter(Boolean).join('\n\n');
-        if (prompt.length > 16000) throw new ControlError('AGENT_INPUT', '角色与 Agent 的 Prompt 合计太长。');
+        const prompt = await getPrompt(agent.prompt);
+        if (prompt.length > 45000) throw new ControlError('AGENT_INPUT', '角色与 Agent 的 Prompt 合计太长。');
         const input = { message, prompt, sessionId };
         const result = await dispatch(agent, input, signal);
         signal.throwIfAborted();
-        const reply = typeof result?.reply === 'string' ? result.reply.trim().slice(0, 20000) : '';
-        if (!reply) throw failure('Agent 没有返回可显示的回复。');
+        const raw = typeof result?.reply === 'string' ? result.reply.trim().slice(0, 20000) : '';
+        const effect = parseReply(raw);
+        const reply = effect.speech;
+        if (!reply && !effect.action && !effect.expression) throw failure('Agent 没有返回可显示的回复。');
         if (!validateSession(agent, result?.sessionId) || (sessionId && sessionId !== result.sessionId)) {
           throw failure('Agent 返回了无效或不一致的会话 ID。');
         }
@@ -398,7 +398,7 @@ export function createLocalAgent({ getConfig, updateConfig, getCharacter, sessio
         }
         history.set(agent.key, [...(history.get(agent.key) ?? []), { message, reply }].slice(-20));
         const readAloud = options.speak ?? agent.speakReplies;
-        const bubbleQueued = presentReply(reply, readAloud);
+        const bubbleQueued = presentReply(reply, readAloud, effect);
         return { provider: agent.provider, reply, sessionId: result.sessionId, bubbleQueued,
           spoken: readAloud && bubbleQueued };
       });

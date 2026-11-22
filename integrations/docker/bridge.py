@@ -16,7 +16,7 @@ from pathlib import Path
 REQUEST_LIMIT = 8192
 RESPONSE_LIMIT = 34 * 1024 * 1024
 PLATFORMS = ("astrbot", "openclaw")
-COMMANDS = {"route", "present", "input", "status", "say", "perform", "selfie", "view", "actions"}
+COMMANDS = {"route", "prompt", "present", "input", "status", "say", "perform", "selfie", "view", "actions"}
 
 
 def read_file(path, limit):

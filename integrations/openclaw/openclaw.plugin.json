@@ -8,10 +8,11 @@
     "properties": {
       "command": { "type": "array", "items": { "type": "string" }, "minItems": 1, "default": ["va"] },
       "sshHost": { "type": "string", "default": "" },
+      "workspacePrompt": { "type": "boolean", "default": false },
       "openclawCommand": { "type": "array", "items": { "type": "string" }, "minItems": 1, "default": ["openclaw"] }
     }
   },
   "contracts": {
-    "tools": ["va_desktop_say", "va_desktop_act", "va_desktop_selfie", "va_desktop_status"]
+    "tools": ["va_desktop_say", "va_desktop_act", "va_desktop_selfie", "va_desktop_actions", "va_desktop_status"]
   }
 }
