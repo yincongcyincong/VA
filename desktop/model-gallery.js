@@ -6,6 +6,8 @@ const status = byId('gallery-status');
 const local = byId('gallery-local');
 const importPack = byId('gallery-import');
 const empty = byId('gallery-empty');
+const search = byId('gallery-search');
+const noResults = byId('gallery-no-results');
 const use = byId('gallery-use');
 const call = window.va.modelLibrary;
 
@@ -13,6 +15,7 @@ let viewer;
 let selected;
 let busy = false;
 let revision = 0;
+let entries = [];
 
 function errorText(error) {
   return error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
@@ -47,11 +50,17 @@ function button(text, click) {
   return element;
 }
 
-async function refreshList() {
-  const entries = await call('list');
-  empty.hidden = entries.some(model => !model.builtIn);
+function searchName(value) {
+  return value.normalize('NFKC').toLowerCase().replace(/\s+/gu, '');
+}
+
+function renderList() {
+  const query = searchName(search.value);
+  const models = query ? entries.filter(model => searchName(model.label).includes(query)) : entries;
+  empty.hidden = Boolean(query) || entries.some(model => !model.builtIn);
+  noResults.hidden = !query || models.length > 0;
   list.replaceChildren();
-  for (const model of entries) {
+  for (const model of models) {
     const item = document.createElement('li');
     const title = document.createElement('h3');
     const info = document.createElement('p');
@@ -68,6 +77,13 @@ async function refreshList() {
   }
   syncButtons();
 }
+
+async function refreshList() {
+  entries = await call('list');
+  renderList();
+}
+
+search.addEventListener('input', renderList);
 
 async function showPreview(operation, id, note) {
   if (busy) return;

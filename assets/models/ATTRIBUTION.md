@@ -1,4 +1,4 @@
-# VA 内置的 Gemini 娘
+# VA 内置的 Gemini
 
 模型来自 ApprenTice 发布的「AI 娘全家桶」，原角色设计来自 ZipZipPipe 的《大 AI 与小 AI 们》。VA 收录了原包 `04_Gemini_V2/model.glb`，仅更改文件名。预览时在 VA 内旋转到正面，模型数据保持原样。
 

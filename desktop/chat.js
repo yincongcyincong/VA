@@ -11,6 +11,7 @@ const composer = byId('composer');
 const history = byId('history');
 const connection = byId('connection');
 const status = byId('chat-status');
+const clientStatus = byId('doubao-bind-status');
 const send = byId('send');
 const stop = byId('stop');
 const newChat = byId('new');
@@ -36,6 +37,7 @@ let editingProfile;
 let current;
 let responding = false;
 let working = false;
+let switchingMode = false;
 
 function errorText(error) {
   return error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
@@ -52,11 +54,11 @@ function renderCaptions(state) {
 }
 
 function controls() {
-  const busy = working || current?.busy;
+  const busy = switchingMode || working || current?.busy;
   const local = current?.integration.mode === 'local';
   const api = current?.integration.mode === 'api';
   const client = current?.integration.mode === 'doubao-client';
-  for (const button of modes.children) button.disabled = button.hidden || working || !current;
+  for (const button of modes.children) button.disabled = button.hidden || switchingMode || (working && !responding) || !current;
   for (const button of providers.children) button.disabled = Boolean(busy);
   for (const form of [configuration, routeConfiguration]) {
     for (const control of form.elements) control.disabled = Boolean(busy);
@@ -65,7 +67,7 @@ function controls() {
     : api ? current.activeApi : local && current.provider);
   for (const control of binding.elements) control.disabled = unavailable || !local;
   newChat.disabled = unavailable;
-  send.disabled = (working && !responding) || !current;
+  send.disabled = switchingMode || (working && !responding) || !current;
   byId('doubao-client-bind').disabled = Boolean(busy);
   byId('doubao-client-unbind').disabled = !current?.client?.title || working;
   byId('doubao-client-context').disabled = unavailable || !client;
@@ -147,6 +149,7 @@ function render(state, syncFields) {
   current.agentLabel = local ? state.label : api ? (profile?.name ?? '模型 API')
     : [...modes.children].find(button => button.dataset.choice === mode)?.textContent;
   markChoice(modes, mode);
+  if (doubao) modes.firstElementChild.tabIndex = 0;
   byId('local-panel').hidden = !local;
   byId('doubao-client-panel').hidden = !client;
   captionPanel.hidden = !client;
@@ -156,10 +159,11 @@ function render(state, syncFields) {
       listenActions.checked = state.listenForActions;
     }
     renderCaptions(state.captions);
-  }
+  } else clientStatus.textContent = '';
   byId('doubao-client-hint').textContent = state.client?.problem ||
     (state.client?.contextSent ? '已将角色能力发到这条豆包对话。' : '');
-  renderDoubao(doubao ? current.integration.doubao : null, current.doubao, syncFields);
+  renderDoubao(current.integration.doubao, current.doubao, doubao, syncFields);
+  byId('open-realtime').hidden = !doubao;
   byId('api-panel').hidden = !api;
   routeConfiguration.hidden = !route;
   byId('conversation').hidden = mode === 'off' || doubao;
@@ -169,7 +173,7 @@ function render(state, syncFields) {
   connection.textContent = local ? (state.provider ? state.label + (state.sessionId ? ' · ' + state.sessionId : ' · 新会话') : '请选择 Agent')
     : route ? (route.target ? '接收频道回复 · ' + route.target : '请配置目标频道')
       : api ? (current.activeApi ? profile.name : '请选择 API 配置')
-        : doubao ? '豆包实时语音' : client ? (state.client.title || '未绑定本机对话') : '';
+        : doubao ? '当前接入 · 火山实时语音' : client ? (state.client.title || '未绑定本机对话') : '所有对话接入已关闭';
   if (syncFields && local) {
     const { cwd, model, prompt, speak } = configuration.elements;
     markChoice(providers, state.provider);
@@ -200,16 +204,17 @@ async function refresh(syncFields = false) {
   } catch (error) { status.textContent = errorText(error); }
 }
 
-async function edit(operation, value, success = '') {
+async function edit(operation, value, success = '', pending = '') {
+  const feedback = operation.startsWith('doubao-client-') ? clientStatus : status;
   working = true;
-  status.textContent = '';
+  feedback.textContent = pending;
   controls();
   try {
     render(await call(operation, value), true);
-    status.textContent = success;
+    feedback.textContent = success;
     return true;
   } catch (error) {
-    (profileDialog.open ? profileStatus : status).textContent = errorText(error);
+    (profileDialog.open ? profileStatus : feedback).textContent = errorText(error);
     return false;
   } finally {
     working = false;
@@ -217,11 +222,25 @@ async function edit(operation, value, success = '') {
   }
 }
 
-onChoice(modes, mode => { if (mode !== current?.integration.mode) void edit('integration', { mode }); });
-for (const action of ['open', 'bind', 'unbind', 'read']) {
+onChoice(modes, async mode => {
+  if (mode === current?.integration.mode) return;
+  switchingMode = true;
+  try {
+    await edit('integration', { mode });
+  } finally {
+    switchingMode = false;
+    controls();
+  }
+});
+byId('open-realtime').addEventListener('click', () => byId('tab-voice').click());
+for (const action of ['open', 'read']) {
   const operation = 'doubao-client-' + action;
   byId(operation).addEventListener('click', () => void edit(operation));
 }
+byId('doubao-client-bind').addEventListener('click', () =>
+  void edit('doubao-client-bind', undefined, '已绑定豆包当前对话。', '正在识别豆包当前对话…'));
+byId('doubao-client-unbind').addEventListener('click', () =>
+  void edit('doubao-client-unbind', undefined, '已解除绑定。'));
 byId('doubao-client-context').addEventListener('click', () => void edit('doubao-client-context', undefined, '豆包已回复角色能力同步消息。'));
 captionStart.addEventListener('click', async () => {
   captionStart.disabled = captionActions.disabled = listenActions.disabled = true;
@@ -286,7 +305,7 @@ function openProfile(profile, copy = false) {
   fields.name.value = copy ? profile.name + '（自定义）' : profile?.name ?? '';
   fields.speak.checked = profile?.speakReplies === true;
   fields.prompt.value = profile?.prompt ?? '';
-  fields.remote.checked = profile?.vision.allowRemoteScreenshots === true;
+  fields.remote.checked = profile?.vision?.allowRemoteScreenshots === true;
   for (const kind of modelKinds) {
     const model = profile?.[kind];
     fields[kind + '-url'].value = model?.baseUrl ?? '';

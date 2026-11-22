@@ -8,6 +8,7 @@
   },
   "scripts": {
     "start": "electron .",
+    "test": "node --test \"test/*.test.js\"",
     "build:mac": "node scripts/build.js darwin",
     "build:win": "node scripts/build.js win32",
     "build:all": "npm run build:mac && npm run build:win"

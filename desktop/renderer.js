@@ -2,6 +2,7 @@ import { loadAvatar } from './avatar.js';
 import { createVoice } from './voice.js';
 import { textSpeechDuration } from './speech-motion.js';
 import { createDoubaoPlayback } from './doubao-playback.js';
+import { speechActionStyles } from './actions.js';
 
 const stage = document.getElementById('stage');
 const notice = document.getElementById('notice');
@@ -130,8 +131,9 @@ async function perform({ plan, speech, selfie, speakingStyle, readAloud = true, 
       dialogue.paginate(duration);
       if (!animatingText || readAloud) avatar.speak(speech, speakingStyle, duration, audio ? voice.level : undefined);
     }
-    avatar.play({ ...plan, seconds: Math.max(plan.seconds, plan.motion === 'idle' && !plan.bones && !plan.clip ? duration / 1000 : 0) });
-    const motionMs = plan.seconds * 1000;
+    const motionMs = Math.max(plan.seconds * 1000,
+      speech && (plan.motion === 'idle' || speechActionStyles[plan.motion]) && !plan.bones && !plan.clip ? duration : 0);
+    avatar.play({ ...plan, seconds: motionMs / 1000 });
     const shutterMs = Math.max(850, Math.min(duration + 60, motionMs - 500));
     const shot = selfie ? delay(shutterMs, signal).then(() => avatar.capture(true)) : undefined;
     const [image] = await Promise.all([

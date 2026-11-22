@@ -320,17 +320,29 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     });
   }
 
+  async function screenAgent() {
+    const agent = await runtime(await getConfig(), launchDirectory);
+    if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请在「智能体与模型」选择接收截图的本地 Agent。');
+    if (agent.provider === 'deepseekharness') {
+      throw new ControlError('AGENT_IMAGE_UNSUPPORTED', 'DeepSeek Harness 的 headless CLI 不接收图片，请选择支持图片输入的 Agent。');
+    }
+    if (!agent.command) throw new ControlError('AGENT_CONFIG', '请先配置自定义 Agent 的可执行文件。');
+    return agent;
+  }
+
   return {
     status: () => snapshot(),
-    observe: async ({ frame, message, prompt, signal }) => {
-      const agent = await runtime(await getConfig(), launchDirectory);
-      if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请在「本地 Agent 对话」选择接收截图的 Agent。');
-      if (agent.provider === 'deepseekharness') {
-        throw new ControlError('AGENT_IMAGE_UNSUPPORTED', 'DeepSeek Harness 的 headless CLI 不接收图片，请选择支持图片输入的 Agent。');
-      }
-      if (!agent.command) throw new ControlError('AGENT_CONFIG', '请先配置自定义 Agent 的可执行文件。');
-      const result = await dispatch(agent, { message, prompt, sessionId: null, image: frame }, signal);
-      return result?.reply;
+    async prepareObservation() {
+      const agent = await screenAgent();
+      return async ({ frame, message, prompt, signal }) => {
+        const limit = AbortSignal.timeout(timeout);
+        const result = await dispatch(agent, { message, prompt, sessionId: null, image: frame }, AbortSignal.any([signal, limit]))
+          .catch(error => {
+            if (limit.aborted && !signal.aborted) throw new ControlError('AGENT_TIMEOUT', '本地 Agent 观察超时，请重试。');
+            throw error;
+          });
+        return result?.reply;
+      };
     },
     cancel() {
       active?.abort(new ControlError('AGENT_CANCELED', '已停止等待 Agent 回复。'));
@@ -396,6 +408,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
           sessions[agent.key] = result.sessionId;
           await saveSessions(sessions);
         }
+        signal.throwIfAborted();
         history.set(agent.key, [...(history.get(agent.key) ?? []), { message, reply }].slice(-20));
         const readAloud = options.speak ?? agent.speakReplies;
         const bubbleQueued = presentReply(reply, readAloud, effect);

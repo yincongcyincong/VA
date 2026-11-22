@@ -28,7 +28,7 @@ const bundles = await packager({
   asar: true,
   icon: join(root, 'assets', mac ? 'app-icon.icns' : 'app-icon.ico'),
   electronZipDir: values['electron-zip-dir'],
-  ignore: /^\/(dist|build|native|skills|scripts|integrations|model-samples|docs|\.env.*|README\.md|assets\/app-icon\.(icns|ico))(\/|$)/,
+  ignore: /^\/(dist|build|logs|test|native|skills|scripts|integrations|model-samples|docs|\.env.*|README\.md|assets\/app-icon\.(icns|ico))(\/|$)/,
   ...(mac && {
     extraResource: ['va-audio-monitor', 'va-doubao-client', 'va-doubao-captions'].map(name => join(root, 'build', name)),
     usageDescription: {

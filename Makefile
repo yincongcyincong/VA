@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := run
 VA := ./bin/va.js
 
-.PHONY: install run dev status stop build build-win build-all audio-helper doubao-helper integrations
+.PHONY: install run dev test status stop build build-win build-all audio-helper doubao-helper integrations
 
 install:
 	npm ci
@@ -12,6 +12,9 @@ run:
 
 dev: audio-helper doubao-helper
 	npm start
+
+test:
+	npm test
 
 status:
 	$(VA) status --json

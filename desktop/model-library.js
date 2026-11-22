@@ -47,7 +47,7 @@ export function createModelLibrary(manifest, { bundledModel, localAha }) {
       if (await realpath(path).catch(() => undefined) !== path) return;
       const file = await lstat(path).catch(() => undefined);
       if (!file?.isFile() || file.size !== model.size || file.mtimeMs !== model.modified) return;
-      const label = match[1] === 'Gemini' ? 'Gemini 娘' : match[1];
+      const label = match[1] === 'Gemini 娘' ? 'Gemini' : match[1];
       return { path, id: model.id, label, size: file.size, format: packFormats[filename],
         rigged: model.rigged, mouthSync: model.mouthSync };
     }));
@@ -64,9 +64,9 @@ export function createModelLibrary(manifest, { bundledModel, localAha }) {
       size: aha.size, builtIn: true, isDefault: true, rigged: true, mouthSync: true });
     const hasGeminiVrm = imported.some(model => model.id === '04_Gemini_V2' && model.format === 'VRM');
     const showBundledGemini = bundled?.isFile() && !hasGeminiVrm;
-    if (showBundledGemini) entries.push({ path: bundledModel, id: 'gemini-default', label: 'Gemini 娘', format: 'GLB',
+    if (showBundledGemini) entries.push({ path: bundledModel, id: 'gemini-default', label: 'Gemini', format: 'GLB',
       size: bundled.size, builtIn: true, isDefault: !entries.length });
-    return entries.concat(showBundledGemini ? imported.filter(model => model.label !== 'Gemini 娘') : imported);
+    return entries.concat(showBundledGemini ? imported.filter(model => model.label !== 'Gemini') : imported);
   }
 
   return {

@@ -10,7 +10,7 @@ const usage = `VA · 桌面角色
 
   va start                              启动或显示角色
   va status [--json]                    查看桌面状态
-  va actions [--supported] [--reload] [--config-path] [--json]
+  va actions [--category <类别>] [--supported] [--reload] [--config-path] [--json]
   va act <动作编号或名称> [--expression <表情>] [--say <台词>] [--no-wait]
   va <动作编号>                         直接播放动作，内置命令名优先
   va express <表情编号或名称> [--no-wait]
@@ -115,16 +115,20 @@ async function execute() {
     return;
   }
   if (command === 'actions') {
-    const { positionals, values } = options({ supported: { type: 'boolean' }, reload: { type: 'boolean' }, 'config-path': { type: 'boolean' } });
+    const { positionals, values } = options({ category: { type: 'string' }, supported: { type: 'boolean' },
+      reload: { type: 'boolean' }, 'config-path': { type: 'boolean' } });
     count(positionals, 0);
-    if (values.supported) {
-      const { actions, expressions, supportedExpressions, ...info } = await request({
-        type: 'actions', reload: values.reload, includeConfigPath: values['config-path'],
-      });
-      return { ...info, actions: Object.fromEntries(Object.entries(actions).filter(([, item]) => item.supported)),
-        expressions: Object.fromEntries(supportedExpressions.map(id => [id, expressions[id]])), supportedExpressions };
+    const catalog = values.supported ? await request({ type: 'actions', reload: values.reload, includeConfigPath: values['config-path'] })
+      : await listActions(values.reload, values['config-path']);
+    const category = values.category === undefined ? undefined : presetId(catalog.categories ?? {}, values.category, '动作类别', label => label);
+    if (category || values.supported) {
+      catalog.actions = Object.fromEntries(Object.entries(catalog.actions).filter(([, item]) =>
+        (!category || (item.category === category && !item.alternate)) && (!values.supported || item.supported)));
     }
-    return listActions(values.reload, values['config-path']);
+    if (values.supported) {
+      catalog.expressions = Object.fromEntries(catalog.supportedExpressions.map(id => [id, catalog.expressions[id]]));
+    }
+    return catalog;
   }
   if (command === 'prompt') {
     const { positionals, values } = options({ voice: { type: 'boolean' } });

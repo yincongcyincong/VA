@@ -31,7 +31,7 @@ export function createSpeechMotion(text, style, duration, audioLevel, reducedMot
   const { units, end } = syllables(text);
   const preset = speakingStyles[style] ?? speakingStyles[defaultSpeakingStyle];
   return elapsed => {
-    if (elapsed < 0 || elapsed >= duration || !end) return rest;
+    if (elapsed < 0 || elapsed >= duration) return rest;
     const position = elapsed / duration * end;
     const unit = units.find(unit => position < unit.end);
     const cycle = unit ? (position - unit.start) / (unit.end - unit.start) : 0;

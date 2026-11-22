@@ -1,5 +1,6 @@
-const panel = document.getElementById('doubao-panel');
 const form = document.getElementById('doubao-configuration');
+const mode = document.getElementById('doubao-mode');
+const modeState = document.getElementById('doubao-mode-state');
 const start = document.getElementById('doubao-start');
 const stop = document.getElementById('doubao-stop');
 const status = document.getElementById('doubao-status');
@@ -10,10 +11,13 @@ let config;
 let state;
 let capture;
 let saving = false;
+let selected = false;
+let switching = false;
 
 function controls() {
   const inCall = Boolean(capture) || (state && state.phase !== 'idle');
-  start.disabled = !config?.hasKey || inCall || saving;
+  mode.disabled = !config || switching || saving;
+  start.disabled = !selected || !config?.hasKey || inCall || saving || switching;
   stop.disabled = !inCall || state?.phase === 'closing';
   for (const field of form.elements) field.disabled = Boolean(inCall || saving);
 }
@@ -52,18 +56,16 @@ function update(view) {
   if (view.phase === 'closing' || (view.phase === 'idle' && (capture?.id || view.error))) release();
   state = view;
   drawHistory(view);
-  status.textContent = view.error || labels[view.phase] || (!config?.hasKey ? '请先配置实时语音 API Key。' : '');
+  status.textContent = selected ? view.error || labels[view.phase] || (!config?.hasKey ? '请先配置实时语音 API Key。' : '') : '';
   controls();
 }
 
-export function renderDoubao(profile, view, syncFields) {
+export function renderDoubao(profile, view, enabled, syncFields) {
   config = profile;
-  panel.hidden = !profile;
-  if (!profile) {
-    release();
-    state = undefined;
-    return;
-  }
+  selected = enabled;
+  if (!selected) release();
+  mode.textContent = selected ? '关闭实时语音接入' : '切换到实时语音';
+  modeState.textContent = selected ? '当前接入方式 · 火山实时语音' : '切换后，VA 只通过火山实时语音对话。';
   if (syncFields) {
     form.elements.voice.value = profile.voice;
     form.elements.prompt.value = profile.prompt;
@@ -75,6 +77,20 @@ export function renderDoubao(profile, view, syncFields) {
   }
   update(view);
 }
+
+mode.addEventListener('click', async () => {
+  switching = true;
+  controls();
+  try {
+    const next = await call('integration', { mode: selected ? 'off' : 'doubao' });
+    renderDoubao(next.integration.doubao, next.doubao, next.integration.mode === 'doubao', false);
+  } catch (error) {
+    status.textContent = errorMessage(error);
+  } finally {
+    switching = false;
+    controls();
+  }
+});
 
 function errorMessage(error) {
   if (['NotAllowedError', 'PermissionDeniedError'].includes(error.name)) {
@@ -93,8 +109,8 @@ form.addEventListener('submit', async event => {
     const next = await call('doubao-config', { apiKey: apiKey.value, voice: voice.value, prompt: prompt.value,
       allowDance: allowDance.checked, clearKey: clearKey.checked });
     if (!config) return;
-    renderDoubao(next.integration.doubao, next.doubao, true);
-    status.textContent = '已保存豆包设置。';
+    renderDoubao(next.integration.doubao, next.doubao, next.integration.mode === 'doubao', true);
+    status.textContent = '已保存实时语音配置。';
   } catch (error) {
     status.textContent = errorMessage(error);
   } finally {

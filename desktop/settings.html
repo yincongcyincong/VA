@@ -20,7 +20,7 @@
     <nav id="settings-tabs" class="tabs" role="tablist" aria-label="设置">
       <button type="button" role="tab" data-choice="avatar" id="tab-avatar" aria-controls="panel-avatar" aria-selected="true">桌面角色</button>
       <button type="button" role="tab" data-choice="models" id="tab-models" aria-controls="panel-models" aria-selected="false" tabindex="-1">模型库</button>
-      <button type="button" role="tab" data-choice="performance" id="tab-performance" aria-controls="panel-performance" aria-selected="false" tabindex="-1">动作与表情</button>
+      <button type="button" role="tab" data-choice="performance" id="tab-performance" aria-controls="panel-performance" aria-selected="false" tabindex="-1">动作</button>
       <button type="button" role="tab" data-choice="senses" id="tab-senses" aria-controls="panel-senses" aria-selected="false" tabindex="-1">屏幕与音乐</button>
       <button type="button" role="tab" data-choice="voice" id="tab-voice" aria-controls="panel-voice" aria-selected="false" tabindex="-1">参考音色</button>
       <button type="button" role="tab" data-choice="agent" id="tab-agent" aria-controls="panel-agent" aria-selected="false" tabindex="-1">智能体与模型</button>
@@ -106,12 +106,14 @@
             <p>拖动旋转 · 滚轮缩放</p>
           </div>
         </div>
-        <div class="card gallery-collection">
-          <h2>默认3D模型</h2>
-          <div class="row gallery-buttons">
+        <div class="card gallery-collection settings-grid">
+          <div class="section-head">
+            <h2>3D模型</h2>
             <button id="gallery-import" type="button">导入解压目录…</button>
           </div>
+          <input id="gallery-search" type="search" aria-label="按名称搜索模型" aria-controls="gallery-list" placeholder="按名称搜索模型" autocomplete="off">
           <p id="gallery-empty">下载并解压模型包后，可以导入其他角色。</p>
+          <p id="gallery-no-results" role="status" hidden>没有找到匹配的模型。</p>
           <ul id="gallery-list" class="gallery-list"></ul>
         </div>
       </div>
@@ -120,20 +122,20 @@
     <section id="panel-performance" class="panel" role="tabpanel" aria-labelledby="tab-performance" hidden>
       <div class="card settings-grid">
         <div class="section-head">
-          <h2>动作与表情</h2>
+          <h2>动作</h2>
           <div class="row">
             <button id="performance-open" type="button">打开配置文件…</button>
             <button id="performance-reload" type="button">重新加载配置</button>
           </div>
         </div>
-        <p>配置文件可添加动作、表情和台词。修改并保存后，点「重新加载配置」。</p>
+        <p>配置文件可添加动作和台词。修改并保存后，点「重新加载配置」。</p>
+        <fieldset class="plain">
+          <legend>类别</legend>
+          <div id="performance-categories" class="choices" role="group" aria-label="动作类别"></div>
+        </fieldset>
         <fieldset class="plain">
           <legend>动作</legend>
           <div id="performance-actions" class="choices" role="group" aria-label="动作"></div>
-        </fieldset>
-        <fieldset class="plain">
-          <legend>表情</legend>
-          <div id="performance-expressions" class="choices" role="group" aria-label="表情"></div>
         </fieldset>
         <div class="row">
           <button id="performance-preview" type="button" class="primary" disabled>预览</button>
@@ -147,11 +149,11 @@
         <div class="section-head"><h2>看屏幕</h2>
           <label class="toggle"><input id="screen-watch" type="checkbox" disabled> 开启观察</label>
         </div>
+        <p id="screen-destination"></p>
         <fieldset class="plain">
           <legend>观察间隔</legend>
           <div id="screen-interval" class="choices intervals" role="group" aria-label="观察间隔"></div>
         </fieldset>
-        <p id="screen-destination"></p>
         <p id="screen-state" role="status"></p>
         <p id="screen-timing"></p>
         <div><button id="privacy" type="button">打开系统录制权限…</button></div>
@@ -160,6 +162,7 @@
         <div class="section-head"><h2>跟随音乐</h2>
           <label class="toggle"><input id="music-dance" type="checkbox" disabled> 检测音乐并自动跳舞</label>
         </div>
+        <p>在本机检测系统播放的音乐。角色隐藏时暂停。</p>
         <p id="music-state" role="status"></p>
       </div>
     </section>
@@ -204,17 +207,46 @@
         </div>
         <div><button id="voice-original" type="button" disabled>播放参考原声</button></div>
       </div>
+      <section id="doubao-panel" class="settings-grid">
+        <div class="card section-head">
+          <div><h2>火山实时语音</h2><p id="doubao-mode-state"></p></div>
+          <button id="doubao-mode" type="button" disabled>切换到实时语音</button>
+        </div>
+        <form id="doubao-configuration" class="card form-grid">
+          <label>实时语音 API Key <input name="apiKey" type="password" autocomplete="off" maxlength="1024"></label>
+          <label>实时语音音色 ID <input name="voice" type="text" maxlength="160"></label>
+          <label class="wide">附加 Prompt <textarea name="prompt" rows="2" maxlength="5000"></textarea></label>
+          <label class="toggle"><input name="allowDance" type="checkbox"> 允许豆包根据对话决定是否跳舞</label>
+          <div class="end"><button type="submit">保存实时语音配置</button></div>
+          <label id="doubao-clear" class="toggle wide" hidden><input name="clearKey" type="checkbox"> 清除已保存的 API Key</label>
+        </form>
+        <div class="card conversation">
+          <div class="section-head">
+            <h2>语音对话</h2>
+            <div class="row">
+              <button id="doubao-stop" type="button" disabled>结束</button>
+              <button id="doubao-start" type="button" class="primary" disabled>开始语音对话</button>
+            </div>
+          </div>
+          <p>通话开启后，麦克风音频会发送给火山引擎。</p>
+          <p id="doubao-status" class="feedback" role="status"></p>
+          <ol id="doubao-history" class="chat-history" aria-label="豆包对话字幕"></ol>
+        </div>
+      </section>
+
     </section>
 
     <section id="panel-agent" class="panel" role="tabpanel" aria-labelledby="tab-agent" hidden>
       <div class="section-head agent-head">
         <div><h2>接入方式</h2><p id="connection"></p></div>
-        <button id="config-file" type="button">打开配置文件…</button>
+        <div class="row">
+          <button id="open-realtime" type="button" hidden>管理实时语音…</button>
+          <button id="config-file" type="button">打开配置文件…</button>
+        </div>
       </div>
       <nav id="mode" class="tabs secondary" role="tablist" aria-label="接入方式">
         <button type="button" role="tab" data-choice="local" aria-selected="false">本地 Agent</button>
         <button type="button" role="tab" data-choice="doubao-client" aria-selected="false">豆包客户端</button>
-        <button type="button" role="tab" data-choice="doubao" aria-selected="false">火山实时语音</button>
         <button type="button" role="tab" data-choice="api" aria-selected="false">模型 API</button>
         <button type="button" role="tab" data-choice="astrbot" aria-selected="false">AstrBot</button>
         <button type="button" role="tab" data-choice="openclaw" aria-selected="false">OpenClaw</button>
@@ -251,6 +283,7 @@
           <button id="doubao-client-context" type="button" disabled>同步角色能力</button>
           <button id="doubao-client-read" type="button" disabled>用豆包朗读最近回复</button>
         </div>
+        <p id="doubao-bind-status" class="feedback" role="status"></p>
         <p id="doubao-client-hint" role="status"></p>
         <p>语音输入在豆包客户端的输入框按住空格。绑定后，新回复会显示在角色旁边。</p>
       </section>
@@ -268,29 +301,6 @@
         <p id="doubao-caption-status" class="feedback" role="status"></p>
         <p id="doubao-mic-status" class="feedback" role="status" hidden></p>
         <p id="doubao-caption-text"></p>
-      </section>
-
-      <section id="doubao-panel" class="settings-grid" hidden>
-        <form id="doubao-configuration" class="card form-grid">
-          <label>实时语音 API Key <input name="apiKey" type="password" autocomplete="off" maxlength="1024"></label>
-          <label>实时语音音色 ID <input name="voice" type="text" maxlength="160"></label>
-          <label class="wide">附加 Prompt <textarea name="prompt" rows="2" maxlength="5000"></textarea></label>
-          <label class="toggle"><input name="allowDance" type="checkbox"> 允许豆包根据对话决定是否跳舞</label>
-          <div class="end"><button type="submit">保存豆包设置</button></div>
-          <label id="doubao-clear" class="toggle wide" hidden><input name="clearKey" type="checkbox"> 清除已保存的 API Key</label>
-        </form>
-        <div class="card conversation">
-          <div class="section-head">
-            <h2>实时语音</h2>
-            <div class="row">
-              <button id="doubao-stop" type="button" disabled>结束</button>
-              <button id="doubao-start" type="button" class="primary" disabled>开始语音对话</button>
-            </div>
-          </div>
-          <p>通话开启后，麦克风音频会发送给火山引擎。</p>
-          <p id="doubao-status" class="feedback" role="status"></p>
-          <ol id="doubao-history" class="chat-history" aria-label="豆包对话字幕"></ol>
-        </div>
       </section>
 
       <div id="api-panel" class="card" hidden>
@@ -336,7 +346,7 @@
       <label>配置名称 <input name="name" type="text" required maxlength="80" placeholder="例如 本地 Ollama" autofocus></label>
       <nav id="profile-tabs" class="tabs secondary" role="tablist" aria-label="模型用途">
         <button type="button" role="tab" data-choice="language" aria-selected="true" aria-controls="profile-language">语言模型</button>
-        <button type="button" role="tab" data-choice="vision" aria-selected="false" aria-controls="profile-vision" tabindex="-1">视觉模型（可选）</button>
+        <button type="button" role="tab" data-choice="vision" aria-selected="false" aria-controls="profile-vision" tabindex="-1">屏幕识别（可选）</button>
       </nav>
       <div id="profile-language" class="settings-grid" role="tabpanel">
         <fieldset class="plain"><legend>API 协议</legend><div id="language-protocol" class="choices" role="group" aria-label="语言 API 协议"></div></fieldset>

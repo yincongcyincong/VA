@@ -9,8 +9,8 @@ const theme = document.getElementById('theme');
 const speakingStyle = document.getElementById('speaking-style');
 const clickThrough = document.getElementById('click-through');
 const screenWatch = document.getElementById('screen-watch');
-const screenInterval = document.getElementById('screen-interval');
 const screenDestination = document.getElementById('screen-destination');
+const screenInterval = document.getElementById('screen-interval');
 const screenTiming = document.getElementById('screen-timing');
 const musicDance = document.getElementById('music-dance');
 const screenState = document.getElementById('screen-state');
@@ -30,8 +30,8 @@ const modelStatus = document.getElementById('model-status');
 const modelFile = document.getElementById('model-file');
 const modelCheck = document.getElementById('model-check');
 const modelCapabilities = document.getElementById('model-capabilities');
+const performanceCategories = document.getElementById('performance-categories');
 const performanceActions = document.getElementById('performance-actions');
-const performanceExpressions = document.getElementById('performance-expressions');
 const performancePreview = document.getElementById('performance-preview');
 const performanceStatus = document.getElementById('performance-status');
 const nameForm = document.getElementById('character-name-form');
@@ -41,9 +41,10 @@ let lastName;
 let modelPending = false;
 let inspectedModel;
 let actionCatalog;
+let actionReady = false;
 let catalogKey;
+let previewCategory = 'dance';
 let previewAction = 'idle';
-let previewExpression = '';
 
 function renderModelReport(model) {
   const checked = model?.checked;
@@ -55,55 +56,62 @@ function renderModelReport(model) {
   document.getElementById('model-bones').textContent = format('骨骼', model.bones);
 }
 
+function renderActionChoices() {
+  const entries = Object.entries(actionCatalog.actions)
+    .filter(([, item]) => item.category === previewCategory && !item.alternate);
+  if (!entries.some(([id, item]) => id === previewAction && item.supported)) {
+    previewAction = entries.find(([, item]) => item.supported)?.[0] ?? entries[0]?.[0];
+  }
+  performanceActions.replaceChildren();
+  choices(performanceActions, entries.map(([id, item]) => [id, item.label]));
+  for (const button of performanceActions.children) {
+    const entry = actionCatalog.actions[button.dataset.choice];
+    button.disabled = !actionReady || !entry.supported;
+    if (!entry.supported) button.title = '当前模型缺少此动作需要的骨骼或动画';
+  }
+  markChoice(performanceCategories, previewCategory);
+  markChoice(performanceActions, previewAction);
+  performancePreview.disabled = !actionReady || !actionCatalog.actions[previewAction]?.supported;
+}
+
 function renderPerformance(next, ready) {
   actionCatalog = next;
+  actionReady = ready;
   const key = JSON.stringify({ next, ready });
   if (catalogKey === key) return;
   catalogKey = key;
-  performanceActions.replaceChildren();
-  performanceExpressions.replaceChildren();
-  choices(performanceActions, Object.entries(next.actions).map(([id, item]) => [id, item.label]));
-  choices(performanceExpressions, [['', '动作默认表情'], ...Object.entries(next.expressions)]);
-  if (!next.actions[previewAction]?.supported) previewAction = 'idle';
-  if (previewExpression && !next.supportedExpressions.includes(previewExpression)) previewExpression = '';
-  for (const action of performanceActions.children) {
-    const entry = next.actions[action.dataset.choice];
-    action.disabled = !ready || !entry.supported;
-    if (!entry.supported) action.title = '当前模型缺少此动作需要的骨骼或动画';
-  }
-  for (const expression of performanceExpressions.children) {
-    expression.disabled = !ready || (Boolean(expression.dataset.choice) && !next.supportedExpressions.includes(expression.dataset.choice));
-  }
-  markChoice(performanceActions, previewAction);
-  markChoice(performanceExpressions, previewExpression);
-  performancePreview.disabled = !ready;
+  const categories = new Set(Object.values(next.actions).filter(item => !item.alternate).map(item => item.category));
+  const groups = Object.entries(next.categories).filter(([id]) => categories.has(id));
+  if (!categories.has(previewCategory)) previewCategory = groups[0]?.[0];
+  performanceCategories.replaceChildren();
+  choices(performanceCategories, groups);
+  renderActionChoices();
   if (next.warning) performanceStatus.textContent = next.warning;
 }
 
+onChoice(performanceCategories, id => {
+  if (previewCategory === id) return;
+  previewCategory = id;
+  renderActionChoices();
+});
 onChoice(performanceActions, id => {
   previewAction = id;
-  previewExpression = '';
   markChoice(performanceActions, previewAction);
-  markChoice(performanceExpressions, previewExpression);
-});
-onChoice(performanceExpressions, id => {
-  previewExpression = id;
-  markChoice(performanceExpressions, previewExpression);
 });
 for (const operation of ['open', 'reload', 'preview']) {
   document.getElementById('performance-' + operation).addEventListener('click', async event => {
     const button = event.currentTarget;
+    const action = previewAction;
     button.disabled = true;
     try {
-      const result = await window.va.performance(operation, operation === 'preview'
-        ? { action: previewAction, expression: previewExpression || undefined } : undefined);
+      const result = await window.va.performance(operation, operation === 'preview' ? { action } : undefined);
       if (operation === 'reload') render(result);
       performanceStatus.textContent = operation === 'open' ? result || '' :
-        operation === 'reload' ? '配置已加载。' : '正在预览「' + actionCatalog.actions[previewAction].label + '」。';
+        operation === 'reload' ? '配置已加载。' : '正在预览「' + (actionCatalog.actions[action]?.label ?? action) + '」。';
     } catch (error) {
       performanceStatus.textContent = error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
     } finally {
-      button.disabled = operation === 'preview' && !actionCatalog?.actions.idle.supported;
+      button.disabled = operation === 'preview' && (!actionReady || !actionCatalog?.actions[previewAction]?.supported);
     }
   });
 }
@@ -140,15 +148,14 @@ function render(settings) {
   musicDance.checked = settings.musicDance;
   document.getElementById('music-settings').hidden = !settings.nativeSenses;
   document.getElementById('privacy').hidden = !settings.nativeSenses;
-  scale.disabled = clickThrough.disabled = screenWatch.disabled = musicDance.disabled = false;
-  const canObserve = ['local', 'api'].includes(settings.integrationMode);
-  screenWatch.disabled = musicDance.disabled = !canObserve;
-  for (const option of screenInterval.children) option.disabled = !canObserve;
-  screenDestination.textContent = settings.integrationMode === 'local'
-    ? '截图发送给选定的本地 Agent 及其模型服务。角色隐藏时暂停。'
-    : settings.integrationMode === 'api'
-      ? '截图发送给已配置的视觉模型。角色隐藏时暂停。'
-      : '此接入方式下，VA 暂停主动看屏幕和跟随音乐。';
+  scale.disabled = clickThrough.disabled = false;
+  musicDance.disabled = !settings.nativeSenses || settings.integrationMode === 'off';
+  screenWatch.disabled = !settings.screenTarget && !settings.screenWatch;
+  screenDestination.textContent = settings.screenTarget === 'local'
+    ? '由当前选中的本地 Agent 识别截图。使用远端模型时，截图可能发给其模型服务。角色隐藏时暂停。'
+    : settings.screenTarget === 'api'
+      ? '由当前 API 配置中的视觉模型识别截图。角色隐藏时暂停。'
+      : '选用支持图片的本地 Agent 或配置了视觉模型的 API 后可开启。';
   renderSenses(settings.senses);
   if (settings.model) {
     const model = settings.model;
@@ -205,7 +212,8 @@ async function update(change) {
     render(await window.va.settings(change));
     status.textContent = '';
   } catch (error) {
-    status.textContent = error.message;
+    if (Object.hasOwn(change, 'screenWatch')) await window.va.settings().then(render).catch(() => {});
+    status.textContent = error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
   }
 }
 

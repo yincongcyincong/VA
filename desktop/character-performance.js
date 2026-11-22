@@ -1,4 +1,4 @@
-import { performanceId } from './actions.js';
+import { actionCategories, danceActions, performanceId } from './actions.js';
 import { danceIntent } from './dance-intent.js';
 
 const actionWords = {
@@ -6,6 +6,7 @@ const actionWords = {
   pose: ['摆个姿势', '摆个造型'], pet: ['摸摸头', '摸头', '被摸摸'],
   happy: ['开心一下', '庆祝一下'], angry: ['生个气', '假装生气'], sad: ['难过一下', '伤心一下'],
   kiss: ['给我一个飞吻', '送个飞吻', '比个飞吻'], idle: ['休息一下'],
+  'talk-natural': ['自然聊天'], 'talk-lively': ['活泼说话'], 'talk-thoughtful': ['思考着说', '思考式交谈'],
 };
 const expressionWords = { smile: ['笑一个', '笑一笑'], surprised: ['露出惊讶表情'], neutral: ['恢复平静'] };
 const quotes = /[“”「」『』"'‘’`]/u;
@@ -27,6 +28,13 @@ export function requestsSelfie(text, name) {
 
 export function characterPerformancePrompt(character, catalog, { style = 'text', dance = true } = {}) {
   const actions = Object.entries(catalog.actions).filter(([, action]) => action.supported);
+  const actionList = Object.entries(actionCategories).flatMap(([category, label]) => {
+    const group = actions.filter(([, action]) => !action.alternate && (action.category ?? 'custom') === category);
+    return group.length ? [label, ...group.map(([id, action]) => `- ${id}（${action.label}）`)] : [];
+  });
+  const alternate = actions.filter(([, action]) => action.alternate);
+  if (alternate.length) actionList.push('用户指定时可调用的兼容动作',
+    ...alternate.map(([id, action]) => `- ${id}（${action.label}）`));
   const expressions = catalog.supportedExpressions.map(id => `${id}（${catalog.expressions[id]}）`);
   return [
     `你的 VA 桌面角色名是 ${JSON.stringify(character.name)}。本轮使用这个名字自称。历史对话、模型文件名和旧人设里出现过的称呼按历史称呼理解。`,
@@ -35,7 +43,7 @@ export function characterPerformancePrompt(character, catalog, { style = 'text',
     '用户明确要求的动作优先。VA 可直接响应明确请求。若本轮已经收到 VA 的动作安排反馈，正常回应即可。一次回复最多主动选择一个动作和一个表情。提到、引用或否定某个动作时保持原状。',
     dance ? '想主动跳舞时，选一种可用舞步。' : '本接入已关闭主动跳舞，用户明确要求时仍可由 VA 处理。',
     '摆拍动作在桌面摆姿势。用户明确要求发送自拍时由有附件能力的频道或自拍工具拍摄和发送。自拍成功后只交付图片，省略附文和完成说明。拍摄或发送失败时说明原因。',
-    `当前模型可用动作\n${actions.map(([id, action]) => `- ${id}（${action.label}）`).join('\n') || '暂无'}`,
+    `当前模型可用动作\n${actionList.join('\n') || '暂无'}`,
     `当前模型可用表情\n${expressions.join('、') || '暂无'}`,
     style === 'text'
       ? '先写用户能看到和听到的台词。决定表演时，在回复最后单独写一行 [[va action=wave expression=smile]]，把示例编号换成上面实际可用的编号。action 或 expression 可以只写一个。需要自然聊天时省略这一行。'
@@ -96,7 +104,7 @@ export function replyPerformance(reply, catalog) {
     const act = /^(?:那)?(?:我来|我这就|我给你|让我来|看我)(?:表演)?\s*(.+)$/u.exec(line);
     const actionText = act?.[1].replace(/(?:给你看|吧|啦)$/u, '');
     const dance = actionText && danceIntent(actionText);
-    const danceId = dance && (dance.action ?? 'dance');
+    const danceId = dance && (dance.action ?? danceActions.find(id => catalog.actions[id]?.supported) ?? 'dance');
     const effect = face && findPerformance(face[1], catalog, true)
       || actionText && findPerformance(actionText, catalog)
       || danceId && catalog.actions[danceId]?.supported && { action: danceId };

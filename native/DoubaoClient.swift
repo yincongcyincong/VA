@@ -202,6 +202,17 @@ func sendText(_ text: String, to composer: AXUIElement, in page: AXUIElement, ap
     throw ClientError(code: "CLIENT_SEND", message: "豆包没有确认发送。请检查豆包输入框，再点击发送。")
 }
 
+func currentChat(in root: AXUIElement) -> (window: AXUIElement, page: AXUIElement, route: String)? {
+    let main = element(value(root, kAXFocusedWindowAttribute)) ?? element(value(root, kAXMainWindowAttribute))
+        ?? (value(root, kAXWindowsAttribute) as? [AXUIElement])?.first
+    guard let main, let page = find(main, { role($0) == "AXWebArea" }),
+          let url = (value(page, kAXURLAttribute) as? URL)?.absoluteString ?? value(page, kAXURLAttribute) as? String,
+          url.range(of: #"^chrome://doubao-chat/chat/[0-9]+/?$"#, options: .regularExpression) != nil else {
+        return nil
+    }
+    return (main, page, url.hasSuffix("/") ? String(url.dropLast()) : url)
+}
+
 func run(_ cmd: Command) throws -> [String: Any] {
     guard AXIsProcessTrusted() else {
         throw ClientError(code: "AX_PERMISSION", message: "请在 macOS「隐私与安全性 → 辅助功能」允许 VA，然后再绑定。")
@@ -211,14 +222,18 @@ func run(_ cmd: Command) throws -> [String: Any] {
     }
     let root = AXUIElementCreateApplication(app.processIdentifier)
     AXUIElementSetMessagingTimeout(root, 1)
-    let main = element(value(root, kAXFocusedWindowAttribute)) ?? element(value(root, kAXMainWindowAttribute))
-        ?? (value(root, kAXWindowsAttribute) as? [AXUIElement])?.first
-    guard let main, let page = find(main, { role($0) == "AXWebArea" }),
-          let url = (value(page, kAXURLAttribute) as? URL)?.absoluteString ?? value(page, kAXURLAttribute) as? String,
-          url.range(of: #"^chrome://doubao-chat/chat/[0-9]+/?$"#, options: .regularExpression) != nil else {
-        throw ClientError(code: "CLIENT_ROUTE", message: "请在豆包里打开一条已有对话，再绑定当前对话。")
+    _ = role(root)
+    var chat = currentChat(in: root)
+    if chat == nil, cmd.op == "inspect", cmd.route == nil {
+        // Electron and Chromium may expose the web area only after an accessibility client requests it.
+        if AXUIElementSetAttributeValue(root, "AXManualAccessibility" as CFString, kCFBooleanTrue) != .success {
+            AXUIElementSetAttributeValue(root, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
+        }
+        chat = waitFor({ currentChat(in: root) }, seconds: 2.4)
     }
-    let route = url.hasSuffix("/") ? String(url.dropLast()) : url
+    guard let (main, page, route) = chat else {
+        throw ClientError(code: "CLIENT_ROUTE", message: "没识别到当前会话。请在豆包左侧打开一条已有聊天，等内容加载后再绑定。")
+    }
     if let expected = cmd.route, route != expected {
         throw ClientError(code: "CLIENT_ROUTE", message: "请切回绑定的豆包对话。")
     }

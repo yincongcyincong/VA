@@ -3,6 +3,7 @@ import { getModelSettings, requestModel } from './vision-agent.js';
 
 export const modes = ['off', 'local', 'doubao-client', 'doubao', 'api', 'astrbot', 'openclaw'];
 export const externalModes = ['astrbot', 'openclaw'];
+export const screenMode = mode => mode === 'local' || mode === 'api' ? mode : null;
 
 export function integrationMode(config) {
   if (modes.includes(config?.mode)) return config.mode;
@@ -10,7 +11,7 @@ export function integrationMode(config) {
   if (enabled.length > 1) return 'off';
   if (enabled.length) return enabled[0];
   if (!config?.localAgent?.provider && (config?.language?.model || config?.vision?.model)) return 'api';
-  return 'local';
+  return config?.localAgent?.provider ? 'local' : 'off';
 }
 
 export function botRoute(config) {
@@ -31,8 +32,7 @@ export function checkBotRoute(config, platform, origin) {
     ? route : null;
 }
 
-export function integrationSnapshot(config) {
-  const mode = integrationMode(config);
+export function integrationSnapshot(config, mode = integrationMode(config)) {
   const { target = '', channel = '', accountId = '', sessionKey = '', speakReplies = false } = config?.channels?.[mode] ?? {};
   return { mode,
     ...(externalModes.includes(mode) && { route: { target, channel, accountId, sessionKey, speakReplies } }) };

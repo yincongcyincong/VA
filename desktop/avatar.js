@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { actions, facePresets } from './actions.js';
+import { actions, facePresets, speechActionStyles } from './actions.js';
 import { danceMotion } from './dance-motion.js';
 import { disposeModel, loadModel } from './model-loaders.js';
 import { createSpeechMotion } from './speech-motion.js';
@@ -220,6 +220,7 @@ export async function loadAvatar(stage, model) {
   };
   let startedAt = 0;
   let speech;
+  let speechGesture;
   let previousTime = performance.now() / 1000;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const neutralSpeech = createSpeechMotion('', 'natural', 0);
@@ -231,6 +232,8 @@ export async function loadAvatar(stage, model) {
     lastCustomPose.clear();
     plan = next;
     startedAt = performance.now() / 1000;
+    const style = speechActionStyles[next.motion];
+    speechGesture = style && createSpeechMotion('', style, next.seconds, undefined, reducedMotion);
     setPmxTargets(Object.keys(next.face?.pmx ?? {}));
     for (const name of Object.keys(next.face?.morphs ?? {})) affectedMorphs.add(name);
     for (const name of Object.keys(next.face?.vrm ?? {})) affectedVrm.add(name);
@@ -251,9 +254,16 @@ export async function loadAvatar(stage, model) {
     for (const [bone, rotation] of lastCustomPose) bone.rotation.copy(rotation);
     lastCustomPose.clear();
     mixer?.update(dt);
+    const actionStyle = speechActionStyles[action];
+    const style = actionStyle ?? speech?.style;
+    if (speech && (!speech.sample || style !== speech.sampleStyle)) {
+      speech.sampleStyle = style;
+      speech.sample = createSpeechMotion(speech.text, style, speech.duration, speech.level, reducedMotion);
+    }
     const talking = speech ? speech.sample(now - speech.start) : neutralSpeech(0);
     // The mouth can keep moving during a deliberate pose, wave or dance.
-    const gesture = action === 'idle' ? talking : neutralSpeech(0);
+    const gesture = action === 'idle' || actionStyle
+      ? speech ? talking : speechGesture?.(elapsed) ?? neutralSpeech(0) : neutralSpeech(0);
     const strength = length ? smooth(elapsed / Math.min(.38, length / 3)) *
       smooth((length - elapsed) / Math.min(.45, length / 3)) : 0;
     const armRest = proceduralIdle ? (1 - strength) * .65 : 0;
@@ -268,6 +278,11 @@ export async function loadAvatar(stage, model) {
     const angry = action === 'angry' ? strength : 0;
     const sad = action === 'sad' ? strength : 0;
     const kiss = action === 'kiss' ? strength : 0;
+    const heart = action === 'pose-heart' ? strength : 0;
+    const hero = action === 'pose-hero' ? strength : 0;
+    const look = action === 'idle-look' ? Math.sin(motionTime * 2.3) * strength : 0;
+    const stretch = action === 'idle-stretch' ? strength : 0;
+    const thinking = actionStyle === 'thoughtful' ? Math.max(0, gesture.tilt) : 0;
     const throwKiss = kiss * smooth((elapsed / (length || 1) - .42) / .24);
     const bounce = Math.sin(motionTime * 16) * laugh;
     const beat = motionTime * Math.PI * 2;
@@ -275,29 +290,29 @@ export async function loadAvatar(stage, model) {
     const { sway, pulse, rightStep, leftStep, rightLift, leftLift } = dance;
     if (pmx || vrm) {
       modelRoot.position.set(origin.x + dance.x, origin.y + dance.y - .16 * pet + .24 * happy, origin.z);
-      modelRoot.rotation.y = dance.yaw - .12 * pose - .12 * kiss;
+      modelRoot.rotation.y = dance.yaw - .12 * pose - .12 * kiss + .36 * hero;
     }
-    rotate('torso', breathing + bow * 0.52 + gesture.lean * .35 + .22 * sad, 0, sway * 0.06);
+    rotate('torso', breathing + bow * 0.52 + gesture.lean * .35 + .22 * sad - .16 * stretch, .15 * look, sway * 0.06 - .12 * hero);
     rotate('chest', -breathing * 0.6 + bounce * 0.045,
       wave * 0.10 + sway * 0.24 + gesture.hand * .13, -0.14 * sway - 0.11 * pose - gesture.tilt * .45);
     rotate('head',
       0.06 + nod * (0.15 + 0.18 * Math.cos(motionTime * 10))
         + bow * 0.18 - laugh * 0.12 + bounce * 0.055 + pulse * 0.08 + pet * 0.14 + gesture.pitch
-        - .12 * happy + .22 * angry + .31 * sad + .1 * kiss,
-      breathing * 1.6 - sway * 0.16 + pose * 0.14,
-      wave * 0.08 + sway * 0.12 + pose * 0.16 + pet * (0.21 + 0.05 * Math.sin(beat * 1.8)) + gesture.tilt + .16 * kiss);
-    rotate('rightArm', -0.06 - wave * 0.22 + sway * 0.35 - 0.24 * pose - gesture.hand * .53,
-      -wave * 0.22 - .3 * kiss, 0.42 + armRest - wave * 0.69 - rightLift * 0.72 - sway * 0.51 - pose * 0.65 - gesture.hand * .57
-        - .68 * happy + .22 * angry - .6 * kiss - .48 * throwKiss);
+        - .12 * happy + .22 * angry + .31 * sad + .1 * kiss - .16 * stretch,
+      breathing * 1.6 - sway * 0.16 + pose * 0.14 + .49 * look - .32 * hero,
+      wave * 0.08 + sway * 0.12 + pose * 0.16 + pet * (0.21 + 0.05 * Math.sin(beat * 1.8)) + gesture.tilt + .16 * kiss + .14 * heart - .18 * hero);
+    rotate('rightArm', -0.06 - wave * 0.22 + sway * 0.35 - 0.24 * pose - gesture.hand * .53 - .64 * heart - .32 * stretch - 1.5 * thinking,
+      -wave * 0.22 - .3 * kiss - .22 * heart, 0.42 + armRest - wave * 0.69 - rightLift * 0.72 - sway * 0.51 - pose * 0.65 - gesture.hand * .57
+        - .68 * happy + .22 * angry - .6 * kiss - .48 * throwKiss - .37 * heart + .36 * hero - 1.4 * stretch - 2 * thinking);
     rotate('rightElbow', 0.03, 0.08, -wave * 1.53 - rightLift * 0.72 - pose * 1.48 - gesture.hand * 1.22
-      - 1.72 * kiss + 1.14 * throwKiss - .62 * angry);
+      - 1.72 * kiss + 1.14 * throwKiss - .62 * angry - 1.42 * heart - 1.16 * hero - .42 * stretch - 4.2 * thinking);
     rotate('rightWrist', 0, wave * 0.32 + pose * 0.4 + gesture.hand * .38,
-      wave * Math.sin(motionTime * 13) * 0.37 - pulse * 0.24 + .46 * throwKiss);
-    rotate('leftArm', -0.07 - sway * 0.35 - gesture.oppositeHand * .46, 0,
-      -0.42 - armRest + laugh * 0.18 + leftLift * 0.72 - sway * 0.51 + gesture.oppositeHand * .6 + .76 * happy - .18 * angry);
+      wave * Math.sin(motionTime * 13) * 0.37 - pulse * 0.24 + .46 * throwKiss + .43 * heart);
+    rotate('leftArm', -0.07 - sway * 0.35 - gesture.oppositeHand * .46 - .64 * heart - .32 * stretch, .22 * heart,
+      -0.42 - armRest + laugh * 0.18 + leftLift * 0.72 - sway * 0.51 + gesture.oppositeHand * .6 + .76 * happy - .18 * angry + .37 * heart + 1.4 * stretch);
     rotate('leftElbow', -pet * 0.4, -0.05 - laugh * 0.50,
-      laugh * 0.20 + leftLift * 0.72 + pet * 0.5 + gesture.oppositeHand);
-    rotate('leftWrist', 0, 0, pulse * 0.24);
+      laugh * 0.20 + leftLift * 0.72 + pet * 0.5 + gesture.oppositeHand + 1.42 * heart + .42 * stretch);
+    rotate('leftWrist', 0, 0, pulse * 0.24 - .43 * heart);
     rotate('rightLeg', -rightStep * 0.24, 0, sway * 0.12);
     rotate('leftLeg', -leftStep * 0.24, 0, sway * 0.12);
     rotate('rightKnee', rightStep * 0.44, 0, 0);
@@ -394,8 +409,9 @@ export async function loadAvatar(stage, model) {
       clips: clips.filter(clip => clip.name && clip.duration > 0).slice(0, 256).map(clip => clip.name),
       bones: [...bones.keys()].slice(0, 1024),
       morphs: [...(pmxMorphs?.keys() ?? (vrm ? vrmMorphs : genericMorphs.keys()))].slice(0, 512),
-      motions: Object.keys(actions).filter(id => id === 'idle' || (rig.head && ['nod', 'sad', 'pet'].includes(id)) ||
-        ((pmx || vrm) && rig.rightArm && ['wave', 'pose', 'kiss', 'happy', 'angry'].includes(id)) ||
+      motions: Object.keys(actions).filter(id => id === 'idle' || (rig.head && (speechActionStyles[id] || ['nod', 'sad', 'pet', 'idle-look'].includes(id))) ||
+        (rig.rightArm && ['wave', 'pose', 'pose-hero', 'kiss', 'happy', 'angry'].includes(id)) ||
+        (rig.leftArm && rig.rightArm && ['pose-heart', 'idle-stretch'].includes(id)) ||
         (rig.torso && ['bow', 'laugh'].includes(id)) ||
         (rig.leftArm && rig.rightArm && rig.torso && id.startsWith('dance'))),
       mouthSync: pmx ? Object.hasOwn(mesh.morphTargetDictionary ?? {}, 'あ') : vrmMouthSync,
@@ -409,8 +425,7 @@ export async function loadAvatar(stage, model) {
     },
     play,
     speak(text, style, durationMs, audioLevel) {
-      speech = { start: performance.now() / 1000,
-        sample: createSpeechMotion(text, style, durationMs / 1000, audioLevel, reducedMotion) };
+      speech = { start: performance.now() / 1000, text, style, duration: durationMs / 1000, level: audioLevel };
     },
     stopSpeaking() {
       speech = undefined;

@@ -25,6 +25,7 @@ export async function readSettings(path) {
       clickThrough: settings?.clickThrough === true,
       screenWatch: settings?.screenWatch === true,
       screenInterval: normalizeScreenInterval(settings?.screenInterval),
+      screenSource: settings?.screenSource,
       musicDance: settings?.musicDance === true,
     };
   } catch (error) {
@@ -65,7 +66,7 @@ export async function readCharacter(path, defaults) {
   if (typeof name !== 'string' || !name.trim() || typeof prompt !== 'string' || !prompt.trim()) {
     throw new ControlError('CHARACTER_CONFIG', '角色配置需要填写 name 和 prompt。');
   }
-  const displayName = name.trim();
+  const displayName = name.trim() === 'Gemini 娘' ? 'Gemini' : name.trim();
   const previousNames = [defaults.name, '阿哈', '星神', 'Gemini 娘'];
   const expand = (line, templates) => {
     const legacy = templates.find(template => previousNames.some(oldName =>

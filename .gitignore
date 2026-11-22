@@ -9,5 +9,6 @@ dist/
 va-*.png
 
 build/
+logs/
 
 model-samples/

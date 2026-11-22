@@ -3,9 +3,9 @@
 
 VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。可以拖动底部把手移动窗口，拖动角色旋转视角，用滚轮缩放。底部控制条提供缩放和设置。macOS 菜单栏和 Windows 系统托盘可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
 
-VA 优先使用本机的 **星神（星穹铁道）**，并随源码提供 ApprenTice 制作的 **Gemini 娘**。喜欢这些角色，可以到模之屋查看原作者的作品。[阿哈 · 模之屋原帖](https://www.aplaybox.com/details/model/vODgdw8vDdb3) · [AI 娘全家桶 · 模之屋原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+VA 优先使用本机的 **星神（星穹铁道）**，并随源码提供 ApprenTice 制作的 **Gemini**。喜欢这些角色，可以到模之屋查看原作者的作品。[阿哈 · 模之屋原帖](https://www.aplaybox.com/details/model/vODgdw8vDdb3) · [AI 娘全家桶 · 模之屋原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
-[角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体与模型](#智能体与模型) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型)
+[角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体与模型](#智能体与模型) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型) · [代码结构](docs/architecture.md)
 
 ## 3D 角色展示
 
@@ -38,7 +38,7 @@ macOS 的 Swift 助手需要在目标架构的 Mac 上编译。Windows 上可以
 
 下载阿哈后，把整个模型包解压到系统的「文稿」或「下载」目录，保留原文件夹名及贴图。VA 启动时自动查找 `星穹铁道-阿哈2.pmx`，也可以用 `AVATAR_DIR` 指定模型目录。原包使用规则禁止二次配布，阿哈文件从本机读取。[阿哈下载页](https://www.aplaybox.com/details/model/vODgdw8vDdb3)
 
-安装后也可以直接使用随包提供的 Gemini 娘。模型是静态 GLB，适合旋转预览和拍照。舞蹈和口型需要相应骨骼和表情的模型，可在「设置 → 桌面角色」切换。内置模型遵循 CC BY-NC-SA 4.0。[模型署名和使用条件](assets/models/ATTRIBUTION.md)
+安装后也可以直接使用随包提供的 Gemini。模型是静态 GLB，适合旋转预览和拍照。舞蹈和口型需要相应骨骼和表情的模型，可在「设置 → 桌面角色」切换。内置模型遵循 CC BY-NC-SA 4.0。[模型署名和使用条件](assets/models/ATTRIBUTION.md)
 
 在项目根目录也可用 `node bin/va.js start` 启动已打包的本机版本，或用 `node bin/va.js status --json` 查询状态。在 macOS 可把命令链接成 PATH 中的 `va`：
 
@@ -47,12 +47,22 @@ mkdir -p ~/.local/bin
 ln -s "$PWD/bin/va.js" ~/.local/bin/va
 ```
 
+### 测试与日志
+
+在仓库运行 `npm test` 或 `make test`。测试使用临时配置、模拟截图和模拟 Agent，对外部服务和系统录制权限均无依赖。
+
+VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启动时，以执行命令时所在的目录为准。直接打开打包应用且系统提供的工作目录是磁盘根目录时，以 `.app` 或 `.exe` 的所在目录为准。macOS 下可运行 `tail -f logs/va.log` 跟踪日志。
+
+日志每行一条 JSON，记录启动、模型检查、接入切换、对话结果、豆包绑定、动作和传感器状态。错误按错误码记录，聊天正文、截图、录音和 API 密钥仅用于各自的功能。日志达到约 2 MiB 时轮换，上一份保存在 `logs/va.log.1`。
+
 ## 命令行
 
 ```bash
 va actions --supported --json
 va wave
 va act '侧步摇摆'
+va actions --category '说话' --supported
+va talk-lively --say '快听我说！'
 va express '微笑'
 va perform --action '挥手' --expression '微笑' --say '欢迎来到这里！'
 va view portrait
@@ -65,16 +75,19 @@ va stop
 
 `va actions --supported` 列出当前模型能播放的动作和表情。改好 `performance.json` 后可用 `va actions --reload --supported` 重新读取，新增的编号和显示名称随后即可调用。
 
-默认动作包括挥手、点头、鞠躬、喜悦、生气、难过、大笑、飞吻、摸摸、摆拍和下列舞步。菜单栏「VA → 跳舞」可以直接选舞步。[朗读音色](#语音和口型)
+「设置 → 动作」按类别切换和预览动作。预览使用动作配置的默认表情。CLI 用 `va actions --category <类别>` 查看同一组动作，类别可填编号或中文名称。
 
-| 命令 | 舞步 |
+| 类别 | 三个内置动作 |
 | --- | --- |
-| `va act dance` | 经典律动 |
-| `va act dance-side` | 侧步摇摆 |
-| `va act dance-spin` | 转身亮相 |
-| `va act dance-bounce` | 弹跳挥手 |
+| 舞蹈 `dance` | 侧步摇摆 `dance-side`、转身亮相 `dance-spin`、弹跳挥手 `dance-bounce` |
+| 说话 `speech` | 自然交谈 `talk-natural`、活泼讲述 `talk-lively`、思考式说话 `talk-thoughtful` |
+| 问候 `greeting` | 挥手 `wave`、点头 `nod`、鞠躬 `bow` |
+| 情绪 `emotion` | 喜悦 `happy`、生气 `angry`、难过 `sad` |
+| 互动 `interaction` | 大笑 `laugh`、摸摸 `pet`、飞吻 `kiss` |
+| 摆拍 `pose` | 摆拍 `pose`、双手比心 `pose-heart`、侧身亮相 `pose-hero` |
+| 待机 `idle` | 待机 `idle`、左右观察 `idle-look`、伸懒腰 `idle-stretch` |
 
-可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」。VA 在本机识别明确的跳舞请求并开始表演。VA 聊天框、`va chat`、已绑定的豆包对话和已配置的机器人频道都支持这种用法。通话中的语音入口见下文。未指定舞步时，VA 轮换四种舞步。可用舞步取决于当前模型的骨骼和动画。
+可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」，也可以在菜单栏选择舞步。未指定舞步时，VA 轮换当前支持的舞蹈组动作。经典律动仍可用 `va act dance` 播放。说话组可搭配 `--say` 和指定台词，角色用该动作对应的手势与口型。可用动作取决于当前模型的骨骼和动画。
 
 `va act`、`va say`、`va perform` 默认等演出完成后返回。用 `--no-wait` 可立即获取任务 ID，再用 `va status --json` 查询，或在动作进行时另行调用 `va photo`。已有表演时，新表演返回 `BUSY`。用 `va stop` 可打断，等待该任务的调用会收到 `CANCELED`。
 
@@ -100,7 +113,7 @@ macOS 可以用 `make run` 启动已有的打包版本、`make build` 生成本�
 
 导入前会检查文件、可见网格和实际渲染结果，检测通过后才替换当前角色。可先点「检测模型…」或执行 `va model-check "/path/to/character.glb" --json`，预查骨骼、表情目标和动画片段。检测失败会保留当前角色。模型能渲染时，缺少部分贴图会显示提醒。
 
-在「设置 → 模型库 → 默认3D模型」可以预览本机的星神和内置的 Gemini 娘。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 VRM 或 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+在「设置 → 模型库 → 3D模型」可以预览本机的星神和内置的 Gemini，也可以按名称搜索内置或已导入的模型。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 VRM 或 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
 安装 Blender 5.2 或更新版本后，也可以用命令导出这三个角色。脚本保留已有的 GLB，导出后在模型库重新导入解压目录。
 
@@ -108,7 +121,7 @@ macOS 可以用 `make run` 启动已有的打包版本、`make build` 生成本�
 blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls.py -- "解压后的 AI 娘全家桶目录"
 ```
 
-十款 AI 娘都可以生成带动作和表情的 VRM。启用 Blender 的 VRM 插件后，用下面的命令把动作版写入单独的目录，再从「默认3D模型 → 导入解压目录…」选中该目录。DeepSeek 复用原有骨骼，其余角色按各自的体型绑定。动作版支持内置身体动作、基础表情和五种口型。批量生成的面部变形可在 Blender 中继续细调。[Blender VRM 插件](https://vrm-addon-for-blender.info/en-us/installation/)
+十款 AI 娘都可以生成带动作和表情的 VRM。启用 Blender 的 VRM 插件后，用下面的命令把动作版写入单独的目录，再从「3D模型 → 导入解压目录…」选中该目录。DeepSeek 复用原有骨骼，其余角色按各自的体型绑定。动作版支持内置身体动作、基础表情和五种口型。批量生成的面部变形可在 Blender 中继续细调。[Blender VRM 插件](https://vrm-addon-for-blender.info/en-us/installation/)
 
 ```bash
 blender --background --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls-vrm.py -- \
@@ -119,9 +132,9 @@ blender --background --disable-autoexec --python-exit-code 1 --python scripts/ex
 
 PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FBX 可以给动作绑定文件自带的片段。OBJ 适用于静态展示。可用动作和表情会在设置的预览页标出。
 
-### 自定义动作与表情
+### 自定义动作
 
-在「设置 → 动作与表情」打开 `performance.json`。编辑并保存后点「重新加载配置」，也可执行 `va actions --reload`。配置出错时，VA 会保留上一份可用配置。配置路径可用 `VA_PERFORMANCE_CONFIG` 指定。
+在「设置 → 动作」打开 `performance.json`。编辑并保存后点「重新加载配置」，也可执行 `va actions --reload`。配置出错时，VA 会保留上一份可用配置。配置路径可用 `VA_PERFORMANCE_CONFIG` 指定。
 
 让 Agent 代做时，使用 [Agent 自定义动作指南](docs/agent-custom-actions.md) 或仓库里的 [VA Skill](skills/va-desktop/SKILL.md)。
 
@@ -132,6 +145,7 @@ PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FB
   "actions": {
     "hello-wink": {
       "label": "眨眼问好",
+      "category": "greeting",
       "seconds": 2.5,
       "motion": "wave",
       "expression": "wink",
@@ -149,6 +163,7 @@ PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FB
 ```
 
 - `motion` 可复用内置动作，`clip` 可指定模型里的动画片段，例如 `"clip": "Run"`。骨骼姿势可写成 `"bones": {"头骨名称": [0, 12, 8]}`，三个值分别是 X、Y、Z 轴的角度。骨骼、片段和表情目标沿用模型检测显示的名称。
+- 自定义动作可通过 `category` 加入上表中的类别，省略时归入「自定义」。旧动作配置和动作编号仍可使用。
 - 表情的权重为 0 至 1。PMX 用 `pmx`，VRM 用 `vrm`，其他带形变目标的模型用 `morphs`。MCP 的 `va_actions` 和命令行的 `va actions` 会列出当前配置。
 
 | 样本 | 下载来源 |
@@ -164,12 +179,12 @@ MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角�
 
 ## 智能体与模型
 
-从菜单栏「VA → 智能体与模型…」或桌面设置的同名按钮打开，也可执行 `va chat`。接入方式同一时间只启用一种，切换时保留之前的配置，便于换回。
+从菜单栏「VA → 智能体与模型…」或桌面设置的同名按钮打开，也可执行 `va chat`。VA 同时只启用一种接入。切换时停止原接入并保留配置。选择「关闭」会停止全部自动交互，包括实时语音、屏幕观察和音乐跟随。
 
 - **本地 Agent** 选择 Codex、Claude Code、DeepSeek Harness、OMP 或自定义 Agent。在「连接设置」可绑定会话、设置附加 Prompt 和工作目录。目录留空时使用启动 VA 时所在的目录。VA 使用已安装 Agent 自己的模型服务。
 - **豆包客户端** 使用 Mac 上已登录的豆包及当前对话。VA 可以发送文字和显示新的回复，语音输入与朗读由豆包客户端负责。[客户端设置](#本机豆包客户端)
-- **火山实时语音** 支持在 VA 直接开麦聊天。豆包语音流驱动阿哈口型，回复字幕会显示在桌面气泡中。[实时语音设置](#豆包实时语音)
-- **模型 API** 列出本机可读取的 Codex CLI、Claude Code 和自定义配置。可直接选择可用的 CLI 配置，也可点「添加配置」填写名称、API 协议、Base URL、模型名、API Key 和附加 Prompt。支持 OpenAI Chat、OpenAI Responses 和 Anthropic Messages。视觉模型在同一弹窗单独配置。只有 CLI 登录而没有 API Key 时，可继续使用「本地 Agent」或复制为自定义配置并补全。CLI 配置按需读取，密钥不会显示在列表中。
+- **火山实时语音** 在「参考音色」配置并切换到实时语音，可在 VA 直接开麦聊天。语音流驱动角色口型，回复同步到桌面气泡。[实时语音设置](#豆包实时语音)
+- **模型 API** 列出本机可读取的 Codex CLI、Claude Code 和自定义配置。可直接选择可用的 CLI 配置，也可点「添加配置」填写名称、API 协议、Base URL、模型名、API Key 和附加 Prompt。支持 OpenAI Chat、OpenAI Responses 和 Anthropic Messages。只有 CLI 登录而没有 API Key 时，可继续使用「本地 Agent」或复制为自定义配置并补全。CLI 配置按需读取，密钥不会显示在列表中。
 - **AstrBot / OpenClaw** 在本窗口保存目标频道。Bot 调用自己的模型，VA 显示选定频道已经发出的回复。[安装与使用](#openclaw-和-astrbot)
 
 配置保存在 `~/Library/Application Support/VA Desktop/agent.json`。CLI 可用 `va integration [off|local|doubao-client|doubao|api|astrbot|openclaw]` 查询或切换接入方式。手动编辑 JSON 的 `mode` 后重启 VA。
@@ -229,8 +244,8 @@ VA 通过 Core Audio 采集豆包及其音频助手的输出，中文转写在 M
 
 ### 豆包实时语音
 
-1. 在火山引擎开通豆包端到端实时语音（Seeduplex）。在 VA 打开「智能体与模型 → 火山实时语音」，填入拥有实时语音权限的火山 API Key，或在 VA 的启动环境设置 `VOLC_REALTIME_API_KEY`。音色可以留空使用默认的 Vivi，也可以填写实时语音的音色 ID。附加 Prompt 会与阿哈的人设一起发给豆包。[火山实时语音文档](https://docs.volcengine.com/docs/doubao-voice/end-to-end-real-time-voice-full-duplex-version?lang=zh)
-2. 点「保存豆包设置」，再点「开始语音对话」。首次使用时，在 macOS「系统设置 → 隐私与安全性 → 麦克风」允许 **VA** 访问。通话中，设置窗口显示双方的字幕，阿哈旁边的气泡同步显示豆包回复，嘴型跟随播放的语音。点「结束」或关闭设置窗口即可停止采集。
+1. 在火山引擎开通豆包端到端实时语音（Seeduplex）。在 VA 打开「参考音色 → 火山实时语音」，填入拥有实时语音权限的火山 API Key，或在 VA 的启动环境设置 `VOLC_REALTIME_API_KEY`。音色可以留空使用默认的 Vivi，也可以填写实时语音的音色 ID。附加 Prompt 会与阿哈的人设一起发给豆包。[火山实时语音文档](https://docs.volcengine.com/docs/doubao-voice/end-to-end-real-time-voice-full-duplex-version?lang=zh)
+2. 点「保存实时语音配置」，再点「切换到实时语音」和「开始语音对话」。首次使用时，在 macOS「系统设置 → 隐私与安全性 → 麦克风」允许 **VA** 访问。通话中，设置窗口显示双方的字幕，阿哈旁边的气泡同步显示豆包回复，嘴型跟随播放的语音。点「结束」或关闭设置窗口即可停止采集。
 3. 说「跳个舞吧」时，VA 收到用户语音的转写就开始跳舞。默认还允许豆包根据聊天内容主动发起表演，例如听到「今天有好消息，庆祝一下吧」。主动表演开关在「火山实时语音」里。
 
 VA 建立实时语音会话时会把桌面角色能跳的舞步发给模型。如果同一轮已经从用户语音识别并安排了舞蹈，跳舞工具会返回已安排的状态。
@@ -267,7 +282,9 @@ OpenClaw 按频道的配对或访问策略授权，AstrBot 允许管理员或插
 
 在 VA 的「设置 → 屏幕与音乐」分别开启屏幕观察和音乐跟随。两项功能默认关闭，角色隐藏时暂停。观察间隔可选 `10s`、`30s`、`1min`、`5min`、`10min`、`30min`、`1h`、`6h`、`24h`，默认 `10s`。截屏按间隔发起，分析较慢时只保留一张最新待处理截图。也可用 `va sense interval 30`、`va sense screen on` 和 `va sense music on`，状态可用 `va senses --json` 查询。首次使用时，在 macOS 的「隐私与安全性 → 屏幕与系统音频录制」授权 VA，然后退出并重新启动。源码模式下，macOS 可能将授权归给启动 VA 的终端。
 
-截图由当前接入方式处理。本地 Agent 模式将图片放进单独的观察请求，选用远端模型的 Agent 可能会把画面发送给它的模型服务。模型 API 模式使用「视觉模型」中的配置，发送到远端需要 HTTPS，并勾选「允许发截图到远端视觉模型」。两种机器人模式下暂停主动观察和音乐跟随。开启观察时，MCP 客户端也可以用 `va_observe` 读取图片、用 `va_senses` 查看状态。
+屏幕观察跟随当前接入。本地 Agent 模式只把截图交给当前选择的 Agent，选用远端模型时可能把画面发送给其模型服务。模型 API 模式使用当前 API 配置的「屏幕识别」模型，远程 API 需要 HTTPS 并勾选「允许发截图到远端视觉模型」。豆包客户端、火山实时语音及机器人接入期间，屏幕观察暂停。开启观察后，MCP 客户端可用 `va_observe` 请求一次观察并取得文字结果，用 `va_senses` 查看状态。
+
+macOS 上已选用一种交互接入时，可独立开启音乐跟随。音频分类在本机进行。
 
 音乐识别使用 macOS 的本机音频分类，分析系统输出。检测到音乐会播放角色的预设舞步，音乐停止或关闭开关时会停下。鼠标穿透关闭时，点角色可以打断自动动作并听到摸摸回应。桌面打包会编译音频组件，源码开发可用 `make dev` 编译并启动。
 

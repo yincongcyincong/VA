@@ -165,8 +165,8 @@ export async function editApiProfiles(config, action) {
     const language = readModel(action.language, previous?.language, 'language');
     language.prompt = bounded(action.prompt ?? '', 5000);
     language.speakReplies = action.speakReplies === true;
-    const vision = readModel(action.vision, previous?.vision, 'vision');
-    const profile = { id: previous?.id ?? randomUUID(), name, language, vision };
+    const vision = action.vision ? readModel(action.vision, previous?.vision, 'vision') : previous?.vision;
+    const profile = { ...previous, id: previous?.id ?? randomUUID(), name, language, vision };
     return { ...config, apiProfiles: previous ? profiles.map(item => item.id === profile.id ? profile : item) : [...profiles, profile],
       apiProfileId: selected || profile.id };
   } else if (action?.op === 'remove') {

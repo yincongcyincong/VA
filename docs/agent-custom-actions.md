@@ -39,6 +39,8 @@ va actions --config-path --json
 
 在已有 JSON 的 `actions` 和 `expressions` 对象中增加或更新条目，保留用户的其他动作和表情。动作和表情编号以小写英文字母开头，后续可用小写字母、数字或连字符，最长 40 个字符。
 
+用 `va actions --json` 中的 `categories` 查看类别编号。自定义动作可通过 `category` 加入现有类别，省略时显示在「自定义」。`va actions --category 说话 --supported` 可筛选当前模型支持的说话动作。
+
 | 用户想要的效果 | 配置方式 |
 | --- | --- |
 | 把挥手、飞吻或跳舞改成自己的表演 | 用 `motion` 复用内置动作，加上 `seconds`、默认 `expression` 和 `dialogue` |
@@ -53,6 +55,7 @@ va actions --config-path --json
   "actions": {
     "hello-wink": {
       "label": "歪头眨眼问好",
+      "category": "greeting",
       "motion": "wave",
       "seconds": 2.5,
       "bones": { "head": [0, 0, 12] },

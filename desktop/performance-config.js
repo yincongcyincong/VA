@@ -1,4 +1,4 @@
-import { actions, expressions, danceActions, facePresets, performanceId } from './actions.js';
+import { actionCategories, actions, expressions, facePresets, performanceId } from './actions.js';
 
 const own = Object.hasOwn;
 const isObject = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -7,7 +7,7 @@ const invalid = (field, message) => { throw new Error(field + ' ' + message); };
 
 export const performanceDefaults = {
   actions: Object.fromEntries(Object.entries(actions).filter(([id]) => id !== 'idle').map(([id, action]) =>
-    [id, { ...action, motion: id, expression: action.expression ?? (danceActions.includes(id) || id === 'laugh' ? 'amused' : 'neutral') }])),
+    [id, { ...action, motion: id, expression: action.expression ?? (action.category === 'dance' || id === 'laugh' ? 'amused' : 'neutral') }])),
   expressions: Object.fromEntries(Object.entries(expressions).map(([id, label]) => [id, { label, ...facePresets[id] }])),
 };
 
@@ -48,10 +48,13 @@ export function compilePerformance(config) {
   const definitions = { idle: { ...actions.idle, motion: 'idle', expression: 'neutral' }, ...performanceDefaults.actions };
   for (const [id, input] of entries(config.actions ?? {}, 'actions', key => key !== 'idle' && performanceId.test(key), 96)) {
     const field = 'actions.' + id;
-    fields(input, ['label', 'seconds', 'motion', 'clip', 'bones', 'expression', 'dialogue'], field);
-    const prior = own(definitions, id) ? definitions[id] : { motion: 'idle', expression: 'neutral' };
+    fields(input, ['label', 'category', 'seconds', 'motion', 'clip', 'bones', 'expression', 'dialogue'], field);
+    const prior = own(definitions, id) ? definitions[id] : { motion: 'idle', expression: 'neutral', category: 'custom' };
     const action = { ...prior, ...input };
     if (!isName(action.label)) invalid(field + '.label', '请填写动作名称。');
+    if (typeof action.category !== 'string' || !own(actionCategories, action.category)) {
+      invalid(field + '.category', '请选择已定义的动作类别。');
+    }
     if (!Number.isFinite(action.seconds) || action.seconds < .25 || action.seconds > 30) {
       invalid(field + '.seconds', '时长必须在 0.25 到 30 秒之间。');
     }
@@ -90,8 +93,10 @@ export function actionSupported(action, media) {
 
 export function describePerformance(catalog, media) {
   return {
+    categories: actionCategories,
     actions: Object.fromEntries(Object.entries(catalog.actions).map(([id, action]) => [
-      id, { label: action.label, seconds: action.seconds, expression: action.expression,
+      id, { label: action.label, category: action.category, seconds: action.seconds, expression: action.expression,
+        ...(id === 'dance' && action.category === 'dance' && { alternate: true }),
         ...(action.clip && { clip: action.clip }), supported: actionSupported(action, media) },
     ])),
     expressions: Object.fromEntries(Object.entries(catalog.faces).map(([id, face]) => [id, face.label])),

@@ -2,14 +2,6 @@ import { ControlError } from '../lib/control.js';
 
 export const apiProtocols = ['chat', 'responses', 'anthropic'];
 
-function clean(value, size) {
-  return typeof value === 'string' ? [...value.trim()].slice(0, size).join('') : '';
-}
-
-export function visionSettings(config) {
-  return getModelSettings(config, 'vision');
-}
-
 export function getModelSettings(config, kind) {
   const { model, baseUrl, apiKey, apiKeyEnv, allowRemoteScreenshots, protocol = 'chat', bearerAuth } = config?.[kind] ?? {};
   const label = kind === 'vision' ? '视觉' : '语言';
@@ -46,7 +38,21 @@ export function getModelSettings(config, kind) {
   };
 }
 
-export async function analyzeScreen(settings, character, frame, previous, signal, localObserve) {
+export function prepareVisionObservation(config) {
+  if (!config.vision?.model) {
+    throw new ControlError('MODEL_UNCONFIGURED', '请在当前 API 配置中填写视觉模型。');
+  }
+  const settings = getModelSettings(config, 'vision');
+  return ({ frame, message, prompt, signal }) => requestModel(settings, [
+    { role: 'system', content: prompt },
+    { role: 'user', content: [
+      { type: 'text', text: message },
+      { type: 'image_url', image_url: { url: `data:${frame.mime};base64,${frame.data}` } },
+    ] },
+  ], signal);
+}
+
+export async function analyzeScreen(character, frame, previous, signal, observe) {
   const instructions = [
     character.prompt,
     '你是 VA 的视觉陪伴 Agent。用一小句中文概括当前画面中可能的活动，需要时按角色设定给出一句简短对白。',
@@ -55,17 +61,13 @@ export async function analyzeScreen(settings, character, frame, previous, signal
     '只返回 JSON 对象，字段 activity 是概括，speech 是台词。保持安静时使用空字符串 speech。',
   ].join('\n');
   const message = `请观察这张主屏幕截图。上次观察与发言（仅供去重）：${JSON.stringify(previous)}`;
-  const answer = localObserve ? await localObserve({ frame, message, prompt: instructions, signal })
-    : await requestModel(settings, [{ role: 'system', content: instructions }, { role: 'user', content: [
-      { type: 'text', text: message },
-      { type: 'image_url', image_url: { url: `data:${frame.mime};base64,${frame.data}` } },
-    ] }], signal);
+  const answer = await observe({ frame, message, prompt: instructions, signal });
   try {
     const result = JSON.parse(answer.trim().replace(/^\x60{3}(?:json)?\s*|\s*\x60{3}$/gi, ''));
     if (typeof result?.activity !== 'string' || typeof result.speech !== 'string') throw new Error();
-    return { activity: clean(result.activity, 100), speech: clean(result.speech, 120) };
+    return { activity: [...result.activity.trim()].slice(0, 100).join(''), speech: [...result.speech.trim()].slice(0, 120).join('') };
   } catch {
-    throw new ControlError('VISION_RESPONSE', '视觉模型未返回包含 activity 和 speech 的 JSON。');
+    throw new ControlError('VISION_RESPONSE', '屏幕识别服务未返回包含 activity 和 speech 的 JSON。');
   }
 }
 

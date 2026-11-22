@@ -4,18 +4,19 @@ import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { danceActions } from './actions.js';
 import { actionSupported, compilePerformance, describePerformance, performanceDefaults } from './performance-config.js';
 import { danceIntent } from './dance-intent.js';
 import { characterPerformancePrompt, chatPerformancePrompt, replyPerformance, requestedPerformance, requestsSelfie } from './character-performance.js';
 import { ControlError, startControl } from '../lib/control.js';
+import { createLogger, errorCode } from '../lib/logger.js';
 import { defaultScale, isScale, minScale, maxScale,
   readCharacter, readConfig, readSettings, settingsWriter } from './config.js';
 import { defaultSpeakingStyle, isSpeakingStyle } from './speech-motion.js';
 import { defaultScreenInterval, isScreenInterval, screenIntervalLabel, themes } from './preferences.js';
 import { apiProfileSnapshot, editApiProfiles, resolveApiConfig, selectedApiId } from './api-profiles.js';
 import { createSenses } from './senses.js';
-import { botRoute, checkBotRoute, configureIntegration, createApiChat, externalModes, integrationMode, integrationSnapshot } from './integration.js';
+import { prepareVisionObservation } from './vision-agent.js';
+import { botRoute, checkBotRoute, configureIntegration, createApiChat, externalModes, integrationMode, integrationSnapshot, screenMode } from './integration.js';
 import { createLocalAgent } from './local-agent.js';
 import { importReference, sampleLimit, systemSpeech } from './speech.js';
 import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
@@ -28,7 +29,10 @@ import { createModelLibrary, localAhaName, modelPage, modelSources } from './mod
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mac = process.platform === 'darwin';
 const appIconPath = join(root, 'assets', 'app-icon.png');
-const launchDirectory = resolve(process.env.VA_START_CWD || process.cwd());
+const cwd = process.cwd();
+const launchDirectory = resolve(process.env.VA_START_CWD || (app.isPackaged && cwd === dirname(cwd)
+  ? (mac ? resolve(process.execPath, '../../../..') : dirname(process.execPath)) : cwd));
+const logger = createLogger(launchDirectory);
 const pageURL = 'va-app://desktop/index.html';
 const bubbleURL = 'va-app://desktop/bubble.html';
 const settingsURL = 'va-app://desktop/settings.html';
@@ -77,7 +81,7 @@ let server;
 let defaultCharacter;
 let performanceCatalog = compilePerformance({});
 let performanceWarning;
-let characterName = 'Gemini 娘';
+let characterName = 'Gemini';
 let nameEdits = Promise.resolve();
 let defaultVoice;
 let voiceEdits = Promise.resolve();
@@ -91,7 +95,7 @@ let captionStartRevision = 0;
 let captionAutoActions = false;
 let getAgentConfig;
 let editAgentConfig;
-let currentMode = 'local';
+let currentMode = 'off';
 let externalHistory = [];
 const channelSpeech = [];
 const inputDances = [];
@@ -264,6 +268,9 @@ ipcMain.on('va:ready', (event, value) => {
   if (!authorized(event)) return;
   const firstLoad = state.state === 'loading';
   state = value;
+  if (firstLoad) logger.write(state.state === 'ready' ? 'info' : 'warn', 'avatar.initialized', {
+    ready: state.state === 'ready', format: selectedModel.format, textureWarning: state.textureWarning === true,
+  });
   if (firstLoad && state.state === 'error' && !launchHidden) openSettings();
   updateTray();
   drainAutomatic();
@@ -293,7 +300,9 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
   switch (operation) {
     case 'status': return chatStatus();
     case 'send': return sendChat(value);
-    case 'action-input': return queueInputPerformance(value) ?? { handled: false };
+    case 'action-input':
+      requireChatInput();
+      return queueInputPerformance(value) ?? { handled: false };
     case 'bind': return bindChat(value);
     case 'configure': return localConfig(value);
     case 'integration': return changeIntegration(value);
@@ -310,7 +319,7 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
     }
     case 'doubao-client-bind':
       requireMode('doubao-client');
-      await doubaoClient.bind(() => currentMode === 'doubao-client' && event.sender === settingsWindow?.webContents);
+      await bindDoubao(() => currentMode === 'doubao-client' && event.sender === settingsWindow?.webContents);
       return chatStatus();
     case 'doubao-client-unbind':
       doubaoClient.unbind();
@@ -347,7 +356,6 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
       doubaoCaptions.stop();
       return doubaoCaptions.state();
     case 'doubao-config':
-      requireMode('doubao');
       if (doubao.running()) throw new ControlError('BUSY', '请先结束语音对话。');
       await editAgentConfig(config => configureDoubao(config, value));
       return chatStatus();
@@ -419,7 +427,10 @@ ipcMain.on('va:bubble-painted', (event, revision) => {
 ipcMain.handle('va:settings', (event, change) => {
   if (controlsAuthorized(event) && change === undefined) return settingsSnapshot();
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
-  return applySettings(change);
+  return applySettings(change).catch(error => {
+    logger.write('warn', 'settings.failed', { code: errorCode(error) });
+    throw error;
+  });
 });
 async function pickModelFile(title) {
   const { canceled, filePaths: [file] } = await dialog.showOpenDialog(settingsWindow, {
@@ -496,7 +507,7 @@ ipcMain.handle('va:performance', async (event, operation, value) => {
       await reloadPerformance();
       return settingsSnapshot();
     case 'preview':
-      return perform({ action: value?.action, expression: value?.expression, wait: false });
+      return perform({ action: value?.action, wait: false });
     default: throw new Error('无效的动作配置操作。');
   }
 });
@@ -658,7 +669,7 @@ function menu() {
   const run = command => handle(command).catch(error => console.error(error.message));
   return Menu.buildFromTemplate([
     { label: '智能体与模型…', click: () => openChat() },
-    { label: '动作与表情…', click: () => openSettings('performance') },
+    { label: '动作…', click: () => openSettings('performance') },
     { label: '模型库…', click: () => openSettings('models') },
     { label: '设置…', click: () => openSettings() },
     { label: (window.isVisible() ? '隐藏' : '显示') + characterName,
@@ -666,8 +677,9 @@ function menu() {
     { label: '鼠标穿透', type: 'checkbox', checked: clickThrough,
       click: item => run({ type: 'click-through', enabled: item.checked }) },
     { label: `看屏幕 · ${screenIntervalLabel(screenInterval)}`, type: 'checkbox', checked: screenWatch,
+      enabled: Boolean(screenMode(currentMode)) || screenWatch,
       click: item => run({ type: 'sense', channel: 'screen', enabled: item.checked }) },
-    ...(mac ? [{ label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance,
+    ...(mac ? [{ label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance, enabled: currentMode !== 'off',
       click: item => run({ type: 'sense', channel: 'music', enabled: item.checked }) }] : []),
     { label: view === 'full' ? '半身视角' : '全身视角',
       click: () => run({ type: 'view', mode: view === 'full' ? 'portrait' : 'full' }) },
@@ -675,7 +687,7 @@ function menu() {
     { label: '打招呼', enabled: state.state === 'ready', click: () => run({
       type: 'perform', action: 'wave', expression: 'smile',
     }) },
-    { label: '跳舞', enabled: supportedDances().length > 0, submenu: danceActions.map(action => ({
+    { label: '跳舞', enabled: supportedDances().length > 0, submenu: danceChoices().map(action => ({
       label: performanceCatalog.actions[action].label, enabled: actionSupported(performanceCatalog.actions[action], state.media),
       click: () => run({ type: 'perform', action }),
     })) },
@@ -748,6 +760,9 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
   cancelActionVoice();
   const job = { id: ++nextId, action, speech: speech.trim(), source };
   active = job;
+  const startedAt = Date.now();
+  const context = { id: job.id, action, source };
+  logger.write('info', 'performance.started', context);
   updateTray();
   const selected = defaultDialogue
     ? chooseLine(action, speech, performanceCatalog.actions[action].dialogue)
@@ -763,12 +778,16 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
     const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud: speak, speakingStyle,
       showWhilePreparing: automatedReply }, automatedReply ? 120_000 : 80_000);
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
+    logger.write('info', 'performance.completed', { ...context, durationMs: Date.now() - startedAt });
     return {
       id: job.id, action, speech: line, completed: true,
       ...(data.voiceWarning && { voiceWarning: data.voiceWarning }),
       ...(selfie && photoResult(data.image, command.clipboard)),
     };
   }).catch(error => {
+    logger.write(job.canceled ? 'info' : 'warn', 'performance.ended', {
+      ...context, durationMs: Date.now() - startedAt, code: job.canceled ? 'CANCELED' : errorCode(error),
+    });
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     const message = error.message.replace(/^Error invoking remote method 'va:speech': Error: /, '');
     throw new ControlError(error.code, message);
@@ -802,8 +821,13 @@ function queueSpeech(speech, source, readAloud = true, effect = {}) {
   return true;
 }
 
+function danceChoices() {
+  return Object.entries(performanceCatalog.actions)
+    .filter(([id, action]) => id !== 'dance' && action.category === 'dance').map(([id]) => id);
+}
+
 function supportedDances() {
-  return danceActions.filter(action => actionSupported(performanceCatalog.actions[action], state.media));
+  return danceChoices().filter(action => actionSupported(performanceCatalog.actions[action], state.media));
 }
 
 function nextDance() {
@@ -814,9 +838,9 @@ function nextDance() {
 function queueInputDance(text) {
   const intent = danceIntent(text, characterName);
   if (!intent) return;
-  const usable = supportedDances();
-  if (!usable.length || (intent.action && !usable.includes(intent.action))) {
-    throw new ControlError('MODEL_ACTION', '当前模型不支持这个舞步，可在「动作与表情」查看可用动作。');
+  const supported = intent.action ? actionSupported(performanceCatalog.actions[intent.action], state.media) : supportedDances().length;
+  if (!supported) {
+    throw new ControlError('MODEL_ACTION', '当前模型不支持这个舞步，可在「动作」查看可用动作。');
   }
   if (inputDances.length + intent.count > 4) {
     throw new ControlError('BUSY', '舞步已经排满，等这几段跳完再试。');
@@ -950,7 +974,10 @@ function drainAutomatic() {
 }
 
 function reportAutomaticError(error) {
-  if (error.code !== 'CANCELED') console.error(error.message);
+  if (error.code !== 'CANCELED') {
+    logger.write('warn', 'automatic.failed', { code: errorCode(error) });
+    console.error(error.message);
+  }
 }
 
 function photoResult(imageURL, copy) {
@@ -961,20 +988,27 @@ function photoResult(imageURL, copy) {
 }
 
 function requireMode(mode) {
-  if (currentMode !== mode) throw new ControlError('INTEGRATION_MODE', '请先在「智能体与模型」选择对应的接入方式。');
+  if (currentMode !== mode) throw new ControlError('INTEGRATION_MODE', mode === 'doubao'
+    ? '请先在「参考音色」启用火山实时语音。' : '请先在「智能体与模型」选择对应的接入方式。');
+}
+
+function requireChatInput() {
+  if (['local', 'api', 'doubao-client'].includes(currentMode)) return;
+  if (currentMode === 'doubao') throw new ControlError('INTEGRATION_MODE', '请在「参考音色」开始实时语音对话。');
+  if (externalModes.includes(currentMode)) throw new ControlError('INTEGRATION_MODE', '请在已绑定的机器人频道对话。');
+  throw new ControlError('INTEGRATION_MODE', '交互已关闭，请先选择一种接入方式。');
 }
 
 async function chatStatus() {
   const config = await getAgentConfig();
-  const integration = { ...integrationSnapshot(config), nativeDoubao: mac };
-  if (integration.mode === 'local') return { integration, ...await localAgent.status() };
-  if (integration.mode === 'doubao-client') return { integration, ...doubaoClient.state(),
+  const integration = { ...integrationSnapshot(config, currentMode), nativeDoubao: mac, doubao: doubaoSnapshot(config) };
+  const doubaoState = doubao.state();
+  if (integration.mode === 'local') return { integration, doubao: doubaoState, ...await localAgent.status() };
+  if (integration.mode === 'doubao-client') return { integration, doubao: doubaoState, ...doubaoClient.state(),
     captions: doubaoCaptions.state(), autoActions: (config.doubaoClient?.autoActions ?? config.doubaoClient?.autoDance) !== false,
     listenForActions: (config.doubaoClient?.listenForActions ?? config.doubaoClient?.listenForDance) === true };
-  if (integration.mode === 'api') return { integration: { ...integration, ...await apiProfileSnapshot(config) }, ...apiChat.state() };
-  if (integration.mode === 'doubao') return { integration: { ...integration, doubao: doubaoSnapshot(config) },
-    doubao: doubao.state(), history: [], busy: false };
-  return { integration, history: externalHistory, busy: false };
+  if (integration.mode === 'api') return { integration: { ...integration, ...await apiProfileSnapshot(config) }, doubao: doubaoState, ...apiChat.state() };
+  return { integration, doubao: doubaoState, history: externalHistory, busy: false };
 }
 
 async function changeIntegration(value) {
@@ -983,12 +1017,17 @@ async function changeIntegration(value) {
   }
   const next = await editAgentConfig(config => configureIntegration(config, value));
   if (currentMode !== next.mode) {
+    logger.write('info', 'integration.changed', { previous: currentMode, mode: next.mode });
+    currentMode = next.mode;
     doubaoStartRevision++;
     captionStartRevision++;
-    doubao.stop();
+    doubao.stop({ immediate: true });
     doubaoClient.unbind();
     if (doubaoCaptions.running()) doubaoCaptions.stop();
-    currentMode = next.mode;
+    clearTimeout(captionTimer);
+    captionText = '';
+    lastCaptionAt = 0;
+    syncBubble();
     apiChat.reset();
     localAgent.cancel();
     externalHistory = [];
@@ -996,12 +1035,17 @@ async function changeIntegration(value) {
     clearInputDances();
     lastInputDanceAt = 0;
     lastInputPerformanceAt = 0;
+    const clearSensors = currentMode === 'off' && (screenWatch || musicDance);
+    if (clearSensors) screenWatch = musicDance = false;
     queuedSpeech = undefined;
-    if (['screen', 'music', 'local-agent', 'api-chat', 'bot-chat', 'doubao-client', 'input-dance', 'input-action'].includes(active?.source)) {
-      await stopPerformance().catch(reportAutomaticError);
-    }
+    screenRevision++;
+    const stop = ['screen', 'music', 'local-agent', 'api-chat', 'bot-chat', 'bot-action', 'doubao-client', 'input-dance', 'input-action'].includes(active?.source)
+      ? stopPerformance().catch(reportAutomaticError) : undefined;
     syncSenses();
+    await stop;
+    if (clearSensors) await persistSettings();
   }
+  updateTray();
   settingsWindow?.webContents.send('va:chat-refresh');
   settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
   return chatStatus();
@@ -1029,12 +1073,28 @@ async function changeApiProfile(value) {
 async function localConfig(value) {
   requireMode('local');
   await localAgent.configure(value);
-  return chatStatus();
+  queuedSpeech = undefined;
+  screenRevision++;
+  syncSenses();
+  const status = await chatStatus();
+  logger.write('info', 'agent.configured', { provider: status.provider || null });
+  return status;
+}
+
+async function bindDoubao(isActive) {
+  logger.write('info', 'doubao.bind_started');
+  try {
+    await doubaoClient.bind(isActive);
+    logger.write('info', 'doubao.bind_completed');
+  } catch (error) {
+    logger.write('warn', 'doubao.bind_failed', { code: errorCode(error) });
+    throw error;
+  }
 }
 
 async function bindChat(id) {
   if (currentMode === 'doubao-client' && id === 'current') {
-    await doubaoClient.bind(() => currentMode === 'doubao-client');
+    await bindDoubao(() => currentMode === 'doubao-client');
   } else if (currentMode === 'api' && id === null) apiChat.reset();
   else {
     requireMode('local');
@@ -1044,11 +1104,24 @@ async function bindChat(id) {
 }
 
 async function sendChat(message, speak) {
+  const mode = currentMode;
+  const startedAt = Date.now();
+  try {
+    const result = await dispatchChat(message, speak);
+    logger.write('info', 'chat.completed', { mode, durationMs: Date.now() - startedAt });
+    return result;
+  } catch (error) {
+    logger.write('warn', 'chat.failed', { mode, durationMs: Date.now() - startedAt, code: errorCode(error) });
+    throw error;
+  }
+}
+
+async function dispatchChat(message, speak) {
+  requireChatInput();
   const performance = queueInputPerformance(message);
   if (performance) return performance;
   if (currentMode === 'local') return localAgent.send(message, { speak });
-  if (currentMode === 'doubao-client') return doubaoClient.send(message, { context: await conversationPrompt('voice') });
-  if (currentMode === 'doubao') throw new ControlError('INTEGRATION_MODE', '请在 VA 的豆包语音页面点击「开始语音对话」。');
+  if (currentMode === 'doubao-client') return sendDoubaoClient(message);
   requireMode('api');
   try {
     const result = await apiChat.send(message);
@@ -1060,7 +1133,16 @@ async function sendChat(message, speak) {
 
 async function syncDoubaoContext() {
   requireMode('doubao-client');
-  return doubaoClient.send(undefined, { context: await conversationPrompt('voice'), sync: true });
+  return sendDoubaoClient(undefined, true);
+}
+
+async function sendDoubaoClient(message, sync = false) {
+  const revision = captionStartRevision;
+  const context = await conversationPrompt('voice');
+  if (revision !== captionStartRevision || currentMode !== 'doubao-client') {
+    throw new ControlError('CANCELED', '豆包客户端交互已停止。');
+  }
+  return doubaoClient.send(message, { context, sync });
 }
 
 async function conversationPrompt(style) {
@@ -1075,13 +1157,14 @@ function showReply(text, source, readAloud, effect) {
 
 function performVoiceReply(text, allowDance) {
   const effect = replyPerformance(text, performanceSnapshot());
-  const dancing = danceActions.includes(effect.action);
+  const action = performanceCatalog.actions[effect.action];
+  const dancing = action?.category === 'dance' || action?.motion.startsWith('dance');
   if (dancing && (!allowDance || Date.now() - lastInputDanceAt < 10_000)) return false;
   return queueVoicePerformance(effect);
 }
 
 function canAnimateFromCaption() {
-  return captionAutoActions && !active && !petting && !changingModel && !voiceDanceTimer && state.state === 'ready'
+  return currentMode === 'doubao-client' && captionAutoActions && !active && !petting && !changingModel && !voiceDanceTimer && state.state === 'ready'
     && window && !window.isDestroyed() && window.isVisible() && Date.now() - lastInputPerformanceAt > 8000;
 }
 
@@ -1102,6 +1185,7 @@ async function presentBot(command) {
   const effect = replyPerformance(command.text, performanceSnapshot());
   const reply = effect.speech;
   externalHistory = [...externalHistory, { reply }].slice(-20);
+  logger.write('info', 'bot.reply_received', { mode: currentMode });
   const queued = showReply(reply, 'bot-chat', route.speakReplies, effect);
   settingsWindow?.webContents.send('va:chat-refresh');
   return { accepted: true, queued };
@@ -1137,16 +1221,19 @@ async function handle(command) {
     case 'bot-events': return { route: null, events: [] };
     case 'bot-chat': throw new ControlError('INTEGRATION_MODE', '请在机器人频道直接对话。VA 负责显示机器人回复。');
     case 'bot-route': {
-      const route = externalModes.includes(command.platform) && command.platform === currentMode
-        ? botRoute(await getAgentConfig()) : null;
-      return { route, ...(route && { character: (await getCharacter()).name }) };
+      if (!externalModes.includes(command.platform) || command.platform !== currentMode) return { route: null };
+      const [config, character] = await Promise.all([getAgentConfig(), getCharacter()]);
+      if (command.platform !== currentMode || command.platform !== integrationMode(config)) return { route: null };
+      const route = botRoute(config);
+      return { route, ...(route && { character: character.name }) };
     }
     case 'bot-present': return presentBot(command);
     case 'bot-input': return receiveBotInput(command);
     case 'bot-prompt': {
       const route = checkBotRoute(await getAgentConfig(), command.platform, command.origin);
       if (!route || currentMode !== command.platform || route.target !== command.origin.target) return { accepted: false };
-      return { accepted: true, prompt: await conversationPrompt('voice') };
+      const prompt = await conversationPrompt('voice');
+      return currentMode === command.platform ? { accepted: true, prompt } : { accepted: false };
     }
     case 'chat':
       if (command.message === undefined) {
@@ -1166,7 +1253,7 @@ async function handle(command) {
       if (!externalModes.includes(command.platform)) throw new ControlError('INTEGRATION_MODE', '请选择机器人平台。');
       requireMode(command.platform);
       return await perform(command, { source: 'bot-action' });
-    case 'senses': return { screenWatch, screenInterval, screenTarget: sensorTarget(), musicDance, ...senses.status(), configPath: agentPath };
+    case 'senses': return { screenWatch, screenInterval, screenTarget: screenMode(currentMode), musicDance, ...senses.status(), configPath: agentPath };
     case 'screen-interval': return applySettings({ screenInterval: command.seconds });
     case 'sense':
       if (typeof command.enabled !== 'boolean' || !['screen', 'music'].includes(command.channel)) {
@@ -1246,7 +1333,8 @@ function syncBounds() {
   syncBubble();
 }
 
-function publicModel({ url, format, name, builtIn }) {
+function publicModel({ url, format, name, builtIn, path }) {
+  if (path === bundledModelPath) name = 'Gemini';
   return { url, format, name, builtIn };
 }
 
@@ -1261,7 +1349,8 @@ async function findLocalAha() {
 }
 
 function modelSnapshot(binding = selectedModel, report = state) {
-  const { name, path, format, builtIn } = binding;
+  const { name, format, builtIn } = publicModel(binding);
+  const { path } = binding;
   const media = report.media;
   return { name, path, format, builtIn, ...media,
     checked: Boolean(media), textureWarning: report.textureWarning === true,
@@ -1283,6 +1372,7 @@ async function changeModel(path, checkOnly = false) {
     assets.set(next.id, next);
     const info = await renderer({ type: 'model-check', model: publicModel(next), checkOnly,
       deadline: Date.now() + 65_000 }, 70_000);
+    logger.write('info', 'model.checked', { format: next.format, checkOnly, textureWarning: info.textureWarning === true });
     if (checkOnly) return modelSnapshot(next, info);
     staged = true;
     if (active) await stopPerformance();
@@ -1297,7 +1387,11 @@ async function changeModel(path, checkOnly = false) {
     settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
     updateTray();
     await persistSettings();
+    logger.write('info', 'model.activated', { format: next.format });
     return modelSnapshot();
+  } catch (error) {
+    logger.write('warn', 'model.failed', { format: next?.format ?? null, checkOnly, code: errorCode(error) });
+    throw error;
   } finally {
     if (staged) await renderer({ type: 'model-discard' }).catch(reportAutomaticError);
     if (next && selectedModel !== next) assets.delete(next.id);
@@ -1308,12 +1402,21 @@ async function changeModel(path, checkOnly = false) {
 
 function settingsSnapshot() {
   return { theme, speakingStyle, scale, view, model: modelSnapshot(), characterName, clickThrough, minScale, maxScale,
-    screenWatch, screenInterval, integrationMode: currentMode, nativeSenses: mac, musicDance, senses: senses?.status(),
+    screenWatch, screenInterval, screenTarget: screenMode(currentMode), integrationMode: currentMode,
+    nativeSenses: mac, musicDance, senses: senses?.status(),
     performance: performanceSnapshot() };
 }
 
 async function applySettings(change) {
   if (!change) return settingsSnapshot();
+  if (change.screenWatch === true) {
+    const revision = screenRevision;
+    await prepareObservation();
+    if (revision !== screenRevision) throw new ControlError('SCREEN_CHANGED', '接入方式已变更，请重试。');
+  }
+  if (change.musicDance === true && currentMode === 'off') {
+    throw new ControlError('INTEGRATION_MODE', '交互已关闭，请先选择一种接入方式。');
+  }
   if (Object.hasOwn(change, 'speakingStyle')) {
     if (!isSpeakingStyle(change.speakingStyle)) throw new ControlError('INVALID_REQUEST', '说话风格无效。');
     speakingStyle = change.speakingStyle;
@@ -1357,7 +1460,10 @@ async function applySettings(change) {
     musicDance = change.musicDance === true;
     changedSensors = true;
   }
-  if (changedSensors) syncSenses();
+  if (changedSensors) {
+    logger.write('info', 'senses.configured', { screenWatch, screenInterval, musicDance, mode: currentMode });
+    syncSenses();
+  }
   const settings = settingsSnapshot();
   settingsWindow?.webContents.send('va:settings-changed', settings);
   controlsWindow?.webContents.send('va:settings-changed', settings);
@@ -1405,7 +1511,7 @@ function openSettings(section = 'avatar') {
 }
 
 function openChat() {
-  openSettings('agent');
+  openSettings(currentMode === 'doubao' ? 'voice' : 'agent');
   settingsWindow?.webContents.send('va:chat-refresh');
 }
 
@@ -1436,18 +1542,21 @@ async function captureScreen() {
   };
 }
 
-function sensorTarget() {
-  return currentMode === 'local' ? 'local' : currentMode === 'api' ? 'vision' : null;
+async function prepareObservation() {
+  const target = screenMode(currentMode);
+  if (target === 'local') return localAgent.prepareObservation();
+  if (target === 'api') return prepareVisionObservation(await resolveApiConfig(await getAgentConfig(), 'vision'));
+  throw new ControlError('SCREEN_MODE', '请选用支持截图的本地 Agent，或配置了视觉模型的模型 API。');
 }
 
 function syncSenses() {
-  const target = sensorTarget();
-  const shown = !window.isDestroyed() && window.isVisible() && Boolean(target);
-  if (!shown || !screenWatch) {
+  const target = screenMode(currentMode);
+  const shown = !window.isDestroyed() && window.isVisible();
+  if (!shown || !screenWatch || !target) {
     queuedSpeech = undefined;
     if (active?.source === 'screen') stopPerformance().catch(reportAutomaticError).finally(drainAutomatic);
   }
-  senses?.update({ screenWatch, musicDance, shown, interval: screenInterval, target, revision: screenRevision });
+  senses?.update({ screenWatch, musicDance: currentMode !== 'off' && musicDance, shown, target, interval: screenInterval, revision: screenRevision });
 }
 
 function positionControls() {
@@ -1585,6 +1694,7 @@ function createWindow() {
     syncSenses();
   });
   window.webContents.on('render-process-gone', () => {
+    logger.write('error', 'avatar.renderer_exited');
     doubao?.stop();
     failPending('桌面渲染进程已退出。请重启 VA。');
   });
@@ -1598,6 +1708,8 @@ function createWindow() {
 if (!app.requestSingleInstanceLock()) {
   app.quit();
 } else {
+  logger.write('info', 'app.start', { version: app.getVersion(), platform: process.platform, packaged: app.isPackaged });
+  process.on('uncaughtExceptionMonitor', error => logger.write('error', 'app.uncaught_exception', { code: errorCode(error) }));
   app.on('second-instance', (_event, args) => {
     if (!args.includes('--va-hidden')) window?.showInactive();
   });
@@ -1606,6 +1718,7 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => {
+    logger.write('info', 'app.stop');
     doubao?.stop({ immediate: true });
     doubaoClient?.unbind();
     if (doubaoCaptions?.running()) doubaoCaptions.stop();
@@ -1624,8 +1737,15 @@ if (!app.requestSingleInstanceLock()) {
     session.defaultSession.setPermissionRequestHandler((web, permission, callback, detail) =>
       callback(permission === 'media' && settingsMic(web) && detail.mediaTypes?.includes('audio') &&
         !detail.mediaTypes.includes('video')));
+    let realtimePhase;
     doubao = createDoubaoConversation({
-      onState: value => settingsWindow?.webContents.send('va:doubao-state', value),
+      onState: value => {
+        if (value.phase !== realtimePhase) {
+          realtimePhase = value.phase;
+          logger.write(value.error ? 'warn' : 'info', 'doubao.realtime_state', { phase: value.phase, failed: Boolean(value.error) });
+        }
+        settingsWindow?.webContents.send('va:doubao-state', value);
+      },
       onOutput: value => {
         if (state.state === 'ready' && !window?.isDestroyed()) window?.webContents.send('va:doubao-output', { ...value, speakingStyle });
       },
@@ -1634,9 +1754,15 @@ if (!app.requestSingleInstanceLock()) {
       onReply: performVoiceReply,
     });
     const doubaoHelper = join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-client');
+    let lastDoubaoProblem;
     doubaoClient = createDoubaoClient({
       request: command => callDoubaoClient(doubaoHelper, command),
-      onChange: () => settingsWindow?.webContents.send('va:chat-refresh'),
+      onChange: () => {
+        const code = doubaoClient.state().client.problemCode;
+        if (code && code !== lastDoubaoProblem) logger.write('warn', 'doubao.client_unavailable', { code });
+        lastDoubaoProblem = code;
+        settingsWindow?.webContents.send('va:chat-refresh');
+      },
       onInput: onVoiceOrClientInput,
       onReply: reply => {
         if (doubaoCaptions.running()) {
@@ -1664,7 +1790,7 @@ if (!app.requestSingleInstanceLock()) {
       getCandidates: () => {
         const catalog = performanceSnapshot();
         return {
-          actions: Object.entries(catalog.actions).filter(([id, action]) => id !== 'idle' && action.supported)
+          actions: Object.entries(catalog.actions).filter(([id, action]) => id !== 'idle' && action.supported && !action.alternate)
             .map(([id, action]) => ({ id, label: action.label })),
           expressions: catalog.supportedExpressions.filter(id => id !== 'neutral')
             .map(id => ({ id, label: catalog.expressions[id] })),
@@ -1694,7 +1820,8 @@ if (!app.requestSingleInstanceLock()) {
       edits = result;
       return result;
     };
-    ({ theme, speakingStyle, scale, view, modelPath, clickThrough, screenWatch, screenInterval, musicDance } = await readSettings(settingsPath));
+    const savedSettings = await readSettings(settingsPath);
+    ({ theme, speakingStyle, scale, view, modelPath, clickThrough, screenWatch, screenInterval, musicDance } = savedSettings);
     if (!mac) musicDance = false;
     const localAha = await findLocalAha();
     defaultModelPath = localAha?.path ?? bundledModelPath;
@@ -1715,6 +1842,13 @@ if (!app.requestSingleInstanceLock()) {
     } catch (error) {
       console.error(error.message);
     }
+    if (currentMode === 'off' && (screenWatch || musicDance)) {
+      screenWatch = musicDance = false;
+      await persistSettings();
+    } else if (screenWatch && savedSettings.screenSource === 'local' && currentMode !== 'local') {
+      screenWatch = false;
+      await persistSettings();
+    }
     await getVoiceConfig().catch(error => console.error(error.message));
     const getApiConfig = async () => resolveApiConfig(await getAgentConfig());
     const getPrompt = async extra => chatPerformancePrompt(await getCharacter(), performanceSnapshot(), extra);
@@ -1732,13 +1866,22 @@ if (!app.requestSingleInstanceLock()) {
       presentReply: (reply, readAloud, effect) => showReply(reply, 'local-agent', readAloud, effect),
       onChange: () => settingsWindow?.webContents.send('va:chat-refresh'),
     });
+    const sensorStates = new Map();
     senses = createSenses({
       audioHelper: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-audio-monitor'),
-      getAgentConfig: async () => resolveApiConfig(await getAgentConfig(), 'vision'),
       getCharacter,
       captureScreen,
-      localObserve: localAgent.observe,
-      onStatus: info => settingsWindow?.webContents.send('va:senses-state', info),
+      prepareObservation,
+      onStatus: info => {
+        for (const [sensor, { state, code }] of Object.entries(info)) {
+          if (state === 'analyzing') continue;
+          const status = state + (code ?? '');
+          if (sensorStates.get(sensor) === status) continue;
+          sensorStates.set(sensor, status);
+          logger.write(state === 'error' ? 'warn' : 'info', 'senses.state', { sensor, state, code });
+        }
+        settingsWindow?.webContents.send('va:senses-state', info);
+      },
       onScreen: line => {
         queuedSpeech = { line, expires: Date.now() + 18_000 };
         drainAutomatic();
@@ -1770,8 +1913,17 @@ if (!app.requestSingleInstanceLock()) {
     tray.setToolTip('VA · ' + characterName);
     shortcutRegistered = globalShortcut.register('Control+Alt+V', openSettings);
     updateTray();
-    server = await startControl(handle);
+    server = await startControl(async command => {
+      try {
+        return await handle(command);
+      } catch (error) {
+        logger.write('warn', 'control.command_failed', { code: errorCode(error), mode: currentMode });
+        throw error;
+      }
+    });
+    logger.write('info', 'app.control_ready', { mode: currentMode });
   }).catch(error => {
+    logger.write('error', 'app.start_failed', { code: errorCode(error) });
     console.error(error);
     app.exit(1);
   });

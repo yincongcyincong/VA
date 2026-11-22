@@ -1,11 +1,14 @@
 import { execFile } from 'node:child_process';
 import { ControlError } from '../lib/control.js';
+import { errorCode } from '../lib/logger.js';
 
 export function callDoubaoClient(binary, command) {
   return new Promise((resolve, reject) => {
     const child = execFile(binary, { timeout: 5000, maxBuffer: 24_000 }, (error, stdout) => {
       if (error) {
-        reject(new ControlError('CLIENT_HELPER', '无法运行豆包客户端助手。请使用新版 VA，或用 make dev 启动。'));
+        reject(error.killed
+          ? new ControlError('CLIENT_TIMEOUT', '读取豆包窗口超时。请确认豆包已打开对话，再重试。')
+          : new ControlError('CLIENT_HELPER', '无法运行豆包客户端助手。请使用新版 VA，或用 make dev 启动。'));
         return;
       }
       let result;
@@ -27,6 +30,7 @@ export function createDoubaoClient({ request, onChange, onReply, onInput }) {
   let pending;
   let history = [];
   let problem = '';
+  let problemCode;
 
   function finish(error, reply) {
     if (!pending) return;
@@ -50,6 +54,7 @@ export function createDoubaoClient({ request, onChange, onReply, onInput }) {
         if (binding !== bound) return;
         const changed = problem !== '';
         problem = '';
+        problemCode = undefined;
         const turn = message.userTurn;
         if (turn?.text && (turn.text !== bound.userTurn?.text || (turn.id && turn.id !== bound.userTurn?.id))) {
           bound.userTurn = turn;
@@ -65,6 +70,7 @@ export function createDoubaoClient({ request, onChange, onReply, onInput }) {
       } catch (error) {
         if (binding === bound && problem !== error.message) {
           problem = error.message;
+          problemCode = errorCode(error);
           onChange();
         }
       } finally {
@@ -77,13 +83,14 @@ export function createDoubaoClient({ request, onChange, onReply, onInput }) {
     binding = undefined;
     clearTimeout(timer);
     problem = '';
+    problemCode = undefined;
     history = [];
     cancel();
   }
 
   return {
     state: () => ({ history, busy: Boolean(pending),
-      client: { title: binding?.title, problem, contextSent: Boolean(binding?.context) } }),
+      client: { title: binding?.title, problem, problemCode, contextSent: Boolean(binding?.context) } }),
     async bind(isActive) {
       const current = await request({ op: 'inspect' });
       if (!isActive()) throw new ControlError('CANCELED', '已取消绑定。');
