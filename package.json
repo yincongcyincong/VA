@@ -1,6 +1,6 @@
 {
   "name": "va-avatar",
-  "version": "0.2.0",
+  "version": "1.0.0",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -10,7 +10,8 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/*.test.js\"",
-    "build:mac": "node scripts/build.js darwin"
+    "build:mac": "node scripts/build.js darwin",
+    "build:dmg": "node scripts/build.js darwin --dmg"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",

@@ -4,8 +4,27 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createSpeechCache } from '../desktop/speech-cache.js';
-import { createSystemVoiceCatalog, parseMacVoices } from '../desktop/speech.js';
+import { createSystemVoiceCatalog, parseMacVoices, splitReplySpeech } from '../desktop/speech.js';
 import { createSpeechMotion, speakingPreset, textSpeechDuration } from '../desktop/speech-motion.js';
+import { dialoguePages } from '../desktop/dialogue-text.js';
+
+test('subtitle pages keep combined emoji intact and leave room for explicit line breaks', () => {
+  const emoji = '🧑🏽‍🚀';
+  const face = '(๑•̀ᴗ•́)و';
+  const firstLine = '星'.repeat(52);
+  assert.deepEqual(dialoguePages(firstLine + emoji + face), [firstLine, emoji + face]);
+  const multiline = Array.from({ length: 9 }, () => emoji).join('\n');
+  const pages = dialoguePages(multiline);
+  assert.ok(pages.every(page => page.split('\n').length <= 4));
+  assert.equal(pages.join('\n'), multiline);
+  assert.deepEqual(dialoguePages(emoji), [emoji]);
+});
+
+test('splitting a long spoken reply does not separate emoji across performances', () => {
+  const emoji = '🧑🏽‍🚀';
+  const text = '星'.repeat(298);
+  assert.deepEqual(splitReplySpeech(text + emoji + '你好'), [text, emoji + '你好']);
+});
 
 test('macOS voice listing keeps the exact names accepted by say', () => {
   assert.deepEqual(parseMacVoices([

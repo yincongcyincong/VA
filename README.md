@@ -26,6 +26,8 @@ VA 在 macOS 桌面上显示透明悬浮的 3D 角色。鼠标靠近时会显示
 
 ## 启动
 
+macOS 13 或更新版本的 Apple 芯片 Mac 可下载 DMG，把 `VA.app` 拖到「应用程序」后打开。豆包实时通话字幕需要 macOS 26 和可用的本机中文语音识别。[GitHub Releases](https://github.com/yincongcyincong/VA/releases/latest)
+
 在仓库里安装依赖需要 Node.js 22.12 或更新版本。macOS 打包还需要 Xcode Command Line Tools。
 
 ```bash
@@ -36,6 +38,7 @@ npm ci
 | --- | --- | --- |
 | macOS 从源码启动 | `make dev` | 编译 Swift 助手后打开 VA |
 | 打包 macOS | `npm run build:mac` | 双击 `dist/VA-darwin-arm64/VA.app` 或 `dist/VA-darwin-x64/VA.app`，取决于构建用的 Mac |
+| 打包 macOS 安装盘 | `make dmg` | `dist/VA-<版本>-mac-<架构>.dmg` |
 
 Swift 助手需要在目标架构的 Mac 上编译，为豆包客户端联动、通话字幕和系统音乐检测提供支持。
 
@@ -71,17 +74,17 @@ VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启
 | 配置组 | 可操作内容 |
 | --- | --- |
 | `desktop` | 主题、说话风格、缩放、视角、鼠标穿透、屏幕观察、间隔和音乐 |
-| `character` | 显示名、人设和默认台词 |
+| `character` | 显示名、角色 Prompt 和默认台词 |
 | `actions` | 按编号合并动作和表情，`null` 删除单个覆盖 |
 | `voice` | 系统或火山 TTS 音色、火山资源和动作朗读开关 |
-| `agent` | 接入方式、共用 Prompt、本地 Agent 的命令、机器人路由和豆包通话字幕选项 |
+| `agent` | 接入方式、本地 Agent 的命令、机器人路由和豆包通话字幕选项 |
 | `model` | 使用模型文件或模型库编号，路径设为 `null` 恢复默认 |
 
 ```bash
 va config get desktop --json
 va config set desktop '{"view":"portrait","scale":55,"screenInterval":30}' --json
 va config set agent '{"mode":"local","localAgent":{"provider":"claude"}}' --json
-va config set agent '{"prompt":"用自然中文简短回复。"}' --json
+va config get character --json
 va config run system-voices --json
 va config run model-library --json
 va config set model '{"id":"va-cover"}' --json
@@ -121,7 +124,7 @@ va stop
 | 摆拍 `pose` | 摆拍 `pose`、双手比心 `pose-heart`、侧身亮相 `pose-hero` |
 | 待机 `idle` | 待机 `idle`、左右观察 `idle-look`、伸懒腰 `idle-stretch` |
 
-可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」，也可以在菜单栏选择舞步。未指定舞步时，VA 轮换当前支持的舞蹈组动作。经典律动仍可用 `va act dance` 播放。说话组可搭配 `--say` 和指定台词，角色用该动作对应的手势与口型。可用动作取决于当前模型的骨骼和动画。
+可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」，也可以在菜单栏选择舞步。未指定舞步时，VA 轮换当前支持的舞蹈组动作。经典律动仍可用 `va act dance` 播放。任意动作可搭配 `--say` 指定台词。字幕会先显示，音频就绪后开始动作和朗读，口型跟随声音。未指定台词时，用「设置 → 语音 → 做动作时发出声音」控制默认台词是否朗读。可用动作取决于当前模型的骨骼和动画。
 
 `va act`、`va say`、`va perform` 默认等演出完成后返回。用 `--no-wait` 可立即获取任务 ID，再用 `va status --json` 查询，或在动作进行时另行调用 `va photo`。已有表演时，新表演返回 `BUSY`。用 `va stop` 可打断，等待该任务的调用会收到 `CANCELED`。
 
@@ -139,7 +142,7 @@ va stop
 
 可以用 `make run` 启动已有的打包版本、`make build` 生成本机 `.app`、`make stop` 退出。
 
-鼠标靠近角色或底部控制条所在位置时，顶部显示角色名，底部显示拖动把手和设置齿轮。点击齿轮可打开设置，开启鼠标穿透时也可使用。还可以从菜单栏「VA」选「设置…」、按 **Control + Option + V** 或执行 `va settings`。设置里的「角色大小」滑块可实时调整 40–110%，也可以执行 `va scale 55`。默认大小为 68%，调整后会保存。关闭穿透时，单击角色触发摸摸反应。拖动模型仍可旋转视角。
+鼠标靠近角色或底部控制条所在位置时，顶部显示角色名，底部显示拖动把手和设置齿轮。拖动名字或把手移动角色，重启后会回到上次摆放的位置。点击齿轮可打开设置，开启鼠标穿透时也可使用。还可以从菜单栏「VA」选「设置…」、按 **Control + Option + V** 或执行 `va settings`。设置里的「角色大小」滑块可实时调整 40–110%，也可以执行 `va scale 55`。默认大小为 68%，调整后会保存。关闭穿透时，单击角色触发摸摸反应。拖动模型仍可旋转视角。
 
 「桌面角色 → 界面主题」可在经典、樱花漫画、星夜霓虹之间切换。主题会同时应用到设置窗口和桌面对话气泡。
 
@@ -213,7 +216,7 @@ PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FB
 | Seed-san（VRM 1.0） | [VRM Consortium](https://github.com/vrm-c/vrm-specification/tree/master/samples/Seed-san) |
 | Blocky Characters（含 FBX、OBJ、GLB） | [Kenney 在 OpenGameArt 的下载页](https://opengameart.org/content/3d-rigged-characters) |
 
-在「设置 → 桌面角色」修改「角色名称」。保存后，桌面控制条、菜单、默认台词和默认人设都会使用新名称。人物配置位于 `~/Library/Application Support/VA Desktop/character.json`，初次启动从 [默认人设](config/character.json) 创建。也可通过 `VA_CHARACTER_CONFIG` 指定文件。自定义 `prompt` 或 `dialogue` 时，用 `{{name}}` 引用当前名称。MCP 用 `va_character` 读取人设，命令行可用 `va character --json`。
+在「设置 → 桌面角色」修改「角色名称」。保存后，角色名牌、菜单、默认台词和角色 Prompt 都可以使用新名称。名称和默认台词位于 `~/Library/Application Support/VA Desktop/character.json`，也可通过 `VA_CHARACTER_CONFIG` 指定文件。编辑台词或 Prompt 时，用 `{{name}}` 引用当前名称。MCP 用 `va_character` 读取角色信息，命令行可用 `va character --json`。[默认台词](config/character.json)
 
 MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角色名。改完动作配置后用 `va_reload_actions`，再从 `supported: true` 和 `supportedExpressions` 选择编号。`va_say` 和 `va_perform` 会在角色旁显示对白气泡，表演可以自带台词或使用默认对白。`va_selfie` 成功时只返回 780 × 1040 的透明 PNG，CLI 用 `va selfie --out /tmp/va-selfie.png --json` 获取文件。角色隐藏或 VA 退出时也可以自拍。
 
@@ -227,27 +230,31 @@ MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角�
 
 ### 绑定并打开本地会话
 
-在 Codex 或 Claude Code 里开启或续用已有会话，然后把会话 ID 填到 VA 并点「绑定会话」。Codex CLI 可从 `/status` 查看会话信息。Claude Code 填本机的会话 ID，与 `claude --resume <会话ID>` 使用同一个 ID。点击「解除绑定」会清除当前选择，会话仍保存在绑定记录里。[Codex CLI 会话信息](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [Claude Code 会话命令](https://code.claude.com/docs/zh-CN/commands)
+点「创建会话」会在已保存的工作目录打开所选 Agent，首条消息在 Agent 里输入。Codex 优先打开 ChatGPT 桌面端的新聊天，桌面端不可用时使用终端。Claude Code 在终端打开，并用预先生成的会话 ID 自动绑定。新开的 Codex、OMP 等会话可在发出首条消息后用完整会话 ID 绑定。Codex CLI 可从 `/status` 查看会话信息。Claude Code 已有会话的 ID 与 `claude --resume <会话ID>` 使用的相同。[Codex CLI 会话信息](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [Claude Code 会话命令](https://code.claude.com/docs/zh-CN/commands)
 
-「会话绑定记录」只显示当前选中的 Agent 的会话，切换 Agent 会更新列表。可点击「重新绑定」恢复选择。「打开会话」会在 macOS 终端用原目录续接对应的 Codex 或 Claude Code 会话。命令行也可向已绑定的会话发送消息并让 VA 展示回复。
+「会话绑定记录」只显示当前选中的 Agent。记录中的「解除绑定」会取消关联并保留记录，之后可点击「重新绑定」。「打开并绑定」会恢复记录的工作目录和会话绑定，再启动对应客户端。Codex 优先跳到 ChatGPT 桌面端的原会话，桌面端不可用时尝试用终端续接。Claude Code 在终端打开。同一条 Codex 会话正在原客户端使用时，可在原窗口继续，或关闭那里打开的会话后用 `va chat` 发送消息。[桌面端会话链接](https://learn.chatgpt.com/docs/app/commands)
 
-![本地 Agent 的会话绑定记录和共用 Prompt 设置](docs/screenshots/local-agent.png)
+绑定 Codex、Claude Code 或 OMP 的完整会话 ID 后，也可以在原客户端直接聊天。VA 读取这条会话的新完成回复，把正文显示在角色旁边。开启「自动朗读回复」并保存 Agent，角色也会按当前音色念出来。用 `va chat` 发出的消息继续使用同一个字幕和朗读流程。动作回复有台词时同步播放，只有动作时使用对应的默认台词。
+
+![本地 Agent 的会话绑定记录](docs/screenshots/local-agent.png)
 
 ```sh
 va integration local
 va chat-use codex
 va chat-bind <会话ID>
 va config run chat-sessions --json
-va config run chat-open-session '{"ref":"绑定记录返回的 ref"}'
+va config run chat-open-session '{"ref":"绑定记录返回的 ref","bind":true}'
 va config run chat-restore-session '{"ref":"绑定记录返回的 ref"}'
+va config run chat-unbind-session '{"ref":"绑定记录返回的 ref"}'
+va config run chat-create-session
 va chat "我们刚才聊到哪里了？" --speak
 ```
 
-### 共用 Prompt
+### 角色 Prompt
 
-在「智能体接入 → 共用 Prompt」编辑指令，也可以执行 `va config set agent '{"prompt":"请用自然中文回复，称呼自己为 {{name}}。"}'`。保存后供本地 Agent 与机器人插件后续请求使用。豆包客户端可以点「同步角色能力」把同样的指令发给绑定会话。OpenClaw 的 Prompt 同步由插件设置 `workspacePrompt` 启用。
+在「设置 → 桌面角色 → 角色 Prompt」的输入框编辑角色背景、说话方式和动作命令。默认内容包含 `va actions --supported --json`、`va act wave`、`va act pose-heart`、三个舞步、带对白的动作、表情和自拍示例。`{{actionCommands}}` 会根据当前模型和动作配置展开命令清单。Prompt 随桌面设置保存到 `~/Library/Application Support/VA Desktop/settings.json`，旧版配置中的人设和接入指令会在升级时合并到这个输入框。
 
-VA 将共用 Prompt 与角色人设和当前可用动作一起发给 Agent。运行 `va prompt` 可以查看完整版，用 `va prompt --voice` 获取适用于豆包与机器人频道的版本。明确的动作请求可以在本机触发，接入方也能通过回复表达表演意图。[Prompt 与动作配置](docs/agent-custom-actions.md#对话如何触发动作)
+用 `va config set character '{"prompt":"…"}'` 或 MCP 的 `va_config_set` 更新同一个输入框。运行 `va prompt` 可查看发送给本地 Agent 的完整版，`va prompt --voice` 输出豆包和机器人频道的版本。已绑定豆包客户端时，可点「同步角色能力」更新当前会话。OpenClaw 的同步仍通过插件选项 `workspacePrompt` 开启。[Prompt 与动作配置](docs/agent-custom-actions.md#对话如何触发动作)
 
 接入配置保存在 `~/Library/Application Support/VA Desktop/agent.json`。命令行可用 `va integration [off|local|doubao-client|astrbot|openclaw]` 切换。自定义 Agent 在 `localAgent.custom.command` 填可执行文件的绝对路径，`args` 填参数。VA 通过 stdin 传入一行 JSON，其中包含 `message`、`prompt` 和 `sessionId`。适配器通过 stdout 返回带 `reply` 和 `sessionId` 的 JSON。屏幕观察请求的 `sessionId` 为 `null`，图片作为 `image.mime` 和 Base64 格式的 `image.data` 传入。
 
@@ -338,7 +345,7 @@ macOS 上已选用一种交互接入时，可独立开启音乐跟随。音频�
 
 同一页的「说话风格」可选自然聊天、活泼雀跃、轻声思考或舞台演说。风格会调整说话动作以及 VA 朗读的语速和音量。「活泼雀跃」说得更快、抬手更频繁，「轻声思考」会放慢、降低音量并歪头，「舞台演说」手势更开阔。豆包客户端通话的口型跟随客户端播放的原声。
 
-台词气泡先显示，朗读开始后口型随声音动。同一句台词使用相同的服务、音色和风格时会重用已经合成的音频。缓存只保留在本次 VA 运行的内存中。
+音频就绪时，台词气泡与动作一起出现，口型随朗读声音动。同一句台词使用相同的服务、音色和风格时会重用已经合成的音频。缓存只保留在本次 VA 运行的内存中。
 
 ### 本地音色复刻
 

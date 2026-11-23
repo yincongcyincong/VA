@@ -1,16 +1,20 @@
 import { execFile, spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
+import { createHash, randomUUID } from 'node:crypto';
+import { constants } from 'node:fs';
+import { access, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ControlError } from '../lib/control.js';
 import { readConfig, settingsWriter } from './config.js';
+import { createSessionReplies } from './session-replies.js';
+import { createSessionTitles, sessionPreview } from './session-titles.js';
 
 const providers = { codex: 'Codex', claude: 'Claude Code', deepseekharness: 'DeepSeek Harness', omp: 'OMP', custom: '自定义 Agent' };
 const defaultCommands = { deepseekharness: 'dsh', custom: '' };
 const timeout = 75_000;
 const maxOutput = 8 * 1024 * 1024;
+const maxReply = 20_000;
 const sessionPattern = /^[a-z0-9][a-z0-9_.:-]{0,159}$/i;
 const uuidPattern = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const nativeResume = new Set(['codex', 'claude']);
@@ -124,13 +128,16 @@ function runAgent(agent, signal, build) {
       try {
         if (code === 0 && stream.end) return finish(null, stream.end());
         const detail = stderr.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').trim();
-        throw new ControlError('AGENT_FAILED', detail.slice(-600) || `${agent.label} 未返回完整回复（退出码 ${code}）。`);
+        throw failure(detail.slice(-600) || `${agent.label} 未返回完整回复（退出码 ${code}）。`);
       } catch (error) { finish(error); }
     });
   });
 }
 
 function failure(message) {
+  if (typeof message === 'string' && /already has an active writer|(?:conversation|thread) is open in another app/i.test(message)) {
+    return new ControlError('CODEX_SESSION_IN_USE', '这条 Codex 会话正由另一个窗口使用。可在原窗口继续聊天，或关闭那里打开的会话后在 VA 重试。');
+  }
   return new ControlError('AGENT_FAILED', typeof message === 'string' && message.trim()
     ? message.slice(0, 650) : 'Agent 未完成本轮对话。');
 }
@@ -183,7 +190,8 @@ function runCodex(agent, input, signal) {
             }] });
           } else startTurn();
         } else if (id === 4) {
-          startTurn();
+          if (input.syncRole) finish(null, { synced: true, sessionId: threadId });
+          else startTurn();
         } else if (id === 3) {
           turnId = result?.turn?.id;
           if (!turnId) throw failure();
@@ -304,25 +312,49 @@ function validSession(provider, id) {
     (nativeResume.has(provider) ? uuidPattern : sessionPattern).test(id);
 }
 
-function rememberSession(sessions, agent, id, boundAt) {
+function rememberSession(sessions, agent, id, boundAt, firstMessage) {
   const ref = `${agent.key}:${id}`;
-  const record = { ref, provider: agent.provider, cwd: agent.cwd, id, boundAt };
+  const previous = sessions.history.find(item => item.provider === agent.provider && item.id === id);
+  const titlePreview = previous?.titlePreview ?? sessionPreview(firstMessage);
+  const record = { ref, provider: agent.provider, cwd: agent.cwd, id, boundAt, titlePreview };
   sessions.history = [record, ...sessions.history.filter(item => item.ref !== ref)].slice(0, 100);
+}
+
+function boundKey(record, bindings) {
+  const key = record.ref.slice(0, 64);
+  if (record.ref === `${key}:${record.id}` && bindings[key] === record.id) return key;
 }
 
 const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 
-async function launchTerminal(agent, args) {
+async function launchTerminal(agent, args, { freshOmp = false } = {}) {
+  const path = agentPath();
+  const candidates = isAbsolute(agent.command) ? [agent.command]
+    : path.split(delimiter).map(directory => resolve(agent.cwd, directory, agent.command));
+  let executable;
+  for (const candidate of candidates) {
+    if ((await stat(candidate).catch(() => undefined))?.isFile() &&
+        await access(candidate, constants.X_OK).then(() => true, () => false)) {
+      executable = candidate;
+      break;
+    }
+  }
+  if (!executable) throw new ControlError('AGENT_LAUNCH', `找不到可执行的 ${agent.label}。请安装它或检查 Agent 命令路径。`);
+
   const folder = await mkdtemp(join(tmpdir(), 'va-agent-session-'));
   const script = join(folder, `VA ${agent.label}.command`);
   try {
+    const overlay = freshOmp ? join(folder, 'new-session.yml') : undefined;
+    if (overlay) await writeFile(overlay, 'autoResume: false\n', { mode: 0o600 });
+    const command = [executable, ...args, ...(overlay ? ['--config', overlay] : [])].map(quote).join(' ');
     await writeFile(script, [
       '#!/bin/bash',
       '/bin/rm -f -- "$0"',
-      '/bin/rmdir -- ' + quote(folder),
+      overlay ? `trap ${quote('/bin/rm -f -- ' + quote(overlay) + '; /bin/rmdir -- ' + quote(folder))} EXIT`
+        : '/bin/rmdir -- ' + quote(folder),
       'cd -- ' + quote(agent.cwd) + ' || exit 1',
-      'export PATH=' + quote(agentPath()),
-      'exec ' + [agent.command, ...args].map(quote).join(' '),
+      'export PATH=' + quote(path),
+      overlay ? command : 'exec ' + command,
       '',
     ].join('\n'), { mode: 0o700 });
     await exec('/usr/bin/open', ['-a', 'Terminal', script], { timeout: 10_000 });
@@ -332,11 +364,37 @@ async function launchTerminal(agent, args) {
   }
 }
 
+async function openCodexDesktop(id, cwd) {
+  const url = new URL(`codex://threads/${id ?? 'new'}`);
+  if (cwd) url.searchParams.set('path', cwd);
+  const result = await exec('/usr/bin/open', [url.href], { timeout: 10_000 }).catch(() => null);
+  return Boolean(result);
+}
+
 export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(),
-  presentReply, onChange = () => {}, openTerminal = launchTerminal }) {
+  presentReply, onChange = () => {}, onReplyError = () => {}, openTerminal = launchTerminal, openCodex = openCodexDesktop }) {
   const saveSessions = settingsWriter(sessionPath);
+  const sessionTitles = createSessionTitles();
   const history = new Map();
   let active;
+  let replyMonitorEnabled = false;
+  let replyMonitorRevision = 0;
+  let forwardedReplies = [];
+  const replies = createSessionReplies({
+    paused: () => Boolean(active),
+    onError: onReplyError,
+    present(text, session) {
+      forwardedReplies = forwardedReplies.filter(reply => reply.until > Date.now());
+      const duplicate = forwardedReplies.findIndex(reply => reply.key === session.key && reply.id === session.id && reply.text === text);
+      if (duplicate >= 0) {
+        forwardedReplies.splice(duplicate, 1);
+        return true;
+      }
+      const effect = parseReply(text.slice(0, maxReply));
+      if (!effect.speech && !effect.action && !effect.expression) return true;
+      return presentReply(effect.speech, session.speakReplies, effect);
+    },
+  });
 
   const getSessions = async agent => {
     const value = await readConfig(sessionPath, {}, 'AGENT_SESSIONS', 'local-agent-sessions.json');
@@ -355,14 +413,33 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     return sessions;
   };
 
+  async function refreshReplyMonitor() {
+    const revision = ++replyMonitorRevision;
+    if (!replyMonitorEnabled) return replies.select();
+    try {
+      const { provider, key, speakReplies } = await runtime(await getConfig(), launchDirectory);
+      const sessions = await getSessions();
+      if (revision === replyMonitorRevision) {
+        await replies.select({ provider, key, id: sessions.bindings[key], speakReplies });
+      }
+    } catch (error) {
+      if (revision === replyMonitorRevision) {
+        await replies.select();
+        onReplyError(error);
+      }
+    }
+  }
+
   async function snapshot(agent, sessions) {
     const config = agent ?? await runtime(await getConfig(), launchDirectory);
     const saved = sessions ?? await getSessions(config);
     const { provider, label, cwd, speakReplies, models, key } = config;
+    const titles = await sessionTitles(saved.history);
     return { provider, label, cwd, workingDirectory: config.cwdSetting, launchDirectory, speakReplies, models,
       sessionId: saved.bindings[key] ?? null,
-      sessionHistory: saved.history.map(entry => ({ ...entry, label: providers[entry.provider], canOpen: nativeResume.has(entry.provider),
-        active: entry.ref === `${key}:${saved.bindings[key]}` })),
+      sessionHistory: saved.history.map(({ titlePreview, ...entry }) => ({ ...entry, title: titles.get(entry.ref) ?? null,
+        label: providers[entry.provider], canOpen: nativeResume.has(entry.provider),
+        bound: Boolean(boundKey(entry, saved.bindings)), active: entry.ref === `${key}:${saved.bindings[key]}` })),
       history: history.get(key) ?? [], busy: Boolean(active) };
   }
 
@@ -371,8 +448,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     const sessions = await getSessions(current);
     const record = sessions.history.find(entry => entry.ref === ref);
     if (!record) throw new ControlError('AGENT_SESSION', '找不到这条会话绑定记录。');
-    const next = { ...config, provider: record.provider, cwd: record.cwd };
-    return { record, sessions, next, agent: await runtime(next, launchDirectory) };
+    return { record, sessions, current };
   }
 
   function exclusive(job) {
@@ -381,10 +457,33 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     active = controller;
     onChange();
     const timer = setTimeout(() => controller.abort(new ControlError('AGENT_TIMEOUT', 'Agent 超时，请重试。')), timeout);
-    return job(controller.signal).finally(() => {
+    return job(controller.signal).finally(async () => {
       clearTimeout(timer);
-      active = undefined;
-      onChange();
+      try {
+        if (replyMonitorEnabled) await refreshReplyMonitor();
+      } finally {
+        active = undefined;
+        onChange();
+      }
+    });
+  }
+
+  function restoreSession(ref) {
+    return exclusive(async signal => {
+      let restored;
+      await updateConfig(async config => {
+        const { sessions, record } = await recordFor(ref, config);
+        const next = { ...config, provider: record.provider, cwd: record.cwd };
+        const agent = await runtime(next, launchDirectory);
+        signal.throwIfAborted();
+        sessions.bindings[agent.key] = record.id;
+        rememberSession(sessions, agent, record.id, new Date().toISOString());
+        await saveSessions(sessions);
+        history.delete(agent.key);
+        restored = await snapshot(agent, sessions);
+        return next;
+      });
+      return { ...restored, busy: false };
     });
   }
 
@@ -400,6 +499,10 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
 
   return {
     status: () => snapshot(),
+    monitorReplies(enabled) {
+      replyMonitorEnabled = enabled;
+      return refreshReplyMonitor();
+    },
     async prepareObservation() {
       const agent = await screenAgent();
       return async ({ frame, message, prompt, signal }) => {
@@ -453,33 +556,76 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         return { ...result, busy: false };
       });
     },
-    restoreSession(ref) {
+    restoreSession,
+    unbindSession(ref) {
       return exclusive(async signal => {
-        let restored;
-        await updateConfig(async config => {
-          const { sessions, record, agent, next } = await recordFor(ref, config);
-          signal.throwIfAborted();
-          sessions.bindings[agent.key] = record.id;
-          rememberSession(sessions, agent, record.id, new Date().toISOString());
+        const { record, sessions } = await recordFor(ref, await getConfig());
+        const key = boundKey(record, sessions.bindings);
+        signal.throwIfAborted();
+        if (key) {
+          delete sessions.bindings[key];
           await saveSessions(sessions);
-          history.delete(agent.key);
-          restored = await snapshot(agent, sessions);
-          return next;
-        });
-        return { ...restored, busy: false };
+          history.delete(key);
+        }
       });
     },
-    async openSession(ref) {
-      const { record, agent } = await recordFor(ref, await getConfig());
+    syncSessionRole(ref) {
+      return exclusive(async signal => {
+        const config = await getConfig();
+        const { record } = await recordFor(ref, config);
+        if (record.provider !== 'codex') {
+          throw new ControlError('AGENT_SESSION', '此操作用于同步已记录的 Codex 会话。');
+        }
+        const agent = await runtime({ ...config, provider: record.provider, cwd: record.cwd }, launchDirectory);
+        const prompt = await getPrompt();
+        return runCodex(agent, { sessionId: record.id, prompt, syncRole: true }, signal);
+      });
+    },
+    async openSession(ref, { bind = false } = {}) {
+      const config = await getConfig();
+      const { record, sessions, current } = await recordFor(ref, config);
       if (!nativeResume.has(record.provider)) {
-        throw new ControlError('AGENT_SESSION', '当前支持在终端打开 Codex 和 Claude Code 会话。');
+        throw new ControlError('AGENT_SESSION', '当前支持打开 Codex 和 Claude Code 会话。');
       }
+      if (bind && (!current || boundKey(record, sessions.bindings) !== current.key)) await restoreSession(ref);
+      if (record.provider === 'codex' && await openCodex(record.id)) return 'codex';
+      const agent = await runtime({ ...config, provider: record.provider, cwd: record.cwd }, launchDirectory);
       const prompt = await getPrompt();
       const model = agent.model ? ['--model', agent.model] : [];
       const args = record.provider === 'codex'
         ? ['resume', '--config', 'developer_instructions=' + JSON.stringify(prompt), ...model, record.id]
         : ['--resume', record.id, '--append-system-prompt', prompt, ...model];
       await openTerminal(agent, args);
+      return 'terminal';
+    },
+    openNewSession() {
+      return exclusive(async signal => {
+        const agent = await runtime(await getConfig(), launchDirectory);
+        const { provider, cwd, model } = agent;
+        if (!provider) throw new ControlError('AGENT_UNSELECTED', '请先选择 Agent。');
+        signal.throwIfAborted();
+        if (provider === 'codex' && await openCodex(null, cwd)) {
+          return { opened: true, application: 'codex', provider };
+        }
+        const modelArgs = model ? ['--model', model] : [];
+        const id = provider === 'claude' ? randomUUID() : undefined;
+        const sessions = id ? await getSessions(agent) : undefined;
+        let args = agent.args;
+        if (provider === 'codex') args = ['--config', 'developer_instructions=' + JSON.stringify(await getPrompt()), ...modelArgs];
+        if (provider === 'claude') args = ['--session-id', id, '--append-system-prompt', await getPrompt(), ...modelArgs];
+        if (provider === 'omp') args = ['--allow-home', '--append-system-prompt', await getPrompt(), ...modelArgs];
+        if (provider === 'deepseekharness') args = ['--profile', 'tui'];
+        signal.throwIfAborted();
+        await openTerminal(agent, args, { freshOmp: provider === 'omp' });
+        signal.throwIfAborted();
+        if (id) {
+          sessions.bindings[agent.key] = id;
+          rememberSession(sessions, agent, id, new Date().toISOString());
+          await saveSessions(sessions);
+          history.delete(agent.key);
+        }
+        return { opened: true, application: 'terminal', provider, sessionId: id };
+      });
     },
     send(value, options = {}) {
       const message = field(value, 2200, '消息');
@@ -489,31 +635,38 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请先选择 Agent。');
         if (!agent.command) throw new ControlError('AGENT_CONFIG', '请在 agent.json 的 localAgent.custom.command 填写可执行文件的绝对路径。');
         const sessions = await getSessions(agent);
-        const sessionId = sessions.bindings[agent.key] ?? null;
-        if ((sessionId !== null && !validSession(agent.provider, sessionId)) || (!sessionId && nativeResume.has(agent.provider))) {
-          throw new ControlError('AGENT_SESSION', '请先绑定一个有效的 Agent 会话。');
+        const sessionId = options.newSession ? null : (sessions.bindings[agent.key] ?? null);
+        if (!options.newSession && (nativeResume.has(agent.provider) || sessionId !== null) &&
+            !validSession(agent.provider, sessionId)) {
+          throw new ControlError('AGENT_SESSION', '请先创建会话或绑定一个有效的 Agent 会话。');
         }
-        const prompt = await getPrompt();
+        const prompt = await getPrompt() + '\n\n在 VA 内处理的对话通过回复触发动作。需要表演时，请直接写台词并附上末行动作标记。';
         if (prompt.length > 45000) throw new ControlError('AGENT_INPUT', '角色与 Agent 的 Prompt 合计太长。');
         const input = { message, prompt, sessionId };
         const result = await dispatch(agent, input, signal);
         signal.throwIfAborted();
-        const raw = typeof result?.reply === 'string' ? result.reply.trim().slice(0, 20000) : '';
-        const effect = parseReply(raw);
+        const fullReply = typeof result?.reply === 'string' ? result.reply.trim() : '';
+        const raw = fullReply.slice(0, maxReply);
+        const effect = { ...parseReply(raw), ...options.requestedEffect };
         const reply = effect.speech;
-        if (!reply && !effect.action && !effect.expression) throw failure('Agent 没有返回可显示的回复。');
+        if (!reply && !effect.action && !effect.expression && !effect.dance) throw failure('Agent 没有返回可显示的回复。');
         if (!validSession(agent.provider, result?.sessionId) || (sessionId && sessionId !== result.sessionId)) {
           throw failure('Agent 返回了无效或不一致的会话 ID。');
         }
         if (sessionId !== result.sessionId) {
           sessions.bindings[agent.key] = result.sessionId;
-          rememberSession(sessions, agent, result.sessionId, new Date().toISOString());
+          rememberSession(sessions, agent, result.sessionId, new Date().toISOString(), message);
           await saveSessions(sessions);
+          history.delete(agent.key);
         }
         signal.throwIfAborted();
         history.set(agent.key, [...(history.get(agent.key) ?? []), { message, reply }].slice(-20));
         const readAloud = options.speak ?? agent.speakReplies;
         const bubbleQueued = presentReply(reply, readAloud, effect);
+        if (bubbleQueued && raw && replyMonitorEnabled) {
+          forwardedReplies = [...forwardedReplies.slice(-9), { key: agent.key, id: result.sessionId,
+            text: fullReply, until: Date.now() + 15_000 }];
+        }
         return { provider: agent.provider, reply, sessionId: result.sessionId, bubbleQueued,
           spoken: readAloud && bubbleQueued };
       });

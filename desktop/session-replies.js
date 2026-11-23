@@ -1,0 +1,154 @@
+import { open, readdir } from 'node:fs/promises';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+import { StringDecoder } from 'node:string_decoder';
+
+const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+const readSize = 128 * 1024;
+const maxLine = 1024 * 1024;
+
+export async function findSessionFile(provider, id, env = process.env) {
+  if (!['codex', 'claude', 'omp'].includes(provider) || !uuid.test(id)) return;
+  id = id.toLowerCase();
+  const { CODEX_HOME, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR } = env;
+  const roots = {
+    codex: join(CODEX_HOME || join(homedir(), '.codex'), 'sessions'),
+    claude: join(CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects'),
+    omp: join(PI_CODING_AGENT_DIR || join(homedir(), '.omp', 'agent'), 'sessions'),
+  };
+  const matches = name => provider === 'claude'
+    ? name.toLowerCase() === `${id}.jsonl` : name.toLowerCase().endsWith(`_${id}.jsonl`) ||
+      name.toLowerCase().endsWith(`-${id}.jsonl`) || name.toLowerCase() === `${id}.jsonl`;
+
+  async function search(folder, depth) {
+    const entries = await readdir(folder, { withFileTypes: true }).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return [];
+    });
+    const file = entries.find(entry => entry.isFile() && matches(entry.name));
+    if (file) return join(folder, file.name);
+    if (depth > 0) {
+      for (const entry of entries) {
+        if (!entry.isDirectory()) continue;
+        const found = await search(join(folder, entry.name), depth - 1);
+        if (found) return found;
+      }
+    }
+  }
+
+  return search(roots[provider], provider === 'codex' ? 3 : 1);
+}
+
+function finishedReply(provider, event) {
+  if (provider === 'codex') {
+    const { type, turn_id, last_agent_message, error } = event.payload ?? {};
+    if (event.type === 'event_msg' && type === 'task_complete' && turn_id && !error) {
+      return { id: turn_id, text: last_agent_message };
+    }
+    return;
+  }
+  const message = event.message;
+  const claude = provider === 'claude';
+  const final = claude
+    ? event.type === 'assistant' && message?.stop_reason === 'end_turn' && !event.isSidechain && !event.isApiErrorMessage
+    : event.type === 'message' && message?.role === 'assistant' && message.stopReason === 'stop';
+  if (!final) return;
+  const id = claude ? message.id : event.id;
+  const text = Array.isArray(message.content) && message.content
+    .filter(part => part?.type === 'text' && typeof part.text === 'string').map(part => part.text).join('\n');
+  if (id && text) return { id, text };
+}
+
+export function createSessionReplies({ present, paused = () => false, onError = () => {}, env = process.env, interval = 750 }) {
+  let current;
+  let timer;
+
+  function next(state, delay = interval) {
+    if (state !== current) return;
+    timer = setTimeout(() => void poll(state), delay);
+    timer.unref();
+  }
+
+  function deliver(state) {
+    while (state === current && state.deliveries.length && !paused() && present(state.deliveries[0], state)) {
+      state.deliveries.shift();
+    }
+  }
+
+  async function poll(state, baseline = false) {
+    let file;
+    try {
+      if (!baseline && paused()) return;
+      deliver(state);
+      if (state.deliveries.length) return;
+      state.path ??= await findSessionFile(state.provider, state.id, env);
+      if (!state.path) return;
+      file = await open(state.path, 'r');
+      const { size, dev, ino } = await file.stat();
+      if (state !== current || (!baseline && paused())) return;
+      const identity = `${dev}:${ino}`;
+      if (baseline || (state.fileId && (state.fileId !== identity || size < state.offset))) {
+        state.offset = size;
+        state.pending = '';
+        state.dropping = false;
+        state.decoder = new StringDecoder('utf8');
+      }
+      state.fileId = identity;
+      let batches = 4;
+      const replies = new Map();
+      while (state.offset < size && batches-- > 0) {
+        const buffer = Buffer.allocUnsafe(Math.min(readSize, size - state.offset));
+        const { bytesRead } = await file.read(buffer, 0, buffer.length, state.offset);
+        if (!bytesRead || state !== current) break;
+        state.offset += bytesRead;
+        const lines = (state.pending + state.decoder.write(buffer.subarray(0, bytesRead))).split('\n');
+        state.pending = lines.pop();
+        if (state.dropping && lines.length > 0) {
+          lines.shift();
+          state.dropping = false;
+        }
+        if (state.pending.length > maxLine) {
+          state.pending = '';
+          state.dropping = true;
+        }
+        for (const line of lines) {
+          let event;
+          try { event = JSON.parse(line); } catch { continue; }
+          const reply = event && finishedReply(state.provider, event);
+          if (typeof reply?.text !== 'string' || !reply.text.trim() || state.seen.has(reply.id)) continue;
+          const prior = replies.get(reply.id);
+          if (!prior) replies.set(reply.id, reply.text.trim());
+          else if (prior !== reply.text.trim()) replies.set(reply.id, prior + '\n' + reply.text.trim());
+        }
+      }
+      for (const [id, text] of replies) {
+        if (state !== current) break;
+        state.seen.add(id);
+        if (state.seen.size > 100) state.seen.delete(state.seen.values().next().value);
+        state.deliveries.push(text);
+      }
+      deliver(state);
+    } catch (error) {
+      if (error.code === 'ENOENT') state.path = undefined;
+      else if (state === current && state.problem !== error.code) onError(error);
+      state.problem = error.code;
+    } finally {
+      await file?.close().catch(onError);
+      next(state, state.path ? interval : Math.max(interval, 2500));
+    }
+  }
+
+  return {
+    async select(target) {
+      if (!['codex', 'claude', 'omp'].includes(target?.provider) || !uuid.test(target.id ?? '')) target = undefined;
+      if (target?.key === current?.key && target?.id === current?.id) {
+        if (current) current.speakReplies = target.speakReplies;
+        return;
+      }
+      clearTimeout(timer);
+      current = target && { ...target, id: target.id.toLowerCase(), seen: new Set(), deliveries: [],
+        offset: 0, pending: '', decoder: new StringDecoder('utf8') };
+      if (current) await poll(current, true);
+    },
+  };
+}

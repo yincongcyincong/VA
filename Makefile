@@ -1,7 +1,8 @@
 .DEFAULT_GOAL := run
 VA := ./bin/va.js
+MACOS_ARCH ?= $(shell uname -m)
 
-.PHONY: install run dev test status stop build audio-helper doubao-helper zipvoice-tts integrations
+.PHONY: install run dev test status stop build dmg audio-helper doubao-helper zipvoice-tts integrations
 
 install:
 	npm ci
@@ -25,6 +26,9 @@ stop:
 build:
 	npm run build:mac $(if $(ELECTRON_ZIP_DIR),-- --electron-zip-dir="$(ELECTRON_ZIP_DIR)")
 
+dmg:
+	npm run build:dmg $(if $(ELECTRON_ZIP_DIR),-- --electron-zip-dir="$(ELECTRON_ZIP_DIR)")
+
 zipvoice-tts:
 	bash scripts/install-zipvoice.sh
 
@@ -37,14 +41,14 @@ audio-helper: build/va-audio-monitor
 
 doubao-helper: build/va-doubao-client build/va-doubao-captions
 
-build/va-audio-monitor: native/AudioMonitor.swift
+build/va-audio-monitor: native/AudioMonitor.swift Makefile
 	mkdir -p build
-	xcrun swiftc -parse-as-library -O $< -o $@
+	xcrun swiftc -target $(MACOS_ARCH)-apple-macosx13.0 -parse-as-library -O $< -o $@
 
-build/va-doubao-client: native/DoubaoClient.swift
+build/va-doubao-client: native/DoubaoClient.swift Makefile
 	mkdir -p build
-	xcrun swiftc -O $< -o $@
+	xcrun swiftc -target $(MACOS_ARCH)-apple-macosx13.0 -O $< -o $@
 
-build/va-doubao-captions: native/DoubaoCaptions.swift
+build/va-doubao-captions: native/DoubaoCaptions.swift Makefile
 	mkdir -p build
-	xcrun swiftc -parse-as-library -O $< -o $@
+	xcrun swiftc -target $(MACOS_ARCH)-apple-macosx26.0 -parse-as-library -O $< -o $@

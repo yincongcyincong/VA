@@ -6,7 +6,7 @@ import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
-import { readCharacter, readSettings, settingsWriter } from '../desktop/config.js';
+import { readCharacter, readSettings, restoreAvatarPosition, settingsWriter } from '../desktop/config.js';
 import { bindModel, modelResource } from '../desktop/model-files.js';
 import { createModelLibrary, modelPage } from '../desktop/model-library.js';
 
@@ -114,6 +114,20 @@ test('settings normalize old intervals and legacy character names', async t => {
   }));
   assert.deepEqual(await readCharacter(character, defaults),
     { name: 'Gemini', prompt: '我是Gemini', dialogue: { wave: ['你好，我是Gemini'] } });
+});
+
+test('an avatar can retain negative desktop coordinates and recover from an unavailable display', async t => {
+  const settings = join(await temporary(t), 'settings.json');
+  const position = { x: -35, y: 672 };
+  const size = { width: 140, height: 200 };
+  const primary = { x: 0, y: 30, width: 1440, height: 870 };
+  await settingsWriter(settings)({ windowPosition: position });
+  const saved = (await readSettings(settings)).windowPosition;
+  assert.deepEqual(saved, position);
+  assert.deepEqual(restoreAvatarPosition(saved, size, primary), position);
+  assert.deepEqual(restoreAvatarPosition({ x: -800, y: 1920 }, size, primary), { x: 0, y: 700 });
+  await writeFile(settings, JSON.stringify({ windowPosition: { x: '-35', y: 672 } }));
+  assert.equal((await readSettings(settings)).windowPosition, undefined);
 });
 
 test('the bundled cover is a rigged VRM and wins the default model selection', async t => {

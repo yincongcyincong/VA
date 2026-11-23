@@ -64,5 +64,5 @@ export function createVoice() {
     return Math.min(0.95, Math.sqrt(energy / samples.length) * 4.4);
   }
 
-  return { prepare, decode, play, level };
+  return { prepare, play, level };
 }

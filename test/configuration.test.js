@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { configCatalog, mergeConfigEntries, parseConfigCommand } from '../lib/configuration.js';
-import { agentConfigSnapshot, normalizeAgentConfig, patchAgentConfig } from '../desktop/agent-settings.js';
+import { agentConfigSnapshot, legacyAgentPrompt, normalizeAgentConfig, patchAgentConfig,
+  removeLegacyAgentPrompts } from '../desktop/agent-settings.js';
 import { compilePerformance } from '../desktop/performance-config.js';
 
 test('CLI and MCP catalog examples validate with the shared configuration schema', () => {
@@ -45,7 +46,7 @@ test('CLI and MCP accept ZipVoice reference audio, transcript and runtime paths'
   assert.throws(() => parseConfigCommand({ ...request, value: { provider: 'matcha' } }), { code: 'CONFIG_VALUE' });
 });
 
-test('agent updates preserve inactive channels and consolidate the previous Agent prompt', async () => {
+test('agent updates preserve inactive channels and store the role prompt apart from agent configuration', async () => {
   const before = {
     mode: 'local',
     localAgent: { provider: 'codex', prompt: '原来的指令', codex: { command: 'codex', model: 'old' } },
@@ -63,15 +64,19 @@ test('agent updates preserve inactive channels and consolidate the previous Agen
   assert.equal(next.localAgent.codex.model, 'new');
   assert.equal(next.channels.astrbot.target, 'test');
   assert.equal(next.channels.openclaw.channel, 'telegram');
-  assert.equal(next.prompt, '原来的指令');
+  assert.equal(legacyAgentPrompt(before), '原来的指令');
+  assert.equal(next.prompt, undefined);
   assert.equal(next.localAgent.prompt, undefined);
   assert.equal(next.language, undefined);
-  assert.equal(agentConfigSnapshot({ ...before, prompt: '' }).prompt, '');
-  assert.equal(normalizeAgentConfig({ mode: 'doubao', doubao: { prompt: '保留旧语音指令' } }).prompt, '保留旧语音指令');
-  const migrated = normalizeAgentConfig({
+  assert.equal(agentConfigSnapshot(before, 'local', '桌面角色 Prompt').prompt, '桌面角色 Prompt');
+  assert.equal(legacyAgentPrompt({ mode: 'doubao', doubao: { prompt: '保留旧语音指令' } }), '保留旧语音指令');
+  const oldApi = {
     mode: 'api', apiProfileId: 'selected',
-    apiProfiles: [{ id: 'selected', language: { prompt: '原来的 API 指令' } }],
-  });
-  assert.equal(migrated.mode, 'off');
-  assert.equal(migrated.prompt, '原来的 API 指令');
+    apiProfiles: [{ id: 'selected', language: { prompt: '原来的 API 指令', baseUrl: 'https://example.invalid' } }],
+  };
+  assert.equal(legacyAgentPrompt(oldApi), '原来的 API 指令');
+  assert.equal(normalizeAgentConfig(oldApi).mode, 'off');
+  const cleaned = removeLegacyAgentPrompts(oldApi);
+  assert.deepEqual(cleaned.apiProfiles[0].language, { baseUrl: 'https://example.invalid' });
+  assert.equal(removeLegacyAgentPrompts(cleaned), cleaned);
 });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { actions } from '../desktop/actions.js';
-import { chatPerformancePrompt, replyPerformance, requestedPerformance, requestsSelfie } from '../desktop/character-performance.js';
+import { chatPerformancePrompt, createRolePrompt, replyPerformance, requestedPerformance, requestsSelfie } from '../desktop/character-performance.js';
 import { danceMotion } from '../desktop/dance-motion.js';
 import { compilePerformance, describePerformance } from '../desktop/performance-config.js';
 import { createSpeechMotion, smoothMouthWeight, textSpeechDuration } from '../desktop/speech-motion.js';
@@ -42,9 +42,29 @@ test('the current character and supported catalog drive input and reply actions'
   assert.equal(requestsSelfie('请星神，发一张自拍吧', '星神'), true);
   assert.equal(requestsSelfie('“发一张自拍”是什么意思？', '星神'), false);
   const prompt = chatPerformancePrompt({ name: '星神', prompt: '喜欢打招呼' }, catalog, '请用 {{name}} 自称');
+  assert.match(prompt, /角色名是 "星神"。这条身份说明优先于会话里的旧角色设定。/u);
+  assert.match(prompt, /默认用「你」称呼用户/u);
   assert.match(prompt, /请用 星神 自称/);
   assert.match(prompt, /dance-spin（转身亮相）/);
   assert.match(prompt, /自拍成功后只交付图片/);
+});
+
+test('the role editor includes CLI examples and expands custom commands for the active model', () => {
+  const rolePrompt = createRolePrompt('你是 {{name}}。', '喜欢讲故事。');
+  assert.match(rolePrompt, /va act dance-side/);
+  assert.match(rolePrompt, /va selfie --out/);
+  const custom = compilePerformance({ actions: {
+    'little-wave': { label: '轻轻挥手', motion: 'wave', seconds: 2 },
+    'full-spin': { label: '转身动画', clip: 'FullSpin', seconds: 2 },
+  } });
+  const catalog = describePerformance(custom, model);
+  const prompt = chatPerformancePrompt({ name: '雪雪', prompt: rolePrompt }, catalog);
+  assert.match(prompt, /你是 雪雪。/);
+  assert.match(prompt, /喜欢讲故事/);
+  assert.match(prompt, /va act little-wave/);
+  assert.match(prompt, /va express smile/);
+  assert.doesNotMatch(prompt, /va act full-spin|\{\{actionCommands\}\}/);
+  assert.equal(prompt.split('当前模型可用动作').length, 2);
 });
 
 test('mouth follows audio when available and text timing otherwise', () => {

@@ -3,7 +3,7 @@
   --paper: #fff4ed;
   --ink: #3c2430;
   --outline: #b77b87;
-  font: 550 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", sans-serif;
+  font: 550 14px/1.55 -apple-system, BlinkMacSystemFont, "PingFang SC", "Apple Color Emoji", "Segoe UI Emoji", "Noto Color Emoji", sans-serif;
 }
 :root[data-theme="sakura"] { --paper: #fff1f7; --ink: #4a2440; --outline: #d47ca2; }
 :root[data-theme="starlight"] { --paper: #23214b; --ink: #fff0fc; --outline: #a799ff; }

@@ -3,6 +3,7 @@ import { createVoice } from './voice.js';
 import { textSpeechDuration } from './speech-motion.js';
 import { createDoubaoPlayback } from './doubao-playback.js';
 import { speechActionStyles } from './actions.js';
+import { dialoguePages } from './dialogue-text.js';
 
 const stage = document.getElementById('stage');
 const notice = document.getElementById('notice');
@@ -11,12 +12,10 @@ const voice = createVoice();
 let avatar;
 let portrait = false;
 let performance;
-let actionVoice;
 let staged;
 const doubao = createDoubaoPlayback({ getAvatar: () => avatar });
 window.va.onDoubaoOutput(event => {
-  if (performance && event.type === 'client-speech') return;
-  if (event.type === 'clear') actionVoice?.abort();
+  if (performance && event.type.startsWith('client-speech')) return;
   doubao.output(event);
 });
 
@@ -87,16 +86,18 @@ function delay(ms, signal) {
 }
 
 function startBubble(text) {
-  const pages = text.match(/[\s\S]{1,58}/gu);
+  const pages = dialoguePages(text);
   let page = 0;
   window.va.bubble(text, pages[0]);
   let timer;
   return {
     paginate(duration) {
+      const pageTime = Math.max(1800, duration / pages.length);
       if (pages.length > 1) timer = setInterval(() => {
-        page = Math.min(page + 1, pages.length - 1);
-        window.va.bubble(text, pages[page]);
-      }, duration / pages.length);
+        window.va.bubble(text, pages[++page]);
+        if (page === pages.length - 1) clearInterval(timer);
+      }, pageTime);
+      return pageTime * pages.length;
     },
     close() {
       clearInterval(timer);
@@ -111,12 +112,13 @@ async function perform({ plan, speech, selfie, speakingStyle, readAloud = true }
   const controller = new AbortController();
   const { signal } = controller;
   performance = controller;
-  const dialogue = speech ? startBubble(speech) : undefined;
+  let dialogue;
   try {
     let audio;
     let voiceWarning;
     const textDuration = speech ? textSpeechDuration(speech, speakingStyle) : 0;
-    if (speech && readAloud) {
+    if (speech) dialogue = startBubble(speech);
+    if (speech && readAloud && /[\p{L}\p{N}]/u.test(speech)) {
       try {
         const prepared = await voice.prepare(speech, signal);
         audio = prepared.audio;
@@ -129,19 +131,19 @@ async function perform({ plan, speech, selfie, speakingStyle, readAloud = true }
     signal.throwIfAborted();
     message();
     const duration = audio ? audio.duration * 1000 : textDuration;
-    if (dialogue) {
-      dialogue.paginate(duration);
-      avatar.speak(speech, speakingStyle, duration, audio ? voice.level : undefined);
-    }
     const motionMs = Math.max(plan.seconds * 1000,
       speech && (plan.motion === 'idle' || speechActionStyles[plan.motion]) && !plan.bones && !plan.clip ? duration : 0);
     avatar.play({ ...plan, seconds: motionMs / 1000 });
+    const subtitleDuration = dialogue?.paginate(duration) ?? 0;
+    if (speech) {
+      avatar.speak(speech, speakingStyle, duration, audio ? voice.level : undefined);
+    }
     const shutterMs = Math.max(850, Math.min(duration + 60, motionMs - 500));
     const shot = selfie ? delay(shutterMs, signal).then(() => avatar.capture(true)) : undefined;
     const [image] = await Promise.all([
       shot,
-      delay(motionMs, signal),
-      audio ? voice.play(audio, signal) : speech && delay(duration, signal),
+      delay(Math.max(motionMs, subtitleDuration), signal),
+      audio && voice.play(audio, signal),
     ]);
     return { image, voiceWarning };
   } finally {
@@ -175,27 +177,9 @@ window.va.onCommand(async command => {
       if (performance) return false;
       if (command.replaceDance) doubao.stopDance();
       return doubao.dance(command.plan);
-    case 'action-voice': {
-      actionVoice?.abort();
-      const controller = new AbortController();
-      actionVoice = controller;
-      try {
-        const buffer = await voice.decode(command.audio, controller.signal);
-        await voice.play(buffer, controller.signal);
-      } catch (error) {
-        if (!controller.signal.aborted) throw error;
-      } finally {
-        if (actionVoice === controller) actionVoice = undefined;
-      }
-      return;
-    }
-    case 'action-voice-stop':
-      actionVoice?.abort();
-      return;
     case 'perform': return await perform(command);
     case 'stop':
       performance?.abort();
-      actionVoice?.abort();
       doubao.stopDance();
       doubao.stopClientSpeech();
       avatar?.play();
@@ -220,7 +204,6 @@ window.va.onCommand(async command => {
       clearTimeout(staged.timer);
       staged = undefined;
       portrait = command.portrait;
-      actionVoice?.abort();
       doubao.stopDance();
       doubao.stopClientSpeech();
       activateAvatar(next);

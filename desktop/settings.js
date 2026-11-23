@@ -17,6 +17,7 @@ const screenState = document.getElementById('screen-state');
 const musicState = document.getElementById('music-state');
 const status = document.getElementById('status');
 const voiceProvider = document.getElementById('voice-provider');
+const activeVoiceProvider = document.getElementById('active-voice-provider');
 const systemVoicePicker = document.getElementById('system-voice-picker');
 const systemVoiceMenu = document.getElementById('system-voice-menu');
 const systemVoiceCurrent = document.getElementById('system-voice-current');
@@ -26,6 +27,7 @@ const systemVoiceRefresh = document.getElementById('system-voice-refresh');
 const systemVoiceResults = document.getElementById('system-voice-results');
 const actionSound = document.getElementById('action-sound');
 const zipVoiceForm = document.getElementById('zipvoice-form');
+const zipVoiceStatus = document.getElementById('zipvoice-status');
 const volcForm = document.getElementById('volc-form');
 const volcResource = document.getElementById('volc-resource');
 const voiceStatus = document.getElementById('voice-status');
@@ -42,7 +44,12 @@ const performanceStatus = document.getElementById('performance-status');
 const nameForm = document.getElementById('character-name-form');
 const nameInput = document.getElementById('character-name');
 const nameStatus = document.getElementById('character-name-status');
+const rolePromptForm = document.getElementById('role-prompt-form');
+const rolePromptInput = document.getElementById('role-prompt');
+const rolePromptSave = rolePromptForm.querySelector('button[type=submit]');
+const rolePromptStatus = document.getElementById('role-prompt-status');
 let lastName;
+let lastRolePrompt;
 let modelPending = false;
 let inspectedModel;
 let actionCatalog;
@@ -54,6 +61,8 @@ let installedVoices;
 let voiceListError = '';
 let voiceOptionsKey;
 let voiceConfig;
+let voiceSelection;
+let voiceRequest = 0;
 const languageNames = new Intl.DisplayNames(['zh-Hans'], { type: 'language' });
 
 function renderModelReport(model) {
@@ -147,6 +156,11 @@ function render(settings) {
     lastName = settings.characterName;
     nameInput.value = lastName;
   }
+  if (lastRolePrompt === undefined || rolePromptInput.value === lastRolePrompt) {
+    rolePromptInput.value = settings.rolePrompt;
+  }
+  lastRolePrompt = settings.rolePrompt;
+  rolePromptSave.disabled = rolePromptInput.readOnly;
   document.documentElement.dataset.theme = settings.theme;
   markChoice(theme, settings.theme);
   markChoice(speakingStyle, settings.speakingStyle);
@@ -228,6 +242,20 @@ async function update(change) {
 }
 
 window.va.onSettings(render);
+rolePromptForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  rolePromptInput.readOnly = rolePromptSave.disabled = true;
+  try {
+    const settings = await window.va.saveRolePrompt(rolePromptInput.value);
+    render(settings);
+    rolePromptInput.value = settings.rolePrompt;
+    rolePromptStatus.textContent = 'Prompt 已保存。';
+  } catch (error) {
+    rolePromptStatus.textContent = error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+  } finally {
+    rolePromptInput.readOnly = rolePromptSave.disabled = false;
+  }
+});
 window.va.onVoiceChanged(renderVoice);
 window.va.onSenses(renderSenses);
 scale.addEventListener('input', () => {
@@ -251,21 +279,38 @@ for (const [id, open] of [
   });
 }
 
+function renderVoicePanel() {
+  markChoice(voiceProvider, voiceSelection);
+  systemVoicePicker.hidden = voiceSelection !== 'system';
+  if (systemVoicePicker.hidden) closeSystemVoices();
+  zipVoiceForm.hidden = voiceSelection !== 'zipvoice';
+  volcForm.hidden = voiceSelection !== 'volc';
+  const active = voiceConfig?.provider;
+  activeVoiceProvider.hidden = !active || active === voiceSelection;
+  activeVoiceProvider.textContent = activeVoiceProvider.hidden ? '' :
+    '当前使用 ' + voiceProvider.querySelector(`[data-choice="${active}"]`).textContent;
+}
+
 function renderVoice(config) {
+  const previous = voiceConfig;
   voiceConfig = config;
+  voiceSelection ??= config.provider;
   actionSound.checked = config.actionSound;
   actionSound.disabled = false;
-  markChoice(voiceProvider, config.provider);
-  systemVoicePicker.hidden = config.provider !== 'system';
-  if (systemVoicePicker.hidden) closeSystemVoices();
-  zipVoiceForm.hidden = config.provider !== 'zipvoice';
-  for (const [key, value] of Object.entries(config.zipvoice)) zipVoiceForm.elements[key].value = value;
-  volcForm.hidden = config.provider !== 'volc';
+  renderVoicePanel();
+  const preparation = config.zipvoicePreparation;
+  zipVoiceStatus.textContent = preparation?.phase === 'loading' ? '正在后台加载 ZipVoice…'
+    : preparation?.phase === 'error' ? preparation.message : '';
+  for (const [key, value] of Object.entries(config.zipvoice)) {
+    const field = zipVoiceForm.elements[key];
+    if (!previous || field.value === previous.zipvoice[key]) field.value = value;
+  }
   renderSystemVoices();
-  volcForm.elements.speaker.value = config.volc.speaker;
-  volcForm.elements.apiKey.value = '';
+  if (!previous || volcForm.elements.speaker.value === previous.volc.speaker) {
+    volcForm.elements.speaker.value = config.volc.speaker;
+  }
   volcForm.elements.apiKey.placeholder = config.volc.hasKey ? '已配置，留空保留' : '输入控制台 API Key';
-  markChoice(volcResource, config.volc.resourceId);
+  if (!previous || choiceValue(volcResource) === previous.volc.resourceId) markChoice(volcResource, config.volc.resourceId);
 }
 
 const localVoiceNames = { Tingting: '婷婷', Meijia: '美佳', Sinji: '善怡' };
@@ -395,11 +440,17 @@ systemVoiceChoices.addEventListener('click', event => {
 });
 
 async function updateVoice(change) {
+  const request = ++voiceRequest;
   try {
-    renderVoice(await window.va.voiceConfig(change));
-    voiceStatus.textContent = { volc: '已启用火山 TTS。', zipvoice: '已启用本地音色复刻。' }[change?.provider] ?? '';
+    const config = await window.va.voiceConfig(change);
+    if (request === voiceRequest) {
+      renderVoice(config);
+      voiceStatus.textContent = { volc: '已启用火山 TTS。', zipvoice: '已保存本地音色复刻。' }[change?.provider] ?? '';
+    }
+    return true;
   } catch (error) {
-    voiceStatus.textContent = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
+    if (request === voiceRequest) voiceStatus.textContent = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
+    return false;
   }
 }
 
@@ -419,16 +470,10 @@ actionSound.addEventListener('change', async () => {
 });
 
 onChoice(voiceProvider, value => {
+  voiceSelection = value;
+  renderVoicePanel();
+  voiceStatus.textContent = '';
   if (value === 'system') void updateVoice({ provider: 'system' });
-  else if (value === 'zipvoice') {
-    zipVoiceForm.hidden = false;
-    volcForm.hidden = true;
-    zipVoiceForm.elements.referenceAudio.focus();
-  } else {
-    volcForm.hidden = false;
-    zipVoiceForm.hidden = true;
-    volcForm.elements.apiKey.focus();
-  }
 });
 document.getElementById('choose-voice-reference').addEventListener('click', async () => {
   try {
@@ -446,7 +491,7 @@ zipVoiceForm.addEventListener('submit', async event => {
   const zipvoice = Object.fromEntries([...new FormData(zipVoiceForm)].map(([key, text]) => [key, text.trim()]));
   const save = zipVoiceForm.querySelector('button[type=submit]');
   save.disabled = true;
-  voiceStatus.textContent = '正在加载 ZipVoice 并检查参考录音…';
+  voiceStatus.textContent = '正在检查参考录音…';
   try {
     await updateVoice({ provider: 'zipvoice', zipvoice });
   } finally { save.disabled = false; }
@@ -458,8 +503,9 @@ volcForm.addEventListener('submit', async event => {
   const save = volcForm.querySelector('button[type=submit]');
   save.disabled = true;
   try {
-    await updateVoice({ provider: 'volc', volc: { speaker: speaker.value.trim(),
-      resourceId: choiceValue(volcResource), apiKey: apiKey.value } });
+    const key = apiKey.value;
+    if (await updateVoice({ provider: 'volc', volc: { speaker: speaker.value.trim(),
+      resourceId: choiceValue(volcResource), apiKey: key } }) && apiKey.value === key) apiKey.value = '';
   } finally { save.disabled = false; }
 });
 

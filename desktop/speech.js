@@ -5,8 +5,24 @@ import { join } from 'node:path';
 import { promisify } from 'node:util';
 import { ControlError } from '../lib/control.js';
 import { settingsWriter } from './config.js';
+import { dialogueCut } from './dialogue-text.js';
 
 const exec = promisify(execFile);
+
+export function splitReplySpeech(text) {
+  const lines = [];
+  let rest = text.trim();
+  while (rest.length > 300) {
+    const limit = dialogueCut(rest, 300);
+    const window = rest.slice(0, limit);
+    const boundary = Math.max(...Array.from(window.matchAll(/[。！？.!?；;\n]/gu), match => match.index + 1));
+    const end = boundary >= 100 ? boundary : limit;
+    lines.push(rest.slice(0, end).trim());
+    rest = rest.slice(end).trimStart();
+  }
+  lines.push(rest);
+  return lines;
+}
 
 export function parseMacVoices(list) {
   return list.split(/\r?\n/).flatMap(line => {

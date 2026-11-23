@@ -6,11 +6,9 @@ const modes = byId('mode');
 const providers = byId('providers');
 const configuration = byId('configuration');
 const binding = byId('binding');
-const unbind = byId('unbind-session');
+const createSession = byId('create-session');
 const sessions = byId('session-history');
 const routeConfiguration = byId('route-configuration');
-const promptForm = byId('agent-prompt-form');
-const promptInput = promptForm.elements.prompt;
 const status = byId('chat-status');
 const clientStatus = byId('doubao-bind-status');
 const captionStart = byId('doubao-caption-start');
@@ -21,7 +19,6 @@ const captionStatus = byId('doubao-caption-status');
 
 let current;
 let working = false;
-let savedPrompt;
 let sessionListKey;
 let revision = 0;
 
@@ -46,15 +43,14 @@ function controls() {
     for (const control of group.querySelectorAll('button, input')) control.disabled = Boolean(busy);
   }
   for (const control of binding.elements) control.disabled = Boolean(busy || !current?.provider);
-  unbind.disabled ||= !current?.sessionId;
-  for (const control of sessions.querySelectorAll('button')) control.disabled = Boolean(busy || control.dataset.active);
+  createSession.disabled = Boolean(busy || !current?.provider);
+  for (const control of sessions.querySelectorAll('button')) control.disabled = Boolean(busy || control.dataset.unavailable);
   const bound = Boolean(current?.client?.title);
   byId('doubao-client-bind').disabled = Boolean(busy);
   byId('doubao-client-unbind').disabled = Boolean(busy || !bound);
   for (const id of ['doubao-client-context', 'doubao-client-read']) {
     byId(id).disabled = Boolean(busy || !bound || current.client.problem);
   }
-  promptForm.querySelector('button').disabled = Boolean(working || !current);
 }
 
 function sessionButton(text, handle) {
@@ -79,7 +75,7 @@ function renderSessions(provider, history) {
     const title = document.createElement('strong');
     const id = document.createElement('code');
     const cwd = document.createElement('p');
-    title.textContent = record.label;
+    title.textContent = record.title || '未命名会话';
     id.textContent = record.id;
     cwd.textContent = record.cwd;
     info.append(title, id, cwd);
@@ -93,10 +89,13 @@ function renderSessions(provider, history) {
     actions.className = 'row';
     const restore = sessionButton(record.active ? '当前绑定' : '重新绑定',
       () => void edit('restore-session', record.ref, '已恢复会话绑定。'));
-    if (record.active) restore.dataset.active = 'true';
+    if (record.active) restore.dataset.unavailable = 'true';
     actions.append(restore);
-    if (record.canOpen) actions.append(sessionButton('打开会话',
-      () => void edit('open-session', record.ref, '已交给终端打开。')));
+    if (record.canOpen) actions.append(sessionButton('打开并绑定',
+      () => void edit('open-session', record.ref, '已打开会话并接收它的新回复。')));
+    const unbind = sessionButton('解除绑定', () => void edit('unbind-session', record.ref, '已解除绑定，会话仍保存在记录中。'));
+    if (!record.bound) unbind.dataset.unavailable = 'true';
+    actions.append(unbind);
     item.append(info, actions);
     return item;
   }));
@@ -114,8 +113,9 @@ function render(state, syncFields = false) {
   byId('doubao-client-panel').hidden = byId('doubao-captions-panel').hidden = !client;
   routeConfiguration.hidden = !route;
   byId('openclaw-fields').hidden = mode !== 'openclaw';
+  const activeTitle = state.sessionHistory?.find(record => record.active)?.title;
   byId('connection').textContent = local ? (state.provider
-    ? state.label + (state.sessionId ? ' · ' + state.sessionId : ' · 未绑定会话') : '请选择 Agent')
+    ? state.label + (state.sessionId ? ' · ' + (activeTitle || state.sessionId) : ' · 未绑定会话') : '请选择 Agent')
     : route ? (route.target ? '接收频道回复 · ' + route.target : '请配置目标频道')
       : client ? (state.client?.title || '未绑定本机对话') : '智能体接入已关闭';
 
@@ -141,8 +141,6 @@ function render(state, syncFields = false) {
     for (const field of ['target', 'channel', 'accountId', 'sessionKey']) routeConfiguration.elements[field].value = route[field];
     routeConfiguration.elements.speak.checked = route.speakReplies;
   }
-  if (savedPrompt === undefined || promptInput.value === savedPrompt) promptInput.value = state.prompt;
-  savedPrompt = state.prompt;
   controls();
 }
 
@@ -159,16 +157,14 @@ async function refresh() {
 async function edit(operation, value, success = '', pending = '') {
   if (working) return false;
   revision++;
-  const feedback = operation === 'prompt' ? byId('agent-prompt-status')
-    : operation.startsWith('doubao-client-') ? clientStatus : status;
+  const feedback = operation.startsWith('doubao-client-') ? clientStatus : status;
   working = true;
   feedback.textContent = pending;
   controls();
   try {
     const result = await call(operation, value);
-    if (operation === 'prompt' && promptInput.value === value) promptInput.value = savedPrompt;
-    if (operation !== 'open-session') render(result, operation !== 'prompt');
-    feedback.textContent = success;
+    render(result, true);
+    feedback.textContent = typeof success === 'function' ? success(result) : success;
     return true;
   } catch (error) {
     feedback.textContent = errorText(error);
@@ -176,6 +172,7 @@ async function edit(operation, value, success = '', pending = '') {
   } finally {
     working = false;
     controls();
+    if (operation === 'open-session') void refresh();
   }
 }
 
@@ -194,10 +191,10 @@ binding.addEventListener('submit', async event => {
   event.preventDefault();
   if (await edit('bind', binding.elements.session.value, '已绑定会话。')) binding.reset();
 });
-unbind.addEventListener('click', () => void edit('bind', null, '已解除当前绑定。'));
-promptForm.addEventListener('submit', event => {
-  event.preventDefault();
-  void edit('prompt', promptInput.value, '已保存共用 Prompt。');
+createSession.addEventListener('click', () => {
+  void edit('create-session', undefined, ({ label, openedSession }) => openedSession.sessionId
+    ? `已打开并绑定 ${label} 的新会话。`
+    : `已打开 ${label}。开始聊天后，可用新会话的 ID 绑定 VA。`, '正在打开 Agent…');
 });
 routeConfiguration.addEventListener('submit', event => {
   event.preventDefault();
@@ -214,7 +211,7 @@ for (const [action, success, pending] of [
   ['read', '', ''],
   ['bind', '已绑定豆包当前对话。', '正在识别豆包当前对话…'],
   ['unbind', '已解除绑定。', ''],
-  ['context', '已同步共用 Prompt 和角色能力。', '正在同步共用 Prompt 和角色能力…'],
+  ['context', '已同步角色 Prompt 和动作能力。', '正在同步角色 Prompt 和动作能力…'],
 ]) {
   const operation = 'doubao-client-' + action;
   byId(operation).addEventListener('click', () => void edit(operation, undefined, success, pending));

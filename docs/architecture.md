@@ -44,7 +44,7 @@ flowchart LR
 
 ### 对话与角色设定
 
-一次启用一种对话接入。Codex、Claude Code、DeepSeek Harness、OMP 和自定义 Agent 通过本机子进程运行。Codex 和 Claude Code 使用已绑定的会话，历史记录可在终端续接。主进程将共用 Prompt 与角色名称、人设和当前动作清单一起交给 Agent。明确的动作请求可先在本机处理，Agent 的回复也可附动作与表情。
+一次启用一种对话接入。Codex、Claude Code、DeepSeek Harness、OMP 和自定义 Agent 通过本机子进程运行。Codex 和 Claude Code 使用已绑定的会话，历史记录可在终端续接。主进程将桌面角色的 Prompt 展开为含当前角色名及动作命令的指令，交给 Agent。明确的动作请求可先在本机处理，Agent 的回复也可附动作与表情。
 
 AstrBot 和 OpenClaw 使用各自的模型和频道发送能力。插件通过 `va bridge` 转交入站动作、Prompt 请求与已发送的频道回复。直连和 SSH 走标准输入输出，Docker 方式先写共享目录，再由宿主机调用同一入口。频道绑定存放在 `agent.json`。
 
@@ -60,9 +60,9 @@ AstrBot 和 OpenClaw 使用各自的模型和频道发送能力。插件通过 `
 
 | 文件 | 内容 | 覆盖路径 |
 | --- | --- | --- |
-| `settings.json` | 模型路径、视角、缩放、主题、屏幕与音乐选项 | 使用 `userData` 下的默认路径 |
-| `agent.json` | 当前接入方式、共用 Prompt、Agent 和机器人频道 | `VA_AGENT_CONFIG` |
-| `character.json` | 角色名、人设、默认台词 | `VA_CHARACTER_CONFIG` |
+| `settings.json` | 模型路径、视角、缩放、主题、角色 Prompt、屏幕与音乐选项 | 使用 `userData` 下的默认路径 |
+| `agent.json` | 当前接入方式、Agent 和机器人频道 | `VA_AGENT_CONFIG` |
+| `character.json` | 角色名、默认台词 | `VA_CHARACTER_CONFIG` |
 | `performance.json` | 用户动作及表情 | `VA_PERFORMANCE_CONFIG` |
 | `voice.json` | 音色服务、上次选中的本机音色和动作发声设置 | `VA_VOICE_CONFIG` |
 | `ai-girls.json`、`local-agent-sessions.json` | 导入的模型目录和按 Agent 配置保存的会话绑定及历史 | 使用 `userData` 下的默认路径 |

@@ -1,4 +1,5 @@
 import { actionCategories, danceActions, performanceId } from './actions.js';
+import { defaultRoleBackground } from './config.js';
 import { danceIntent } from './dance-intent.js';
 
 const actionWords = {
@@ -12,6 +13,26 @@ const expressionWords = { smile: ['笑一个', '笑一笑'], surprised: ['露出
 const quotes = /[“”「」『』"'‘’`]/u;
 const normalize = value => value.normalize('NFKC').trim().toLowerCase();
 const fillName = (text, name) => text?.replaceAll('{{name}}', () => name);
+
+export function createRolePrompt(background, previousInstructions = '', previousName = 'VA') {
+  const knownNames = [previousName, 'VA', '阿哈', '星神', 'Gemini', 'Gemini 娘'];
+  const legacyDefault = knownNames.some(name => fillName(defaultRoleBackground, name) === background);
+  return [
+    previousInstructions.trim(),
+    !background || legacyDefault ? defaultRoleBackground : background,
+    [
+      '用 CLI 操作桌面角色',
+      '能在 VA 所在的电脑执行命令时，先用 `va actions --supported --json` 确认可用动作和表情。按用户请求挑选实际支持的编号。在项目目录也可以用 `./bin/va.js` 运行相同命令。',
+      '- 用 `va act wave` 挥手、`va act pose-heart` 比心、`va act kiss` 飞吻。',
+      '- 用 `va act dance-side`、`va act dance-spin` 或 `va act dance-bounce` 跳舞。',
+      '- 每个动作都可以用 `--say` 配上你为当前对话写的台词，同时播放动作、语音和字幕。例如 `va act wave --say "嘿，好久不见！"`。省略 `--say` 时使用配置的默认台词。加上 `--expression smile` 会同时微笑。',
+      '- 用 `va express smile` 换表情，用 `va say "你好呀！"` 朗读。',
+      '- 用 `va stop` 停止当前动作，用 `va selfie --out /tmp/va-selfie.png --json` 自拍。',
+      '执行成功后直接回应用户，避免再通过回复触发同一个动作。没有终端权限时，按当前接入的回复方式表达动作意图。',
+    ].join('\n'),
+    '{{actionCommands}}',
+  ].filter(Boolean).join('\n\n');
+}
 
 export function requestsSelfie(text, name) {
   if (typeof text !== 'string' || text.length > 2200 || quotes.test(text)) return false;
@@ -30,21 +51,23 @@ export function characterPerformancePrompt(character, catalog, { style = 'text',
   const actions = Object.entries(catalog.actions).filter(([, action]) => action.supported);
   const actionList = Object.entries(actionCategories).flatMap(([category, label]) => {
     const group = actions.filter(([, action]) => !action.alternate && (action.category ?? 'custom') === category);
-    return group.length ? [label, ...group.map(([id, action]) => `- ${id}（${action.label}）`)] : [];
+    return group.length ? [label, ...group.map(([id, action]) => `- ${id}（${action.label}） · va act ${id}`)] : [];
   });
   const alternate = actions.filter(([, action]) => action.alternate);
   if (alternate.length) actionList.push('用户指定时可调用的兼容动作',
-    ...alternate.map(([id, action]) => `- ${id}（${action.label}）`));
-  const expressions = catalog.supportedExpressions.map(id => `${id}（${catalog.expressions[id]}）`);
+    ...alternate.map(([id, action]) => `- ${id}（${action.label}） · va act ${id}`));
+  const expressions = catalog.supportedExpressions.map(id => `- ${id}（${catalog.expressions[id]}） · va express ${id}`);
+  const commands = `当前模型可用动作\n${actionList.join('\n') || '暂无'}\n\n当前模型可用表情\n${expressions.join('\n') || '暂无'}`;
+  const hasCommandSlot = character.prompt?.includes('{{actionCommands}}');
   return [
-    `你的 VA 桌面角色名是 ${JSON.stringify(character.name)}。本轮使用这个名字自称。历史对话、模型文件名和旧人设里出现过的称呼按历史称呼理解。`,
-    character.prompt,
+    `你的 VA 桌面角色名是 ${JSON.stringify(character.name)}。这条身份说明优先于会话里的旧角色设定。平时用「我」自称，需要自报姓名时使用当前角色名。默认用「你」称呼用户，用户明确要求使用某个称呼时按其要求称呼。历史角色名和模型文件名只用于理解之前的内容。`,
+    fillName(character.prompt, character.name)?.replaceAll('{{actionCommands}}', () => commands),
     '根据用户的请求和你即将说出的回复选择动作和表情。问好时挥手，同意时点头，正式感谢时鞠躬，遇到趣事时大笑。可以用喜悦、惊讶或难过回应当下情绪，也可以在合适的庆祝场合主动表演。平常聊天用自然语气即可。',
+    '每次触发动作时，为它写一句结合当前对话的角色台词，内置或自定义动作都适用。直接调用 CLI 时用 `va act <动作> --say "本轮台词"`，调用动作工具时填写 `speech`。由 VA 解析回复时，把生成的台词写进回复正文。没有台词时，VA 使用动作的默认台词。',
     '用户明确要求的动作优先。VA 可直接响应明确请求。若本轮已经收到 VA 的动作安排反馈，正常回应即可。一次回复最多主动选择一个动作和一个表情。提到、引用或否定某个动作时保持原状。',
     dance ? '想主动跳舞时，选一种可用舞步。' : '本接入已关闭主动跳舞，用户明确要求时仍可由 VA 处理。',
     '摆拍动作在桌面摆姿势。用户明确要求发送自拍时由有附件能力的频道或自拍工具拍摄和发送。自拍成功后只交付图片，省略附文和完成说明。拍摄或发送失败时说明原因。',
-    `当前模型可用动作\n${actionList.join('\n') || '暂无'}`,
-    `当前模型可用表情\n${expressions.join('、') || '暂无'}`,
+    !hasCommandSlot && commands,
     style === 'text'
       ? '先写用户能看到和听到的台词。决定表演时，在回复最后单独写一行 [[va action=wave expression=smile]]，把示例编号换成上面实际可用的编号。action 或 expression 可以只写一个。需要自然聊天时省略这一行。'
       : '用自然语言表达本轮主动表演的意图。将「我来挥手」「我来侧步摇摆」或「我露出微笑」这类第一人称短句单独说完，名称使用上面列出的动作或表情。正常聊天时直接说话。',

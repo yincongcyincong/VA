@@ -1,7 +1,7 @@
 import { integrationMode } from './integration.js';
 import { patchLocalAgentConfig } from './local-agent.js';
 
-export function sharedAgentPrompt(config) {
+export function legacyAgentPrompt(config) {
   if (typeof config?.prompt === 'string') return config.prompt;
   const selected = Array.isArray(config?.apiProfiles) ? config.apiProfiles.find(profile => profile?.id === config.apiProfileId) : undefined;
   const candidates = config?.mode === 'doubao' ? [config.doubao?.prompt, config.localAgent?.prompt]
@@ -10,15 +10,36 @@ export function sharedAgentPrompt(config) {
   return candidates.find(value => typeof value === 'string' && value.trim())?.trim().slice(0, 5000) ?? '';
 }
 
+function withoutPrompt(value) {
+  if (!value || !Object.hasOwn(value, 'prompt')) return value;
+  const { prompt, ...settings } = value;
+  return settings;
+}
+
+export function removeLegacyAgentPrompts(config) {
+  let next = withoutPrompt(config);
+  for (const key of ['localAgent', 'language', 'doubao']) {
+    const profile = withoutPrompt(next?.[key]);
+    if (profile !== next?.[key]) next = { ...next, [key]: profile };
+  }
+  if (Array.isArray(next?.apiProfiles)) {
+    const profiles = next.apiProfiles.map(profile => {
+      const language = withoutPrompt(profile?.language);
+      return language !== profile?.language ? { ...profile, language } : profile;
+    });
+    if (profiles.some((profile, index) => profile !== next.apiProfiles[index])) next = { ...next, apiProfiles: profiles };
+  }
+  return next;
+}
+
 export function normalizeAgentConfig(config) {
-  const { apiProfiles, apiProfileId, language, vision, doubao, localAgent, ...rest } = config ?? {};
+  const { apiProfiles, apiProfileId, language, vision, doubao, localAgent, prompt, ...rest } = config ?? {};
   const { prompt: _oldPrompt, ...local } = localAgent ?? {};
-  return { ...rest, mode: integrationMode(config), prompt: sharedAgentPrompt(config), localAgent: local };
+  return { ...rest, mode: integrationMode(config), localAgent: local };
 }
 
 export async function patchAgentConfig(current, change, launchDirectory) {
   const next = normalizeAgentConfig(current);
-  if (change.prompt !== undefined) next.prompt = change.prompt.trim();
   if (change.localAgent) next.localAgent = await patchLocalAgentConfig(next.localAgent, change.localAgent, launchDirectory);
   if (change.channels) {
     next.channels = { ...current.channels };
@@ -32,7 +53,7 @@ export async function patchAgentConfig(current, change, launchDirectory) {
   return next;
 }
 
-export function agentConfigSnapshot(config, mode = integrationMode(config)) {
+export function agentConfigSnapshot(config, mode = integrationMode(config), prompt = '') {
   const { provider = '', cwd = '', speakReplies = false, ...profiles } = config.localAgent ?? {};
   const localAgent = { provider, cwd, speakReplies };
   for (const key of ['codex', 'claude', 'deepseekharness', 'omp', 'custom']) {
@@ -45,7 +66,7 @@ export function agentConfigSnapshot(config, mode = integrationMode(config)) {
     return [key, { target, channel, accountId, sessionKey, speakReplies }];
   }));
   return {
-    mode, prompt: sharedAgentPrompt(config), localAgent, channels,
+    mode, prompt, localAgent, channels,
     doubaoClient: { autoActions: (captions?.autoActions ?? captions?.autoDance) !== false,
       listenForActions: (captions?.listenForActions ?? captions?.listenForDance) === true },
   };

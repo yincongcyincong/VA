@@ -49,6 +49,17 @@
         <button type="submit">保存名称</button>
         <p id="character-name-status" class="feedback" role="status"></p>
       </form>
+      <form id="role-prompt-form" class="card settings-grid">
+        <h2 id="role-prompt-title">角色 Prompt</h2>
+        <p>在同一处编辑角色背景、说话方式和动作命令，供本地 Agent、豆包和机器人接入使用。</p>
+        <textarea id="role-prompt" rows="11" maxlength="32000" required spellcheck="false"
+          aria-labelledby="role-prompt-title" aria-describedby="role-prompt-help"></textarea>
+        <p id="role-prompt-help"><code>{{name}}</code> 会替换为角色名，<code>{{actionCommands}}</code> 会展开为当前模型的动作和表情命令。</p>
+        <div class="row">
+          <button type="submit" class="primary" disabled>保存 Prompt</button>
+          <p id="role-prompt-status" class="feedback" role="status"></p>
+        </div>
+      </form>
       <div class="card settings-grid">
         <h2>外观与操作</h2>
         <fieldset class="plain">
@@ -72,8 +83,8 @@
         <p>开启后，仍可通过底部控制条或 ⌃⌥V 打开设置。</p>
       </div>
       <div class="card section-head">
-        <div><h2>角色人设</h2><p>提供通用语气和动作台词。接入时的补充指令可在「智能体接入」统一设置。</p></div>
-        <button id="character" type="button">打开人设文件…</button>
+        <div><h2>动作默认台词</h2><p>编辑挥手、跳舞等动作自带的台词。</p></div>
+        <button id="character" type="button">打开台词配置…</button>
       </div>
     </section>
 
@@ -183,6 +194,7 @@
           <button type="button" data-choice="zipvoice" aria-pressed="false">本地音色复刻</button>
           <button type="button" data-choice="volc" aria-pressed="false">火山 TTS</button>
         </div>
+        <p id="active-voice-provider" role="status" hidden></p>
         <div id="system-voice-picker" class="voice-picker" hidden>
           <p>当前音色 <strong id="system-voice-current"></strong></p>
           <div class="row">
@@ -196,6 +208,7 @@
           </div>
         </div>
         <form id="zipvoice-form" class="form-grid" hidden>
+          <p id="zipvoice-status" class="wide feedback" role="status"></p>
           <p class="wide">ZipVoice 在本机复刻音色。选一段约 3 秒的清晰人声，并填写录音里实际说的话。</p>
           <div class="row wide">
             <label class="reference-audio">参考录音 <input name="referenceAudio" type="text" required maxlength="4096" spellcheck="false"></label>
@@ -258,18 +271,17 @@
         </div>
         <form id="configuration" class="form-grid">
           <label class="wide">工作目录 <input name="cwd" type="text" maxlength="4096" placeholder="留空使用 VA 启动目录"></label>
-          <label class="toggle"><input name="speak" type="checkbox"> 朗读回复</label>
+          <label class="toggle"><input name="speak" type="checkbox"> 自动朗读回复</label>
           <div class="end"><button type="submit">保存 Agent</button></div>
         </form>
         <form id="binding" class="row binding">
           <label>会话 ID <input name="session" type="text" maxlength="160" required spellcheck="false" autocomplete="off"></label>
           <button type="submit">绑定会话</button>
-          <button id="unbind-session" type="button">解除绑定</button>
         </form>
-        <p>保存 Agent 和工作目录后，使用 Codex 或 Claude Code 的会话 ID 绑定。点击记录中的「打开会话」可在终端续接。</p>
+        <p>绑定 Codex、Claude Code 或 OMP 的会话后，在原客户端聊天也会显示新回复。开启「自动朗读回复」可同时发声。</p>
       </div>
       <section id="session-panel" class="card settings-grid" hidden>
-        <h2>会话绑定记录</h2>
+        <div class="row"><h2>会话绑定记录</h2><button id="create-session" type="button">创建会话</button></div>
         <p id="session-empty">选择一个 Agent 查看绑定记录。</p>
         <ul id="session-history" class="session-list" aria-label="本地 Agent 会话绑定记录"></ul>
       </section>
@@ -315,15 +327,6 @@
         <div class="end"><button type="submit">保存频道</button></div>
       </form>
 
-      <form id="agent-prompt-form" class="card settings-grid">
-        <h2 id="agent-prompt-title">共用 Prompt</h2>
-        <p>应用到本地 Agent、豆包客户端能力同步、OpenClaw 和 AstrBot。可用 <code>{{name}}</code> 引用当前角色名。</p>
-        <textarea name="prompt" rows="4" maxlength="5000" aria-labelledby="agent-prompt-title"></textarea>
-        <div class="row">
-          <button type="submit" class="primary">保存 Prompt</button>
-          <p id="agent-prompt-status" class="feedback" role="status"></p>
-        </div>
-      </form>
       <p id="chat-status" class="feedback" role="status"></p>
     </section>
 

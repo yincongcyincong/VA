@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('va', {
   onCharacterName: callback => ipcRenderer.on('va:character-name-changed', (_event, name) => callback(name)),
   nameplateBounds: bounds => ipcRenderer.send('va:nameplate-bounds', bounds),
   nameCharacter: name => ipcRenderer.invoke('va:character-name', name),
+  saveRolePrompt: prompt => ipcRenderer.invoke('va:role-prompt', prompt),
   openCapturePrivacy: () => ipcRenderer.invoke('va:open-capture-privacy'),
   voiceConfig: change => ipcRenderer.invoke('va:voice-config', change),
   chooseVoiceReference: () => ipcRenderer.invoke('va:choose-voice-reference'),

@@ -155,6 +155,7 @@ legend { margin-bottom: 6px; }
   padding: 10px 0; border-top: 1px solid var(--line);
 }
 .session-list li > div:first-child { min-width: 0; }
+.session-list strong { display: block; overflow-wrap: anywhere; }
 .session-list code { display: block; overflow-wrap: anywhere; }
 .session-list time { color: var(--muted); font-size: 12px; }
 .session-list .row { flex-wrap: wrap; justify-content: flex-end; }
