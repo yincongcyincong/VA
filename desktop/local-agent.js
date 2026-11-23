@@ -19,6 +19,8 @@ const sessionPattern = /^[a-z0-9][a-z0-9_.:-]{0,159}$/i;
 const uuidPattern = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const nativeResume = new Set(['codex', 'claude']);
 const exec = promisify(execFile);
+const deepSeekApps = ['/Applications/DeepSeek Harness.app', join(homedir(), 'Applications/DeepSeek Harness.app')];
+const deepSeekCliDirectory = 'Contents/Resources/runtime/cli/bin';
 
 function field(value, max, label) {
   if (typeof value !== 'string' || value.length > max || value.includes('\0')) {
@@ -77,7 +79,8 @@ export async function patchLocalAgentConfig(current, patch, launchDirectory) {
 
 function agentPath() {
   return [process.env.PATH, join(homedir(), '.local/bin'), join(homedir(), '.bun/bin'),
-    '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].filter(Boolean).join(delimiter);
+    '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin',
+    ...deepSeekApps.map(app => join(app, deepSeekCliDirectory))].filter(Boolean).join(delimiter);
 }
 
 function runAgent(agent, signal, build) {
@@ -371,8 +374,18 @@ async function openCodexDesktop(id, cwd) {
   return Boolean(result);
 }
 
+async function openDeepSeekDesktop(command) {
+  const embedded = command.match(/^(.+\.app)\/Contents\/Resources\/runtime\/cli\/bin\/dsh$/u)?.[1];
+  for (const app of new Set([embedded, ...deepSeekApps].filter(Boolean))) {
+    if (!(await stat(app).catch(() => undefined))?.isDirectory()) continue;
+    if (await exec('/usr/bin/open', [app], { timeout: 10_000 }).catch(() => null)) return true;
+  }
+  return false;
+}
+
 export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(),
-  presentReply, onChange = () => {}, onReplyError = () => {}, openTerminal = launchTerminal, openCodex = openCodexDesktop }) {
+  presentReply, onChange = () => {}, onReplyError = () => {}, openTerminal = launchTerminal, openCodex = openCodexDesktop,
+  openDeepSeek = openDeepSeekDesktop }) {
   const saveSessions = settingsWriter(sessionPath);
   const sessionTitles = createSessionTitles();
   const history = new Map();
@@ -607,6 +620,9 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (provider === 'codex' && await openCodex(null, cwd)) {
           return { opened: true, application: 'codex', provider };
         }
+        if (provider === 'deepseekharness' && await openDeepSeek(agent.command)) {
+          return { opened: true, application: 'deepseek', provider };
+        }
         const modelArgs = model ? ['--model', model] : [];
         const id = provider === 'claude' ? randomUUID() : undefined;
         const sessions = id ? await getSessions(agent) : undefined;
@@ -614,7 +630,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (provider === 'codex') args = ['--config', 'developer_instructions=' + JSON.stringify(await getPrompt()), ...modelArgs];
         if (provider === 'claude') args = ['--session-id', id, '--append-system-prompt', await getPrompt(), ...modelArgs];
         if (provider === 'omp') args = ['--allow-home', '--append-system-prompt', await getPrompt(), ...modelArgs];
-        if (provider === 'deepseekharness') args = ['--profile', 'tui'];
+        if (provider === 'deepseekharness') args = ['web'];
         signal.throwIfAborted();
         await openTerminal(agent, args, { freshOmp: provider === 'omp' });
         signal.throwIfAborted();
@@ -624,7 +640,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
           await saveSessions(sessions);
           history.delete(agent.key);
         }
-        return { opened: true, application: 'terminal', provider, sessionId: id };
+        return { opened: true, application: provider === 'deepseekharness' ? 'deepseek' : 'terminal', provider, sessionId: id };
       });
     },
     send(value, options = {}) {

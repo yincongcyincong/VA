@@ -162,6 +162,7 @@ test('a fresh session opens the selected native Agent without sending a first me
   const calls = [];
   let config = { provider: 'codex' };
   let codexDesktop = true;
+  let deepSeekDesktop = true;
   let terminalAvailable = true;
   const agent = createLocalAgent({
     getConfig: async () => config,
@@ -169,6 +170,7 @@ test('a fresh session opens the selected native Agent without sending a first me
     sessionPath: join(directory, 'sessions.json'),
     launchDirectory: directory,
     openCodex: async (id, path) => { calls.push({ id, path }); return codexDesktop; },
+    openDeepSeek: async command => { calls.push({ command }); return deepSeekDesktop; },
     openTerminal: async (target, args, options) => {
       if (!terminalAvailable) throw new Error('Terminal unavailable');
       calls.push({ provider: target.provider, cwd: target.cwd, args, options });
@@ -201,6 +203,14 @@ test('a fresh session opens the selected native Agent without sending a first me
   assert.equal((await agent.openNewSession()).application, 'terminal');
   assert.deepEqual(calls.shift(), { provider: 'omp', cwd, args: ['--allow-home', '--append-system-prompt', '角色 Prompt'],
     options: { freshOmp: true } });
+
+  config = { provider: 'deepseekharness' };
+  assert.equal((await agent.openNewSession()).application, 'deepseek');
+  assert.deepEqual(calls.shift(), { command: 'dsh' });
+  deepSeekDesktop = false;
+  await agent.openNewSession();
+  assert.deepEqual(calls.shift(), { command: 'dsh' });
+  assert.deepEqual(calls.shift().args, ['web']);
 });
 
 test('Codex writer lock is reported without modifying the session binding', async t => {

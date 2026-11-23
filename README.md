@@ -232,6 +232,8 @@ MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角�
 
 点「创建会话」会在已保存的工作目录打开所选 Agent，首条消息在 Agent 里输入。Codex 优先打开 ChatGPT 桌面端的新聊天，桌面端不可用时使用终端。Claude Code 在终端打开，并用预先生成的会话 ID 自动绑定。新开的 Codex、OMP 等会话可在发出首条消息后用完整会话 ID 绑定。Codex CLI 可从 `/status` 查看会话信息。Claude Code 已有会话的 ID 与 `claude --resume <会话ID>` 使用的相同。[Codex CLI 会话信息](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [Claude Code 会话命令](https://code.claude.com/docs/zh-CN/commands)
 
+安装了 DeepSeek Harness 桌面端时，VA 可以使用其中的 `dsh` 命令。「创建会话」会打开 DeepSeek Harness，工作区和新会话在其侧栏中选择。[DeepSeek Harness 桌面端](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.md)
+
 「会话绑定记录」只显示当前选中的 Agent。记录中的「解除绑定」会取消关联并保留记录，之后可点击「重新绑定」。「打开并绑定」会恢复记录的工作目录和会话绑定，再启动对应客户端。Codex 优先跳到 ChatGPT 桌面端的原会话，桌面端不可用时尝试用终端续接。Claude Code 在终端打开。同一条 Codex 会话正在原客户端使用时，可在原窗口继续，或关闭那里打开的会话后用 `va chat` 发送消息。[桌面端会话链接](https://learn.chatgpt.com/docs/app/commands)
 
 绑定 Codex、Claude Code 或 OMP 的完整会话 ID 后，也可以在原客户端直接聊天。VA 读取这条会话的新完成回复，把正文显示在角色旁边。开启「自动朗读回复」并保存 Agent，角色也会按当前音色念出来。用 `va chat` 发出的消息继续使用同一个字幕和朗读流程。动作回复有台词时同步播放，只有动作时使用对应的默认台词。

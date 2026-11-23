@@ -192,9 +192,11 @@ binding.addEventListener('submit', async event => {
   if (await edit('bind', binding.elements.session.value, '已绑定会话。')) binding.reset();
 });
 createSession.addEventListener('click', () => {
-  void edit('create-session', undefined, ({ label, openedSession }) => openedSession.sessionId
-    ? `已打开并绑定 ${label} 的新会话。`
-    : `已打开 ${label}。开始聊天后，可用新会话的 ID 绑定 VA。`, '正在打开 Agent…');
+  void edit('create-session', undefined, ({ label, openedSession }) => {
+    if (openedSession.sessionId) return `已打开并绑定 ${label} 的新会话。`;
+    if (openedSession.application === 'deepseek') return `已启动 ${label}。可从它的侧栏创建会话。`;
+    return `已打开 ${label}。开始聊天后，可用新会话的 ID 绑定 VA。`;
+  }, '正在打开 Agent…');
 });
 routeConfiguration.addEventListener('submit', event => {
   event.preventDefault();
