@@ -3,9 +3,16 @@ name: Publish VA v1.0.0
 on:
   push:
     tags: [v1.0.0]
+    branches: [main]
+    paths: [.github/workflows/release-v1.yml]
 
 permissions:
   contents: read
+
+env:
+  RELEASE_TAG: v1.0.0
+
+concurrency: va-v1-release
 
 jobs:
   build:
@@ -14,6 +21,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
+          ref: v1.0.0
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
@@ -23,7 +31,7 @@ jobs:
       - run: npm test
       - name: Build and verify the Apple Silicon DMG
         run: |
-          test "v$(node -p 'require("./package.json").version')" = "$GITHUB_REF_NAME"
+          test "v$(node -p 'require("./package.json").version')" = "$RELEASE_TAG"
           test "$(uname -m)" = arm64
           make dmg
           codesign --verify --deep --strict dist/VA-darwin-arm64/VA.app
@@ -53,6 +61,10 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "VA $GITHUB_REF_NAME" --notes-file docs/releases/v1.0.0.md \
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets \
+              --jq '.isDraft == false and ([.assets[].name] | contains(["VA-1.0.0-mac-arm64.dmg", "SHA256SUMS.txt"]))' | grep -qx true; then
+            exit 0
+          fi
+          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+            --title "VA $RELEASE_TAG" --notes-file docs/releases/v1.0.0.md \
             dist/VA-1.0.0-mac-arm64.dmg dist/SHA256SUMS.txt
