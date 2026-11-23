@@ -4,8 +4,10 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { setTimeout } from 'node:timers/promises';
 import { test } from 'node:test';
+import * as zlib from 'node:zlib';
 import { createLocalAgent } from '../desktop/local-agent.js';
 import { createSessionReplies } from '../desktop/session-replies.js';
+import { replyPerformance } from '../desktop/character-performance.js';
 import { splitReplySpeech } from '../desktop/speech.js';
 
 const sessionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -67,6 +69,55 @@ test('long agent replies split into speakable phrases without losing their endin
   assert.ok(parts.every(part => part.length <= 300 && part.isWellFormed()));
   assert.equal(parts.join(''), text);
 });
+
+test('DeepSeek Harness delivers the action and speech from the completed turn of the bound session',
+  { skip: typeof zlib.zstdCompressSync !== 'function' }, async t => {
+    const root = await mkdtemp(join(tmpdir(), 'va-deepseek-replies-'));
+    const file = join(root, 'sessions', '-workspace', `session-${sessionId}`, 'session.v4.jsonl.zstd');
+    const other = join(root, 'sessions', '-workspace', 'session-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb', 'session.v4.jsonl.zstd');
+    const assistant = (turn, content) => ({
+      type: 'assistant/message', data: { turn, message: { role: 'assistant', content } },
+    });
+    const end = (turn, kind = 'completed') => ({ type: 'turn/end', data: { turn, reason: { kind } } });
+    const frame = (...events) => zlib.zstdCompressSync(Buffer.from(events.map(line).join('')));
+    const delivered = [];
+    const catalog = { actions: { wave: { supported: true } }, supportedExpressions: ['smile'] };
+    const monitor = createSessionReplies({
+      interval: 15,
+      env: { DSH_HOME: root },
+      present: (text, session) => delivered.push([replyPerformance(text, catalog), session.speakReplies]),
+    });
+    t.after(async () => { await monitor.select(); await rm(root, { recursive: true, force: true }); });
+    await mkdir(dirname(file), { recursive: true });
+    await mkdir(dirname(other), { recursive: true });
+    await writeFile(file, frame(assistant(1, block('旧字幕')), end(1)));
+    await writeFile(other, '');
+    await monitor.select({ provider: 'deepseekharness', key: 'deepseek', id: `session-${sessionId}`, speakReplies: true });
+    await appendFile(other, frame(assistant(1, block('其他会话')), end(1)));
+    await appendFile(file, frame(assistant(2, block('已取消的回复')), end(2, 'canceled')));
+    await appendFile(file, frame(assistant(3, [...block('过程消息'), { type: 'tool-call' }])));
+    const final = frame(assistant(3, [{ type: 'reasoning', text: '内部推理' }, ...block('嗨，见到你真好！\n[[va action=wave expression=smile]]')]));
+    await appendFile(file, final.subarray(0, 9));
+    await setTimeout(40);
+    assert.deepEqual(delivered, []);
+    await appendFile(file, final.subarray(9));
+    await setTimeout(40);
+    assert.deepEqual(delivered, []);
+    await appendFile(file, frame(end(3)));
+    const deadline = Date.now() + 2000;
+    while (!delivered.length && Date.now() < deadline) await setTimeout(15);
+    assert.deepEqual(delivered, [[{ speech: '嗨，见到你真好！', action: 'wave', expression: 'smile' }, true]]);
+    const archives = join(root, 'storages', 'workspace.json');
+    await mkdir(dirname(archives), { recursive: true });
+    await writeFile(archives, JSON.stringify({ global: { archivedSessionIds: [`session-${sessionId}`] } }));
+    await appendFile(file, frame(assistant(4, block('归档后的回复')), end(4)));
+    await setTimeout(40);
+    assert.equal(delivered.length, 1);
+    await monitor.select();
+    await appendFile(file, frame(assistant(5, block('解除绑定后的回复')), end(5)));
+    await setTimeout(40);
+    assert.equal(delivered.length, 1);
+  });
 
 test('an OMP turn forwarded through VA is spoken once even when OMP persists it', async t => {
   const root = await mkdtemp(join(tmpdir(), 'va-reply-dedup-'));

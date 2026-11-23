@@ -7,6 +7,9 @@ const providers = byId('providers');
 const configuration = byId('configuration');
 const binding = byId('binding');
 const createSession = byId('create-session');
+const clearSessions = byId('clear-sessions');
+const deepSeekRole = byId('deepseek-role');
+const installDeepSeekRole = byId('deepseek-install-role');
 const sessions = byId('session-history');
 const routeConfiguration = byId('route-configuration');
 const status = byId('chat-status');
@@ -44,6 +47,8 @@ function controls() {
   }
   for (const control of binding.elements) control.disabled = Boolean(busy || !current?.provider);
   createSession.disabled = Boolean(busy || !current?.provider);
+  clearSessions.disabled = Boolean(busy || !current?.hasSessionRecords);
+  installDeepSeekRole.disabled = Boolean(busy || !current?.sessionId);
   for (const control of sessions.querySelectorAll('button')) control.disabled = Boolean(busy || control.dataset.unavailable);
   const bound = Boolean(current?.client?.title);
   byId('doubao-client-bind').disabled = Boolean(busy);
@@ -96,6 +101,7 @@ function renderSessions(provider, history) {
     const unbind = sessionButton('解除绑定', () => void edit('unbind-session', record.ref, '已解除绑定，会话仍保存在记录中。'));
     if (!record.bound) unbind.dataset.unavailable = 'true';
     actions.append(unbind);
+    actions.append(sessionButton('移除记录', () => void edit('clear-sessions', { ref: record.ref }, '已移除绑定记录。')));
     item.append(info, actions);
     return item;
   }));
@@ -110,6 +116,7 @@ function render(state, syncFields = false) {
 
   markChoice(modes, mode);
   byId('local-panel').hidden = byId('session-panel').hidden = !local;
+  deepSeekRole.hidden = !local || state.provider !== 'deepseekharness';
   byId('doubao-client-panel').hidden = byId('doubao-captions-panel').hidden = !client;
   routeConfiguration.hidden = !route;
   byId('openclaw-fields').hidden = mode !== 'openclaw';
@@ -198,6 +205,14 @@ createSession.addEventListener('click', () => {
     return `已打开 ${label}。开始聊天后，可用新会话的 ID 绑定 VA。`;
   }, '正在打开 Agent…');
 });
+clearSessions.addEventListener('click', () => {
+  if (!current?.provider) return;
+  void edit('clear-sessions', { provider: current.provider }, ({ removed }) => `已清理 ${removed} 条绑定记录。`);
+});
+installDeepSeekRole.addEventListener('click', () => {
+  void edit('deepseek-install-role', undefined, ({ deepSeekRole }) => deepSeekRole.restart
+    ? '已配置角色能力。退出并重新打开 DeepSeek Harness 后生效。' : '角色能力已配置。');
+});
 routeConfiguration.addEventListener('submit', event => {
   event.preventDefault();
   const { target, channel, accountId, sessionKey, speak } = routeConfiguration.elements;
@@ -236,5 +251,6 @@ byId('doubao-caption-privacy').addEventListener('click', async () => {
   catch (error) { captionStatus.textContent = errorText(error); }
 });
 window.va.onChatRefresh(() => { if (!working) void refresh(); });
+window.addEventListener('focus', () => { if (!working) void refresh(); });
 controls();
 await refresh();

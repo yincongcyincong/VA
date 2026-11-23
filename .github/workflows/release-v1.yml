@@ -1,6 +1,7 @@
 name: Publish VA v1.0.0
 
 on:
+  workflow_dispatch:
   push:
     tags: [v1.0.0]
     branches: [main]
@@ -16,12 +17,12 @@ concurrency: va-v1-release
 
 jobs:
   build:
+    if: github.event_name == 'workflow_dispatch' || github.ref_type == 'tag' || contains(github.event.head_commit.message, '[refresh v1.0.0]')
     runs-on: macos-26
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: v1.0.0
           persist-credentials: false
       - uses: actions/setup-node@v6
         with:
@@ -57,14 +58,64 @@ jobs:
       - uses: actions/download-artifact@v5
         with:
           name: va-release
-      - name: Publish the GitHub release
+      - name: Publish or replace the GitHub release assets
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json isDraft,assets \
-              --jq '.isDraft == false and ([.assets[].name] | contains(["VA-1.0.0-mac-arm64.dmg", "SHA256SUMS.txt"]))' | grep -qx true; then
+          notes=docs/releases/v1.0.0.md
+          printf '\n[安装包对应的源码](%s/%s/tree/%s)\n' "$GITHUB_SERVER_URL" "$GITHUB_REPOSITORY" "$GITHUB_SHA" >> "$notes"
+          dmg=VA-1.0.0-mac-arm64.dmg
+          sums=SHA256SUMS.txt
+          (cd dist && sha256sum --check "$sums")
+          release="repos/$GITHUB_REPOSITORY/releases/tags/$RELEASE_TAG"
+          asset_endpoint="repos/$GITHUB_REPOSITORY/releases/assets"
+          if ! metadata=$(gh api "$release"); then
+            gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
+              --title "VA $RELEASE_TAG" --notes-file "$notes" "dist/$dmg" "dist/$sums"
             exit 0
           fi
-          gh release create "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --verify-tag \
-            --title "VA $RELEASE_TAG" --notes-file docs/releases/v1.0.0.md \
-            dist/VA-1.0.0-mac-arm64.dmg dist/SHA256SUMS.txt
+          test "$(jq -r '.immutable' <<< "$metadata")" != true
+          if [[ "$GITHUB_REF_TYPE" == tag ]]; then exit 0; fi
+
+          suffix="${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          for name in "$dmg" "$sums"; do cp "dist/$name" "dist/pending-$suffix-$name"; done
+          gh release upload "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" \
+            "dist/pending-$suffix-$dmg" "dist/pending-$suffix-$sums"
+          metadata=$(gh api "$release")
+          asset_id() {
+            jq -r --arg name "$1" '.assets[] | select(.name == $name) | .id' <<< "$metadata"
+          }
+          rename_asset() {
+            gh api --method PATCH "$asset_endpoint/$1" -f "name=$2" --silent
+          }
+          for name in "$dmg" "$sums"; do
+            expected="sha256:$(sha256sum "dist/$name" | cut -d' ' -f1)"
+            actual=$(jq -r --arg name "pending-$suffix-$name" '.assets[] | select(.name == $name) | .digest' <<< "$metadata")
+            test "$expected" = "$actual"
+          done
+
+          swapped_new=()
+          swapped_old=()
+          rollback() {
+            for name in "${swapped_new[@]}"; do
+              rename_asset "$(asset_id "pending-$suffix-$name")" "pending-$suffix-$name" || true
+            done
+            for name in "${swapped_old[@]}"; do
+              rename_asset "$(asset_id "$name")" "$name" || true
+            done
+          }
+          trap rollback ERR
+          for name in "$dmg" "$sums"; do
+            if [[ -n "$(asset_id "$name")" ]]; then
+              rename_asset "$(asset_id "$name")" "previous-$suffix-$name"
+              swapped_old+=("$name")
+            fi
+            rename_asset "$(asset_id "pending-$suffix-$name")" "$name"
+            swapped_new+=("$name")
+          done
+          gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --notes-file "$notes"
+          trap - ERR
+          for name in "${swapped_old[@]}"; do
+            gh api --method DELETE "$asset_endpoint/$(asset_id "$name")" --silent
+          done

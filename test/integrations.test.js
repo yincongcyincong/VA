@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { test } from 'node:test';
 import { checkBotRoute, configureIntegration, integrationMode, modes, screenMode } from '../desktop/integration.js';
 import { createLocalAgent } from '../desktop/local-agent.js';
@@ -153,6 +153,97 @@ test('Claude creates a new conversation, keeps generated dialogue with the reque
   const second = await agent.send('点头', { requestedEffect: { action: 'nod' } });
   assert.equal(second.sessionId, created);
   assert.deepEqual(performed[1], ['', true, { speech: '', action: 'nod' }]);
+});
+
+test('DeepSeek Harness binds a recorded session after desktop navigation succeeds', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'va-deepseek-open-'));
+  const oldHome = process.env.DSH_HOME;
+  process.env.DSH_HOME = directory;
+  t.after(async () => {
+    if (oldHome === undefined) delete process.env.DSH_HOME;
+    else process.env.DSH_HOME = oldHome;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const target = 'session-aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const previous = 'session-bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  const folder = join(directory, 'sessions', 'project', target);
+  await mkdir(folder, { recursive: true });
+  await writeFile(join(folder, 'session.v4.jsonl.zstd'), '');
+  let config = { provider: 'deepseekharness' };
+  let desktopReady = false;
+  const agent = createLocalAgent({
+    getConfig: async () => config,
+    updateConfig: async edit => { config = await edit(config); },
+    sessionPath: join(directory, 'bindings.json'),
+    launchDirectory: directory,
+    openDeepSeek: async () => true,
+    openDeepSeekSession: async (id, launch) => {
+      assert.equal(id, target);
+      assert.equal((await agent.status()).sessionId, previous);
+      assert.ok(await launch());
+      if (!desktopReady) throw new Error('Desktop did not open the session');
+    },
+  });
+  const saved = await agent.bind(target);
+  const record = saved.sessionHistory[0];
+  assert.equal(record.canOpen, true);
+  await agent.bind(previous);
+  await assert.rejects(agent.openSession(record.ref, { bind: true }), /Desktop did not open the session/);
+  assert.equal((await agent.status()).sessionId, previous);
+  desktopReady = true;
+  assert.equal(await agent.openSession(record.ref, { bind: true }), 'deepseek');
+  assert.equal((await agent.status()).sessionId, target);
+  const archives = join(directory, 'storages', 'workspace.json');
+  await mkdir(dirname(archives), { recursive: true });
+  await writeFile(archives, JSON.stringify({ global: { archivedSessionIds: [target] } }));
+  const archived = await agent.status();
+  assert.equal(archived.sessionId, null);
+  assert.deepEqual(archived.sessionHistory.map(record => record.id), [previous]);
+  assert.equal(await agent.matchesDeepSeekSession(target), false);
+  await assert.rejects(agent.bind(target), { code: 'AGENT_SESSION_ARCHIVED' });
+  await assert.rejects(agent.openSession(record.ref, { bind: true }), { code: 'AGENT_SESSION_ARCHIVED' });
+  await assert.rejects(agent.restoreSession(record.ref), { code: 'AGENT_SESSION_ARCHIVED' });
+  assert.deepEqual(await agent.clearSessions({ provider: 'deepseekharness' }), { removed: 2 });
+  assert.equal(await readFile(join(folder, 'session.v4.jsonl.zstd'), 'utf8'), '');
+});
+
+test('OMP resumes the recorded transcript and removing VA records leaves native sessions intact', async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'va-omp-open-'));
+  const oldHome = process.env.OMP_CODING_AGENT_DIR;
+  process.env.OMP_CODING_AGENT_DIR = directory;
+  t.after(async () => {
+    if (oldHome === undefined) delete process.env.OMP_CODING_AGENT_DIR;
+    else process.env.OMP_CODING_AGENT_DIR = oldHome;
+    await rm(directory, { recursive: true, force: true });
+  });
+  const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const path = join(directory, 'sessions', 'project', `2026-11-23_${id}.jsonl`);
+  const transcript = JSON.stringify({ type: 'title', title: 'OMP 会话' }) + '\n';
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, transcript);
+  let config = { provider: 'omp' };
+  const opened = [];
+  const agent = createLocalAgent({
+    getConfig: async () => config,
+    updateConfig: async edit => { config = await edit(config); },
+    getPrompt: async () => '角色 Prompt',
+    sessionPath: join(directory, 'bindings.json'),
+    launchDirectory: directory,
+    openTerminal: async (agent, args) => opened.push([agent.provider, args]),
+  });
+  await agent.bind(id);
+  const [record] = (await agent.status()).sessionHistory;
+  assert.equal(record.title, 'OMP 会话');
+  assert.equal(record.canOpen, true);
+  await agent.configure({ provider: 'custom' });
+  await agent.bind('custom-session');
+  assert.equal(await agent.openSession(record.ref, { bind: true }), 'terminal');
+  assert.deepEqual(opened, [['omp', ['--allow-home', '--append-system-prompt', '角色 Prompt', '--resume', path]]]);
+  assert.deepEqual(await agent.clearSessions({ ref: record.ref }), { removed: 1 });
+  const after = await agent.status();
+  assert.equal(after.sessionId, null);
+  assert.deepEqual(after.sessionHistory.map(entry => entry.provider), ['custom']);
+  assert.equal(await readFile(path, 'utf8'), transcript);
 });
 
 test('a fresh session opens the selected native Agent without sending a first message', async t => {

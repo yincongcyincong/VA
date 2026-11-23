@@ -278,10 +278,19 @@
           <label>会话 ID <input name="session" type="text" maxlength="160" required spellcheck="false" autocomplete="off"></label>
           <button type="submit">绑定会话</button>
         </form>
-        <p>绑定 Codex、Claude Code 或 OMP 的会话后，在原客户端聊天也会显示新回复。开启「自动朗读回复」可同时发声。</p>
+        <p>绑定 Codex、Claude Code、DeepSeek Harness 或 OMP 的会话后，在原客户端聊天也会显示新回复。开启「自动朗读回复」可同时发声。</p>
+        <div id="deepseek-role" class="row" hidden>
+          <button id="deepseek-install-role" type="button" disabled>同步角色能力</button>
+          <p>首次同步后重启 DeepSeek Harness。之后会话会自动读取 VA 的角色设定和当前模型支持的动作。</p>
+        </div>
       </div>
       <section id="session-panel" class="card settings-grid" hidden>
-        <div class="row"><h2>会话绑定记录</h2><button id="create-session" type="button">创建会话</button></div>
+        <div class="row">
+          <h2>会话绑定记录</h2>
+          <button id="create-session" type="button">创建会话</button>
+          <button id="clear-sessions" type="button">清空此 Agent 的记录</button>
+        </div>
+        <p>移除记录会解除 VA 绑定，Agent 中的原会话仍可使用。</p>
         <p id="session-empty">选择一个 Agent 查看绑定记录。</p>
         <ul id="session-history" class="session-list" aria-label="本地 Agent 会话绑定记录"></ul>
       </section>

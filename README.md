@@ -48,7 +48,7 @@ Swift 助手需要在目标架构的 Mac 上编译，为豆包客户端联动、
 
 如需使用星神，把阿哈模型包解压到系统的「文稿」或「下载」目录，保留原文件夹名和贴图。VA 启动时会将找到的 `星穹铁道-阿哈2.pmx` 加入模型库，也可以用 `AVATAR_DIR` 指定模型目录。原包使用规则禁止二次配布，阿哈文件从本机读取。[阿哈下载页](https://www.aplaybox.com/details/model/vODgdw8vDdb3)
 
-封面角色是从封面设计重建的带贴图 VRM，支持骨骼动作、口型和表情。已有模型选择会随设置保存。可用 `va model default` 或在模型库选择「VA 封面角色」恢复默认。随包提供的 Gemini 是静态 GLB，适合旋转预览和拍照，沿用 CC BY-NC-SA 4.0。[模型制作与署名](assets/models/ATTRIBUTION.md)
+封面角色是从封面设计重建的带贴图 VRM，支持骨骼动作、口型和表情。已有模型选择会随设置保存。可用 `va model default` 或在模型库选择「VA 封面角色」恢复默认。项目里的 AI 娘动作版放在 `assets/models/ai-girls/<角色目录>/model.vrm`，模型库会自动发现它们。[模型制作与署名](assets/models/ATTRIBUTION.md)
 
 在项目根目录也可用 `node bin/va.js start` 启动已打包的本机版本，或用 `node bin/va.js status --json` 查询状态。在 macOS 可把命令链接成 PATH 中的 `va`：
 
@@ -152,7 +152,7 @@ va stop
 
 导入前会检查文件、可见网格和实际渲染结果，检测通过后才替换当前角色。可先点「检测模型…」或执行 `va model-check "/path/to/character.glb" --json`，预查骨骼、表情目标和动画片段。检测失败会保留当前角色。模型能渲染时，缺少部分贴图会显示提醒。
 
-在「设置 → 模型库 → 3D模型」可以预览封面角色、本机的星神和内置的 Gemini，也可以按名称搜索内置或已导入的模型。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 VRM 或 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+在「设置 → 模型库 → 3D模型」可以按名称搜索、预览并选用角色。把 DeepSeek、Claude、GPT、Gemini、GLM、Grok、Qwen、Kimi、MiniMax 和豆包的动作版 VRM 放入 `assets/models/ai-girls`，VA 会优先显示这里的带骨骼版本。也可以点「导入解压目录…」加入其他本机模型。原包提供七款静态 GLB，DeepSeek、Claude 和 GPT 提供 Blender 5.2 源文件。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
 ![模型库的默认角色 3D 预览、模型搜索和导入入口](docs/screenshots/model-library.png)
 
@@ -162,11 +162,11 @@ va stop
 blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls.py -- "解压后的 AI 娘全家桶目录"
 ```
 
-十款 AI 娘都可以生成带动作和表情的 VRM。启用 Blender 的 VRM 插件后，用下面的命令把动作版写入单独的目录，再从「3D模型 → 导入解压目录…」选中该目录。DeepSeek 复用原有骨骼，其余角色按各自的体型绑定。动作版支持内置身体动作、基础表情和五种口型。批量生成的面部变形可在 Blender 中继续细调。[Blender VRM 插件](https://vrm-addon-for-blender.info/en-us/installation/)
+十款 AI 娘都可以生成带动作和表情的 VRM。启用 Blender 的 VRM 插件后，用下面的命令把动作版写入项目的本机模型目录。DeepSeek 复用原有骨骼，其余角色按各自的体型绑定。动作版支持内置舞步、基础表情和五种口型。动作版文件保留原有的 VRM 使用标记，该目录中的 VRM 仅保存在本机。[Blender VRM 插件](https://vrm-addon-for-blender.info/en-us/installation/)
 
 ```bash
 blender --background --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls-vrm.py -- \
-  "解压后的 AI 娘全家桶目录" "AI 娘动作版目录"
+  "解压后的 AI 娘全家桶目录" assets/models/ai-girls
 ```
 
 也可以在系统浏览器打开模之屋或 VRoid Hub，或粘贴两站的模型详情链接。下载其他模型后请保留贴图，用「预览本机文件…」加载。预览通过后可以点「设为桌面角色」。
@@ -234,6 +234,12 @@ MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角�
 
 安装了 DeepSeek Harness 桌面端时，VA 可以使用其中的 `dsh` 命令。「创建会话」会打开 DeepSeek Harness，工作区和新会话在其侧栏中选择。[DeepSeek Harness 桌面端](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.md)
 
+要直接用 DeepSeek Harness 会话和桌面角色互动，在 VA 选择「智能体接入 → 本地 Agent → DeepSeek Harness」，绑定会话，然后点「同步角色能力」。首次配置后退出并重新打开 DeepSeek Harness。后续对话会读取 VA 中当前的角色名、人设和模型支持的动作。VA 会接收这条会话的新回复、显示字幕，并按回复触发动作。打开「自动朗读回复」后也会读出台词。[DeepSeek Harness Prompt 扩展机制](https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/subsystems/system-prompt.md)
+
+会话绑定记录里的「打开并绑定」会切到对应的 DeepSeek Harness 会话，等客户端确认后再恢复 VA 的绑定。也可以通过 CLI 和 MCP 的配置操作 `chat-open-session` 使用同一功能。
+
+OMP 的「打开并绑定」会在终端恢复该会话。VA 会同步 DeepSeek Harness 的会话标题，并跳过已归档会话。每条记录都可以移除，也可以清空当前 Agent 的记录。清理只影响 VA 的绑定，Agent 中的原会话仍可使用。
+
 「会话绑定记录」只显示当前选中的 Agent。记录中的「解除绑定」会取消关联并保留记录，之后可点击「重新绑定」。「打开并绑定」会恢复记录的工作目录和会话绑定，再启动对应客户端。Codex 优先跳到 ChatGPT 桌面端的原会话，桌面端不可用时尝试用终端续接。Claude Code 在终端打开。同一条 Codex 会话正在原客户端使用时，可在原窗口继续，或关闭那里打开的会话后用 `va chat` 发送消息。[桌面端会话链接](https://learn.chatgpt.com/docs/app/commands)
 
 绑定 Codex、Claude Code 或 OMP 的完整会话 ID 后，也可以在原客户端直接聊天。VA 读取这条会话的新完成回复，把正文显示在角色旁边。开启「自动朗读回复」并保存 Agent，角色也会按当前音色念出来。用 `va chat` 发出的消息继续使用同一个字幕和朗读流程。动作回复有台词时同步播放，只有动作时使用对应的默认台词。
@@ -248,6 +254,7 @@ va config run chat-sessions --json
 va config run chat-open-session '{"ref":"绑定记录返回的 ref","bind":true}'
 va config run chat-restore-session '{"ref":"绑定记录返回的 ref"}'
 va config run chat-unbind-session '{"ref":"绑定记录返回的 ref"}'
+va config run chat-clear-sessions '{"provider":"omp"}'
 va config run chat-create-session
 va chat "我们刚才聊到哪里了？" --speak
 ```

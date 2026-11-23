@@ -2,7 +2,7 @@ import { app, BrowserWindow, Menu, Tray, clipboard, desktopCapturer, dialog, glo
   protocol, screen, shell, systemPreferences } from 'electron';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { dirname, extname, join, resolve } from 'node:path';
+import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { actionSupported, compilePerformance, describePerformance, performanceDefaults } from './performance-config.js';
 import { chatPerformancePrompt, createRolePrompt, replyPerformance, requestedPerformance, requestsSelfie } from './character-performance.js';
@@ -18,6 +18,8 @@ import { defaultScreenInterval, isScreenInterval, screenIntervalLabel, themes } 
 import { createSenses } from './senses.js';
 import { botRoute, checkBotRoute, configureIntegration, externalModes, integrationMode, integrationSnapshot, screenMode } from './integration.js';
 import { createLocalAgent } from './local-agent.js';
+import { installDeepSeekRole } from './deepseek-profile.js';
+import { deepSeekNavigation } from './deepseek-navigation.js';
 import { createSystemVoiceCatalog, splitReplySpeech, systemSpeech } from './speech.js';
 import { createSpeechCache } from './speech-cache.js';
 import { createZipVoice, zipVoiceReference } from './zipvoice-tts.js';
@@ -26,7 +28,7 @@ import { callDoubaoClient, createDoubaoClient } from './doubao-client.js';
 import { createDoubaoCaptions } from './doubao-captions.js';
 import { dialoguePages } from './dialogue-text.js';
 import { bindModel, modelFormats, modelMime, modelResource } from './model-files.js';
-import { coverName, createModelLibrary, localAhaName, modelPage, modelSources } from './model-library.js';
+import { aiGirlName, coverName, createModelLibrary, localAhaName, modelPage, modelSources } from './model-library.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 if (process.platform !== 'darwin') throw new ControlError('UNSUPPORTED_PLATFORM', 'VA 桌面版目前支持 macOS。');
@@ -40,6 +42,8 @@ const bubbleURL = 'va-app://desktop/bubble.html';
 const settingsURL = 'va-app://desktop/settings.html';
 const controlsURL = 'va-app://desktop/controls.html';
 const bundledModelPath = join(root, 'assets', 'models', 'Gemini 娘.glb');
+const bundledAiGirls = join(root, 'assets', 'models', 'ai-girls');
+const riggedGeminiPath = join(bundledAiGirls, '04_Gemini_V2', 'model.vrm');
 const coverModelPath = join(root, 'assets', 'models', 'VA Cover.vrm');
 const builtInModels = new Set([bundledModelPath, coverModelPath]);
 const ahaPack = '星穹铁道-阿哈_by_崩坏：星穹铁道_df69373aacbea0a160459be2ce0eb56e';
@@ -449,9 +453,22 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
       return chatStatus();
     case 'restore-session': return restoreAgentSession(value);
     case 'unbind-session': return unbindAgentSession(value);
+    case 'clear-sessions': {
+      const { removed } = await clearAgentSessions(value);
+      return { ...await chatStatus(), removed };
+    }
     case 'create-session': {
       const openedSession = await createAgentSession();
       return { ...await chatStatus(), openedSession };
+    }
+    case 'deepseek-install-role': {
+      requireMode('local');
+      const status = await localAgent.status();
+      if (status.provider !== 'deepseekharness' || !await localAgent.matchesDeepSeekSession(status.sessionId)) {
+        throw new ControlError('AGENT_SESSION', '请先绑定一个 DeepSeek Harness 会话。');
+      }
+      const deepSeekRole = await installDeepSeekRole();
+      return { ...await chatStatus(), deepSeekRole };
     }
     case 'prompt':
       await configureAgent({ prompt: value });
@@ -1228,6 +1245,15 @@ async function unbindAgentSession(ref) {
   return chatStatus();
 }
 
+async function clearAgentSessions(value) {
+  requireMode('local');
+  const { value: selection } = parseConfigCommand({ operation: 'run', target: 'chat-clear-sessions', value });
+  const result = await localAgent.clearSessions(selection);
+  screenRevision++;
+  syncSenses();
+  return result;
+}
+
 function createAgentSession(message) {
   requireMode('local');
   if (message === undefined) return localAgent.openNewSession();
@@ -1309,6 +1335,13 @@ async function sendDoubaoClient(message, sync = false) {
 
 async function conversationPrompt(style) {
   return chatPerformancePrompt(await getCharacter(), performanceSnapshot(), '', style);
+}
+
+async function deepSeekContext(sessionId) {
+  if (currentMode !== 'local' || !await localAgent.matchesDeepSeekSession(sessionId)) return { prompt: '' };
+  const role = await conversationPrompt('text');
+  if (currentMode !== 'local' || !await localAgent.matchesDeepSeekSession(sessionId)) return { prompt: '' };
+  return { prompt: role + '\n\n本会话已绑定 VA。挥手、跳舞等可用桌面动作由 VA 读取回复末行后执行。需要表演时，直接写台词和末行动作标记即可。' };
 }
 
 function showReply(text, source, readAloud, effect) {
@@ -1438,6 +1471,7 @@ async function handleConfiguration(command) {
     case 'chat-open-session': return openAgentSession(value.ref, { bind: value.bind });
     case 'chat-restore-session': return restoreAgentSession(value.ref);
     case 'chat-unbind-session': return unbindAgentSession(value.ref);
+    case 'chat-clear-sessions': return clearAgentSessions(value);
     case 'chat-sync-role': return localAgent.syncSessionRole(value.ref);
     case 'chat-create-session': return createAgentSession(value?.message);
     default: throw new ControlError('CONFIG_COMMAND', '未知的配置操作。');
@@ -1510,6 +1544,8 @@ async function handle(command) {
       return { path: characterPath, ...character, prompt: character.prompt.replaceAll('{{name}}', () => character.name) };
     }
     case 'prompt': return { prompt: await conversationPrompt(command.style) };
+    case 'deepseek-context': return deepSeekContext(command.sessionId);
+    case 'deepseek-navigation': return currentMode === 'local' ? deepSeekNavigation(command.done) : {};
     case 'settings':
       openSettings();
       return { opened: true };
@@ -1577,7 +1613,14 @@ function syncBounds() {
 function publicModel({ url, format, name, builtIn, path }) {
   if (path === bundledModelPath) name = 'Gemini';
   if (path === coverModelPath) name = coverName;
+  if (basename(path) === 'model.vrm' || basename(path) === 'model.glb') {
+    name = aiGirlName(basename(dirname(path))) ?? name;
+  }
   return { url, format, name, builtIn };
+}
+
+function isBuiltInModel(path) {
+  return builtInModels.has(path) || (basename(path) === 'model.vrm' && dirname(dirname(path)) === bundledAiGirls);
 }
 
 async function findLocalAha() {
@@ -1628,7 +1671,7 @@ async function changeModel(path, checkOnly = false) {
   let staged = false;
   try {
     const selectedPath = path ?? defaultModelPath;
-    next = await bindModel(selectedPath, builtInModels.has(selectedPath));
+    next = await bindModel(selectedPath, isBuiltInModel(selectedPath));
     assets.set(next.id, next);
     const info = await renderer({ type: 'model-check', model: publicModel(next), checkOnly,
       deadline: Date.now() + 65_000 }, 70_000);
@@ -2135,16 +2178,18 @@ if (!app.requestSingleInstanceLock()) {
     const localAha = await findLocalAha();
     if (localAha) builtInModels.add(localAha.path);
     const cover = await bindModel(coverModelPath, true).catch(() => undefined);
-    defaultModelPath = cover?.path ?? localAha?.path ?? bundledModelPath;
+    const riggedGemini = await bindModel(riggedGeminiPath, true).catch(() => undefined);
+    defaultModelPath = cover?.path ?? localAha?.path ?? riggedGemini?.path ?? bundledModelPath;
     if (!cover && localAha) defaultCharacter.name = localAhaName;
     modelLibrary = createModelLibrary(join(app.getPath('userData'), 'ai-girls.json'), {
-      bundledModel: bundledModelPath, localAha, coverModel: cover?.path,
+      bundledModel: bundledModelPath, bundledPack: bundledAiGirls, localAha, coverModel: cover?.path,
     });
+    if (modelPath === bundledModelPath && riggedGemini) modelPath = riggedGemini.path;
     if (modelPath) {
-      selectedModel = await bindModel(modelPath, builtInModels.has(modelPath))
+      selectedModel = await bindModel(modelPath, isBuiltInModel(modelPath))
         .catch(error => { modelWarning = error.message + ' 已显示默认角色。'; });
     }
-    selectedModel ??= cover ?? localAha ?? await bindModel(bundledModelPath, true, { allowMissing: true });
+    selectedModel ??= cover ?? localAha ?? riggedGemini ?? await bindModel(bundledModelPath, true, { allowMissing: true });
     assets.set(selectedModel.id, selectedModel);
     let storedAgent;
     try {

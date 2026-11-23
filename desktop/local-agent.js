@@ -7,8 +7,10 @@ import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { ControlError } from '../lib/control.js';
 import { readConfig, settingsWriter } from './config.js';
-import { createSessionReplies } from './session-replies.js';
+import { createSessionReplies, findSessionFile } from './session-replies.js';
 import { createSessionTitles, sessionPreview } from './session-titles.js';
+import { navigateDeepSeek } from './deepseek-navigation.js';
+import { deepSeekArchives, deepSeekSessionId } from './deepseek-sessions.js';
 
 const providers = { codex: 'Codex', claude: 'Claude Code', deepseekharness: 'DeepSeek Harness', omp: 'OMP', custom: '自定义 Agent' };
 const defaultCommands = { deepseekharness: 'dsh', custom: '' };
@@ -315,6 +317,10 @@ function validSession(provider, id) {
     (nativeResume.has(provider) ? uuidPattern : sessionPattern).test(id);
 }
 
+function archivedSession(sessions, provider, id) {
+  return provider === 'deepseekharness' && typeof id === 'string' && sessions.archived.has(id.toLowerCase());
+}
+
 function rememberSession(sessions, agent, id, boundAt, firstMessage) {
   const ref = `${agent.key}:${id}`;
   const previous = sessions.history.find(item => item.provider === agent.provider && item.id === id);
@@ -385,8 +391,9 @@ async function openDeepSeekDesktop(command) {
 
 export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(),
   presentReply, onChange = () => {}, onReplyError = () => {}, openTerminal = launchTerminal, openCodex = openCodexDesktop,
-  openDeepSeek = openDeepSeekDesktop }) {
-  const saveSessions = settingsWriter(sessionPath);
+  openDeepSeek = openDeepSeekDesktop, openDeepSeekSession = navigateDeepSeek }) {
+  const writeSessions = settingsWriter(sessionPath);
+  const saveSessions = ({ bindings, history }) => writeSessions({ bindings, history });
   const sessionTitles = createSessionTitles();
   const history = new Map();
   let active;
@@ -423,6 +430,8 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     if (id && validSession(agent.provider, id) && !sessions.history.some(entry => entry.ref === `${agent.key}:${id}`)) {
       rememberSession(sessions, agent, id, null);
     }
+    sessions.archived = agent?.provider === 'deepseekharness' || sessions.history.some(entry => entry.provider === 'deepseekharness')
+      ? await deepSeekArchives().catch(error => { onReplyError(error); return new Set(); }) : new Set();
     return sessions;
   };
 
@@ -430,10 +439,12 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     const revision = ++replyMonitorRevision;
     if (!replyMonitorEnabled) return replies.select();
     try {
-      const { provider, key, speakReplies } = await runtime(await getConfig(), launchDirectory);
-      const sessions = await getSessions();
+      const agent = await runtime(await getConfig(), launchDirectory);
+      const { provider, key, speakReplies } = agent;
+      const sessions = await getSessions(agent);
+      const id = sessions.bindings[key];
       if (revision === replyMonitorRevision) {
-        await replies.select({ provider, key, id: sessions.bindings[key], speakReplies });
+        await replies.select(archivedSession(sessions, provider, id) ? undefined : { provider, key, id, speakReplies });
       }
     } catch (error) {
       if (revision === replyMonitorRevision) {
@@ -447,13 +458,18 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     const config = agent ?? await runtime(await getConfig(), launchDirectory);
     const saved = sessions ?? await getSessions(config);
     const { provider, label, cwd, speakReplies, models, key } = config;
-    const titles = await sessionTitles(saved.history);
+    const visible = saved.history.filter(entry => !archivedSession(saved, entry.provider, entry.id));
+    const titles = await sessionTitles(visible);
+    const id = saved.bindings[key];
+    const sessionId = archivedSession(saved, provider, id) ? null : id ?? null;
     return { provider, label, cwd, workingDirectory: config.cwdSetting, launchDirectory, speakReplies, models,
-      sessionId: saved.bindings[key] ?? null,
-      sessionHistory: saved.history.map(({ titlePreview, ...entry }) => ({ ...entry, title: titles.get(entry.ref) ?? null,
-        label: providers[entry.provider], canOpen: nativeResume.has(entry.provider),
-        bound: Boolean(boundKey(entry, saved.bindings)), active: entry.ref === `${key}:${saved.bindings[key]}` })),
-      history: history.get(key) ?? [], busy: Boolean(active) };
+      sessionId, hasSessionRecords: saved.history.some(entry => entry.provider === provider),
+      sessionHistory: visible.map(({ titlePreview, ...entry }) => ({ ...entry, title: titles.get(entry.ref) ?? null,
+        label: providers[entry.provider], canOpen: nativeResume.has(entry.provider) ||
+          (entry.provider === 'omp' && uuidPattern.test(entry.id)) ||
+          (entry.provider === 'deepseekharness' && deepSeekSessionId(entry.id)),
+        bound: Boolean(boundKey(entry, saved.bindings)), active: entry.ref === `${key}:${sessionId}` })),
+      history: archivedSession(saved, provider, id) ? [] : history.get(key) ?? [], busy: Boolean(active) };
   }
 
   async function recordFor(ref, config) {
@@ -481,23 +497,28 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     });
   }
 
-  function restoreSession(ref) {
-    return exclusive(async signal => {
-      let restored;
-      await updateConfig(async config => {
-        const { sessions, record } = await recordFor(ref, config);
-        const next = { ...config, provider: record.provider, cwd: record.cwd };
-        const agent = await runtime(next, launchDirectory);
-        signal.throwIfAborted();
-        sessions.bindings[agent.key] = record.id;
-        rememberSession(sessions, agent, record.id, new Date().toISOString());
-        await saveSessions(sessions);
-        history.delete(agent.key);
-        restored = await snapshot(agent, sessions);
-        return next;
-      });
-      return { ...restored, busy: false };
+  async function restoreBinding(ref, signal) {
+    let restored;
+    await updateConfig(async config => {
+      const { sessions, record } = await recordFor(ref, config);
+      if (archivedSession(sessions, record.provider, record.id)) {
+        throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档。');
+      }
+      const next = { ...config, provider: record.provider, cwd: record.cwd };
+      const agent = await runtime(next, launchDirectory);
+      signal.throwIfAborted();
+      sessions.bindings[agent.key] = record.id;
+      rememberSession(sessions, agent, record.id, new Date().toISOString());
+      await saveSessions(sessions);
+      history.delete(agent.key);
+      restored = await snapshot(agent, sessions);
+      return next;
     });
+    return { ...restored, busy: false };
+  }
+
+  function restoreSession(ref) {
+    return exclusive(signal => restoreBinding(ref, signal));
   }
 
   async function screenAgent() {
@@ -558,6 +579,9 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (id !== null && !validSession(agent.provider, id)) throw new ControlError('AGENT_SESSION', '会话 ID 格式无效。');
         const sessions = await getSessions(agent);
         signal.throwIfAborted();
+        if (archivedSession(sessions, agent.provider, id)) {
+          throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档。');
+        }
         if (id) {
           const normalized = nativeResume.has(agent.provider) ? id.toLowerCase() : id;
           sessions.bindings[agent.key] = normalized;
@@ -570,6 +594,14 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
       });
     },
     restoreSession,
+    async matchesDeepSeekSession(id) {
+      if (!deepSeekSessionId(id)) return false;
+      const config = await getConfig();
+      if (config?.provider !== 'deepseekharness') return false;
+      const agent = await runtime(config, launchDirectory);
+      const sessions = await getSessions(agent);
+      return sessions.bindings[agent.key] === id && !archivedSession(sessions, agent.provider, id);
+    },
     unbindSession(ref) {
       return exclusive(async signal => {
         const { record, sessions } = await recordFor(ref, await getConfig());
@@ -580,6 +612,27 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
           await saveSessions(sessions);
           history.delete(key);
         }
+      });
+    },
+    clearSessions({ ref, provider }) {
+      return exclusive(async signal => {
+        const current = await runtime(await getConfig(), launchDirectory);
+        const sessions = await getSessions(current);
+        const removed = sessions.history.filter(entry => ref ? entry.ref === ref : entry.provider === provider);
+        const refs = new Set(removed.map(entry => entry.ref));
+        for (const record of removed) {
+          const key = boundKey(record, sessions.bindings);
+          if (key) {
+            delete sessions.bindings[key];
+            history.delete(key);
+          }
+        }
+        signal.throwIfAborted();
+        if (removed.length) {
+          sessions.history = sessions.history.filter(entry => !refs.has(entry.ref));
+          await saveSessions(sessions);
+        }
+        return { removed: removed.length };
       });
     },
     syncSessionRole(ref) {
@@ -597,6 +650,27 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     async openSession(ref, { bind = false } = {}) {
       const config = await getConfig();
       const { record, sessions, current } = await recordFor(ref, config);
+      if (record.provider === 'deepseekharness' || record.provider === 'omp') {
+        return exclusive(async signal => {
+          if (archivedSession(sessions, record.provider, record.id)) {
+            throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档。');
+          }
+          const path = await findSessionFile(record.provider, record.id);
+          if (!path) throw new ControlError('AGENT_SESSION', `找不到这条 ${providers[record.provider]} 会话。`);
+          const agent = await runtime({ ...config, provider: record.provider, cwd: record.cwd }, launchDirectory);
+          const deepseek = record.provider === 'deepseekharness';
+          if (deepseek) {
+            await openDeepSeekSession(record.id, () => openDeepSeek(agent.command), signal);
+          } else {
+            const model = agent.model ? ['--model', agent.model] : [];
+            const prompt = await getPrompt();
+            signal.throwIfAborted();
+            await openTerminal(agent, ['--allow-home', '--append-system-prompt', prompt, ...model, '--resume', path]);
+          }
+          if (bind && (!current || sessions.bindings[current.key] !== record.id)) await restoreBinding(ref, signal);
+          return deepseek ? 'deepseek' : 'terminal';
+        });
+      }
       if (!nativeResume.has(record.provider)) {
         throw new ControlError('AGENT_SESSION', '当前支持打开 Codex 和 Claude Code 会话。');
       }
@@ -652,6 +726,9 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (!agent.command) throw new ControlError('AGENT_CONFIG', '请在 agent.json 的 localAgent.custom.command 填写可执行文件的绝对路径。');
         const sessions = await getSessions(agent);
         const sessionId = options.newSession ? null : (sessions.bindings[agent.key] ?? null);
+        if (archivedSession(sessions, agent.provider, sessionId)) {
+          throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档，请绑定另一条会话。');
+        }
         if (!options.newSession && (nativeResume.has(agent.provider) || sessionId !== null) &&
             !validSession(agent.provider, sessionId)) {
           throw new ControlError('AGENT_SESSION', '请先创建会话或绑定一个有效的 Agent 会话。');

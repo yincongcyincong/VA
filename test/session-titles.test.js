@@ -4,6 +4,7 @@ import { access, appendFile, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promi
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
+import * as zlib from 'node:zlib';
 import { createSessionTitles, sessionPreview } from '../desktop/session-titles.js';
 
 const id = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
@@ -12,7 +13,7 @@ const line = item => JSON.stringify(item) + '\n';
 async function fixtures(t) {
   const root = await mkdtemp(join(tmpdir(), 'va-session-titles-'));
   t.after(() => rm(root, { recursive: true, force: true }));
-  const lookup = createSessionTitles({ env: { CODEX_HOME: root, CLAUDE_CONFIG_DIR: root, PI_CODING_AGENT_DIR: root } });
+  const lookup = createSessionTitles({ env: { CODEX_HOME: root, CLAUDE_CONFIG_DIR: root, OMP_CODING_AGENT_DIR: root, DSH_HOME: root } });
   const record = provider => ({ provider, id, ref: `${provider}:${id}` });
   return { root, lookup, record };
 }
@@ -38,6 +39,25 @@ test('session names prefer saved titles and reflect native renames', async t => 
   await appendFile(claudePath, line({ type: 'custom-title', customTitle: 'Claude 改名后' }) +
     line({ type: 'ai-title', aiTitle: '自动标题' }));
   assert.equal((await lookup([claude])).get(claude.ref), 'Claude 改名后');
+  await appendFile(ompPath, line({ type: 'title_change', title: 'OMP 改名后' }));
+  assert.equal((await lookup([omp])).get(omp.ref), 'OMP 改名后');
+});
+
+test('DeepSeek Harness titles come from the native title projection or the final title event', async t => {
+  const { root, lookup, record } = await fixtures(t);
+  const entry = { ...record('deepseekharness'), id: 'session-' + id, titlePreview: 'VA 首条消息' };
+  if (typeof zlib.zstdCompressSync === 'function') {
+    const file = join(root, 'sessions', 'project', entry.id, 'session.v4.jsonl.zstd');
+    await mkdir(dirname(file), { recursive: true });
+    const event = title => ({ type: 'session/title', data: { title } });
+    const packed = (...rows) => zlib.zstdCompressSync(Buffer.from(rows.map(line).join('')));
+    await writeFile(file, Buffer.concat([packed(event('早期标题')), packed(event('Harness 当前标题'))]));
+    assert.equal((await lookup([entry])).get(entry.ref), 'Harness 当前标题');
+  }
+  const cache = join(root, 'storages', 'session_projcache', 'sessions', entry.id + '.json');
+  await mkdir(dirname(cache), { recursive: true });
+  await writeFile(cache, JSON.stringify({ record: { rows: { title: { val: 'Harness 重命名' } } } }));
+  assert.equal((await lookup([entry])).get(entry.ref), 'Harness 重命名');
 });
 
 test('Codex sessions without an index title use the local SQLite title', async t => {

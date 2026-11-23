@@ -1,0 +1,13 @@
+{
+  "name": "va-harness",
+  "type": "module",
+  "exports": {
+    "./client": "./client.js"
+  },
+  "dsh": {
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-workspace"]
+    }
+  }
+}

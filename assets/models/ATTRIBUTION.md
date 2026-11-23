@@ -29,6 +29,10 @@
 - [模型包原帖（模之屋）](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 - [CC BY-NC-SA 4.0 署名、非商业性使用、相同方式共享](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)
 
+## AI 娘动作版
+
+本机 `ai-girls/<角色目录>/model.vrm` 内的十款动作版源自同一模型包。DeepSeek 复用原骨骼，其余九款使用 VA 的人形骨骼、蒙皮、基础表情和口型适配。保留导出文件中的作者、来源与使用标记，动作版 VRM 不随公共仓库分发。[原模型包](https://www.aplaybox.com/details/model/3uR3BbUTlkUW) · [原角色设计](https://www.bilibili.com/video/BV1tE9XBbErS/)
+
 ## 原包署名说明
 
 ## 作者：

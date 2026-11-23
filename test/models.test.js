@@ -56,6 +56,25 @@ test('library keeps previewable models and prefers the rigged Gemini', async t =
   assert.throws(() => modelPage('http://example.invalid/details/model/abc123'), { code: 'MODEL_LINK' });
 });
 
+test('the local asset pack supplies rigged models and takes priority over matching imports', async t => {
+  const folder = await temporary(t);
+  const bundledModel = join(folder, 'Gemini 娘.glb');
+  const bundledPack = join(folder, 'ai-girls');
+  await writeFile(bundledModel, 'static Gemini');
+  const variants = ['01_DeepSeek_V7', '04_Gemini_V2'];
+  for (const id of variants) {
+    await mkdir(join(bundledPack, id), { recursive: true });
+    await writeFile(join(bundledPack, id, 'model.vrm'), 'bundled VRM');
+  }
+  await mkdir(join(folder, '04_Gemini_V2'));
+  await writeFile(join(folder, '04_Gemini_V2', 'model.glb'), 'imported static Gemini');
+  const library = createModelLibrary(join(folder, 'library.json'), { bundledModel, bundledPack });
+  assert.equal((await library.importPack(folder, async () => ({ checked: true }))).count, 1);
+  assert.deepEqual((await library.list()).map(model => [model.label, model.format, model.rigged]),
+    [['DeepSeek', 'VRM', true], ['Gemini', 'VRM', true]]);
+  assert.equal((await library.preview('gemini-default')).path, join(bundledPack, variants[1], 'model.vrm'));
+});
+
 test('3D model gallery searches built-in and imported names', async () => {
   const handlers = new Map();
   const elements = new Map();

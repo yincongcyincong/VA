@@ -2,20 +2,49 @@ import { open, readdir } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
+import * as zlib from 'node:zlib';
+import { deepSeekArchives, deepSeekHome, deepSeekSessionId } from './deepseek-sessions.js';
 
 const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
 const readSize = 128 * 1024;
 const maxLine = 1024 * 1024;
+const maxFrame = 8 * 1024 * 1024;
+const frameMagic = Buffer.from([0x28, 0xb5, 0x2f, 0xfd]);
+
+function sessionIdSupported(provider, id) {
+  if (provider === 'deepseekharness') return deepSeekSessionId(id);
+  return ['codex', 'claude', 'omp'].includes(provider) && uuid.test(id ?? '');
+}
 
 export async function findSessionFile(provider, id, env = process.env) {
-  if (!['codex', 'claude', 'omp'].includes(provider) || !uuid.test(id)) return;
+  if (!sessionIdSupported(provider, id)) return;
   id = id.toLowerCase();
-  const { CODEX_HOME, CLAUDE_CONFIG_DIR, PI_CODING_AGENT_DIR } = env;
+  const { CODEX_HOME, CLAUDE_CONFIG_DIR, OMP_CODING_AGENT_DIR, PI_CODING_AGENT_DIR } = env;
   const roots = {
     codex: join(CODEX_HOME || join(homedir(), '.codex'), 'sessions'),
     claude: join(CLAUDE_CONFIG_DIR || join(homedir(), '.claude'), 'projects'),
-    omp: join(PI_CODING_AGENT_DIR || join(homedir(), '.omp', 'agent'), 'sessions'),
+    omp: join(OMP_CODING_AGENT_DIR || PI_CODING_AGENT_DIR || join(homedir(), '.omp', 'agent'), 'sessions'),
+    deepseekharness: join(deepSeekHome(env), 'sessions'),
   };
+  const deepseek = provider === 'deepseekharness';
+  if (deepseek) {
+    const projects = await readdir(roots[provider], { withFileTypes: true }).catch(error => {
+      if (error.code !== 'ENOENT') throw error;
+      return [];
+    });
+    for (const project of projects) {
+      if (!project.isDirectory()) continue;
+      const projectPath = join(roots[provider], project.name);
+      const folders = await readdir(projectPath, { withFileTypes: true });
+      const session = folders.find(folder => folder.isDirectory() && folder.name.toLowerCase() === id);
+      if (!session) continue;
+      const folder = join(projectPath, session.name);
+      const files = await readdir(folder, { withFileTypes: true });
+      const file = files.find(entry => entry.isFile() && entry.name === 'session.v4.jsonl.zstd');
+      if (file) return join(folder, file.name);
+    }
+    return;
+  }
   const matches = name => provider === 'claude'
     ? name.toLowerCase() === `${id}.jsonl` : name.toLowerCase().endsWith(`_${id}.jsonl`) ||
       name.toLowerCase().endsWith(`-${id}.jsonl`) || name.toLowerCase() === `${id}.jsonl`;
@@ -39,7 +68,57 @@ export async function findSessionFile(provider, id, env = process.env) {
   return search(roots[provider], provider === 'codex' ? 3 : 1);
 }
 
-function finishedReply(provider, event) {
+function deepSeekReply(state, event) {
+  const { turn, message, reason } = event.data ?? {};
+  if (!Number.isSafeInteger(turn)) return;
+  if (event.type === 'assistant/message' && message?.role === 'assistant' &&
+      Array.isArray(message.content)) {
+    const text = message.content.filter(part => part?.type === 'text' && typeof part.text === 'string')
+      .map(part => part.text).join('\n');
+    state.turnReply = { id: turn, text: message.content.some(part => part?.type === 'tool-call') ? '' : text };
+  }
+  if (event.type === 'turn/end' && state.turnReply?.id === turn) {
+    const reply = state.turnReply;
+    state.turnReply = undefined;
+    if (reason?.kind === 'completed') return reply;
+  }
+}
+
+export function readDeepSeekFrames(state, bytes) {
+  const buffer = state.frames.length ? Buffer.concat([state.frames, bytes]) : bytes;
+  const frames = [];
+  let offset = 0;
+  while (offset < buffer.length) {
+    const start = buffer.indexOf(frameMagic, offset);
+    if (start === -1) {
+      offset = Math.max(offset, buffer.length - frameMagic.length + 1);
+      break;
+    }
+    try {
+      const { buffer: frame, engine } = zlib.zstdDecompressSync(buffer.subarray(start), {
+        info: true, maxOutputLength: maxFrame,
+      });
+      if (!engine.bytesWritten) break;
+      frames.push(frame);
+      offset = start + engine.bytesWritten;
+    } catch (error) {
+      if (error.code === 'Z_BUF_ERROR' && buffer.length - start <= maxFrame) {
+        offset = start;
+        break;
+      }
+      offset = start + frameMagic.length;
+      state.turnReply = undefined;
+      state.pending = '';
+      state.decoder = new StringDecoder('utf8');
+    }
+  }
+  state.frames = buffer.subarray(offset);
+  return frames;
+}
+
+function finishedReply(state, event) {
+  const { provider } = state;
+  if (provider === 'deepseekharness') return deepSeekReply(state, event);
   if (provider === 'codex') {
     const { type, turn_id, last_agent_message, error } = event.payload ?? {};
     if (event.type === 'event_msg' && type === 'task_complete' && turn_id && !error) {
@@ -79,6 +158,11 @@ export function createSessionReplies({ present, paused = () => false, onError = 
     let file;
     try {
       if (!baseline && paused()) return;
+      if (state.provider === 'deepseekharness' && (await deepSeekArchives(env)).has(state.id)) {
+        state.deliveries.length = 0;
+        state.turnReply = undefined;
+        return;
+      }
       deliver(state);
       if (state.deliveries.length) return;
       state.path ??= await findSessionFile(state.provider, state.id, env);
@@ -92,6 +176,8 @@ export function createSessionReplies({ present, paused = () => false, onError = 
         state.pending = '';
         state.dropping = false;
         state.decoder = new StringDecoder('utf8');
+        state.frames = Buffer.alloc(0);
+        state.turnReply = undefined;
       }
       state.fileId = identity;
       let batches = 4;
@@ -101,7 +187,9 @@ export function createSessionReplies({ present, paused = () => false, onError = 
         const { bytesRead } = await file.read(buffer, 0, buffer.length, state.offset);
         if (!bytesRead || state !== current) break;
         state.offset += bytesRead;
-        const lines = (state.pending + state.decoder.write(buffer.subarray(0, bytesRead))).split('\n');
+        const bytes = buffer.subarray(0, bytesRead);
+        const chunks = state.provider === 'deepseekharness' ? readDeepSeekFrames(state, bytes) : [bytes];
+        const lines = (state.pending + chunks.map(chunk => state.decoder.write(chunk)).join('')).split('\n');
         state.pending = lines.pop();
         if (state.dropping && lines.length > 0) {
           lines.shift();
@@ -114,7 +202,7 @@ export function createSessionReplies({ present, paused = () => false, onError = 
         for (const line of lines) {
           let event;
           try { event = JSON.parse(line); } catch { continue; }
-          const reply = event && finishedReply(state.provider, event);
+          const reply = event && finishedReply(state, event);
           if (typeof reply?.text !== 'string' || !reply.text.trim() || state.seen.has(reply.id)) continue;
           const prior = replies.get(reply.id);
           if (!prior) replies.set(reply.id, reply.text.trim());
@@ -140,14 +228,15 @@ export function createSessionReplies({ present, paused = () => false, onError = 
 
   return {
     async select(target) {
-      if (!['codex', 'claude', 'omp'].includes(target?.provider) || !uuid.test(target.id ?? '')) target = undefined;
+      if (!target || !sessionIdSupported(target.provider, target.id) ||
+          (target.provider === 'deepseekharness' && typeof zlib.zstdDecompressSync !== 'function')) target = undefined;
       if (target?.key === current?.key && target?.id === current?.id) {
         if (current) current.speakReplies = target.speakReplies;
         return;
       }
       clearTimeout(timer);
       current = target && { ...target, id: target.id.toLowerCase(), seen: new Set(), deliveries: [],
-        offset: 0, pending: '', decoder: new StringDecoder('utf8') };
+        offset: 0, pending: '', frames: Buffer.alloc(0), decoder: new StringDecoder('utf8') };
       if (current) await poll(current, true);
     },
   };

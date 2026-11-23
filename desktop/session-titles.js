@@ -4,8 +4,11 @@ import { readdir, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { StringDecoder } from 'node:string_decoder';
 import { promisify } from 'node:util';
-import { findSessionFile } from './session-replies.js';
+import * as zlib from 'node:zlib';
+import { findSessionFile, readDeepSeekFrames } from './session-replies.js';
+import { deepSeekCachedTitle, deepSeekSessionId } from './deepseek-sessions.js';
 
 const exec = promisify(execFile);
 const uuid = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
@@ -64,7 +67,7 @@ async function transcriptTitle(provider, path) {
   let name;
   let generated;
   let preview;
-  const metadata = /"type"\s*:\s*"(?:custom-title|ai-title|summary|session_info|title)"/u;
+  const metadata = /"type"\s*:\s*"(?:custom-title|ai-title|summary|session_info|title|title_change)"/u;
   await scan(path, line => metadata.test(line) || (!preview && /"role"\s*:\s*"user"/u.test(line)), row => {
     if (provider === 'claude') {
       if (row.type === 'custom-title') name = displayName(row.customTitle) ?? name;
@@ -73,7 +76,7 @@ async function transcriptTitle(provider, path) {
       }
       if (row.type !== 'user' || row.isMeta || row.isSidechain) return;
     } else if (provider === 'omp') {
-      if (row.type === 'title') name = displayName(row.title) ?? name;
+      if (['title', 'title_change'].includes(row.type)) name = displayName(row.title) ?? name;
       else if (row.type === 'session_info') generated = displayName(row.name) ?? generated;
       if (row.type !== 'message') return;
     }
@@ -88,19 +91,40 @@ async function transcriptTitle(provider, path) {
   return name ?? generated ?? preview;
 }
 
+async function deepSeekTranscriptTitle(path) {
+  if (typeof zlib.zstdDecompressSync !== 'function') return;
+  const state = { frames: Buffer.alloc(0), decoder: new StringDecoder('utf8'), pending: '' };
+  let title;
+  for await (const bytes of createReadStream(path)) {
+    const lines = (state.pending + readDeepSeekFrames(state, bytes).map(frame => state.decoder.write(frame)).join('')).split('\n');
+    state.pending = lines.pop();
+    for (const line of lines) {
+      if (!line.includes('"session/title"')) continue;
+      let event;
+      try { event = JSON.parse(line); } catch { continue; }
+      if (event?.type === 'session/title') title = displayName(event.data?.title) ?? title;
+    }
+  }
+  return title;
+}
+
 export function createSessionTitles({ env = process.env } = {}) {
   const transcripts = new Map();
 
   async function fromTranscript({ id, provider }) {
     const key = `${provider}:${id}`;
-    if (!uuid.test(id) || !['codex', 'claude', 'omp'].includes(provider)) return;
+    if (provider === 'deepseekharness') {
+      if (!deepSeekSessionId(id)) return;
+      const title = displayName(await deepSeekCachedTitle(id, env).catch(() => undefined));
+      if (title) return title;
+    } else if (!uuid.test(id) || !['codex', 'claude', 'omp'].includes(provider)) return;
     const saved = transcripts.get(key);
     const path = saved?.path ?? await findSessionFile(provider, id, env);
     if (!path) return;
     const { size, mtimeMs } = await stat(path).catch(() => ({}));
     if (size === undefined) { transcripts.delete(key); return; }
     if (saved?.size === size && saved.mtimeMs === mtimeMs) return saved.title;
-    const title = await transcriptTitle(provider, path);
+    const title = await (provider === 'deepseekharness' ? deepSeekTranscriptTitle(path) : transcriptTitle(provider, path));
     transcripts.set(key, { path, size, mtimeMs, title });
     return title;
   }
