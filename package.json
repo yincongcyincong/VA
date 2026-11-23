@@ -1,6 +1,7 @@
 {
   "name": "va-avatar",
   "version": "0.2.0",
+  "license": "Apache-2.0",
   "private": true,
   "type": "module",
   "engines": {
@@ -9,16 +10,12 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/*.test.js\"",
-    "build:mac": "node scripts/build.js darwin",
-    "build:win": "node scripts/build.js win32",
-    "build:all": "npm run build:mac && npm run build:win"
+    "build:mac": "node scripts/build.js darwin"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
     "@pixiv/three-vrm": "2.0.10",
-    "smol-toml": "1.9.1",
     "three": "0.160.1",
-    "ws": "8.23.0",
     "zod": "3.25.76"
   },
   "devDependencies": {

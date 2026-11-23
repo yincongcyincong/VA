@@ -9,11 +9,20 @@
 </head>
 <body>
   <nav aria-label="角色控制条">
-    <span id="handle" title="拖动角色">⠿ VA</span>
-    <button id="smaller" type="button" aria-label="缩小角色" title="缩小 5%">−</button>
-    <output id="scale" aria-label="角色大小"></output>
-    <button id="larger" type="button" aria-label="放大角色" title="放大 5%">+</button>
-    <button id="settings" type="button">设置</button>
+    <span id="handle" title="拖动角色" aria-label="拖动角色">
+      <svg width="16" height="16" viewBox="0 0 16 16" aria-hidden="true" fill="currentColor">
+        <circle cx="5.5" cy="3.5" r="1.2"/><circle cx="10.5" cy="3.5" r="1.2"/>
+        <circle cx="5.5" cy="8" r="1.2"/><circle cx="10.5" cy="8" r="1.2"/>
+        <circle cx="5.5" cy="12.5" r="1.2"/><circle cx="10.5" cy="12.5" r="1.2"/>
+      </svg>
+    </span>
+    <button id="settings" type="button" aria-label="打开设置" title="打开设置">
+      <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden="true"
+        fill="none" stroke="currentColor" stroke-width="1.65" stroke-linejoin="round">
+        <path d="m9.9 3-.7 2.6-1.4.8-2.6-.7-2 3.4 1.9 1.9v1.7l-1.9 1.9 2 3.4 2.6-.7 1.4.8.7 2.6h4.2l.7-2.6 1.4-.8 2.6.7 2-3.4-1.9-1.9V11l1.9-1.9-2-3.4-2.6.7-1.4-.8-.7-2.6z"/>
+        <circle cx="12" cy="11.85" r="2.8"/>
+      </svg>
+    </button>
   </nav>
 </body>
 </html>

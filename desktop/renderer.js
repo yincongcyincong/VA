@@ -6,18 +6,31 @@ import { speechActionStyles } from './actions.js';
 
 const stage = document.getElementById('stage');
 const notice = document.getElementById('notice');
+const nameplate = document.getElementById('character-name');
 const voice = createVoice();
 let avatar;
 let portrait = false;
 let performance;
 let actionVoice;
 let staged;
-const doubao = createDoubaoPlayback({ getAvatar: () => avatar, bubble: window.va.bubble });
+const doubao = createDoubaoPlayback({ getAvatar: () => avatar });
 window.va.onDoubaoOutput(event => {
   if (performance && event.type === 'client-speech') return;
   if (event.type === 'clear') actionVoice?.abort();
   doubao.output(event);
 });
+
+function showName(name) {
+  nameplate.textContent = name;
+  nameplate.title = `${name} · 拖动角色`;
+  nameplate.hidden = false;
+}
+window.va.onCharacterName(showName);
+window.va.onControlsVisibility(visible => nameplate.classList.toggle('visible', visible));
+new ResizeObserver(() => {
+  const { top, width, height } = nameplate.getBoundingClientRect();
+  window.va.nameplateBounds({ top, width, height });
+}).observe(nameplate);
 
 function message(text = '') {
   notice.textContent = text;
@@ -92,28 +105,18 @@ function startBubble(text) {
   };
 }
 
-async function perform({ plan, speech, selfie, speakingStyle, readAloud = true, showWhilePreparing = false }) {
+async function perform({ plan, speech, selfie, speakingStyle, readAloud = true }) {
   doubao.stopDance();
   doubao.stopClientSpeech();
   const controller = new AbortController();
   const { signal } = controller;
   performance = controller;
-  let dialogue;
-  let animatingText = false;
+  const dialogue = speech ? startBubble(speech) : undefined;
   try {
     let audio;
     let voiceWarning;
-    const textDuration = textSpeechDuration(speech);
-    if (speech && showWhilePreparing) {
-      dialogue = startBubble(speech);
-      if (plan.motion === 'idle' && !plan.bones && !plan.clip) {
-        avatar.play(plan);
-        avatar.speak(speech, speakingStyle, textDuration);
-        animatingText = true;
-      }
-    }
+    const textDuration = speech ? textSpeechDuration(speech, speakingStyle) : 0;
     if (speech && readAloud) {
-      if (!dialogue) message('正在准备语音…');
       try {
         const prepared = await voice.prepare(speech, signal);
         audio = prepared.audio;
@@ -126,10 +129,9 @@ async function perform({ plan, speech, selfie, speakingStyle, readAloud = true, 
     signal.throwIfAborted();
     message();
     const duration = audio ? audio.duration * 1000 : textDuration;
-    if (speech) {
-      dialogue ??= startBubble(speech);
+    if (dialogue) {
       dialogue.paginate(duration);
-      if (!animatingText || readAloud) avatar.speak(speech, speakingStyle, duration, audio ? voice.level : undefined);
+      avatar.speak(speech, speakingStyle, duration, audio ? voice.level : undefined);
     }
     const motionMs = Math.max(plan.seconds * 1000,
       speech && (plan.motion === 'idle' || speechActionStyles[plan.motion]) && !plan.bones && !plan.clip ? duration : 0);
@@ -228,7 +230,10 @@ window.va.onCommand(async command => {
 });
 
 try {
-  const [initialModel, view] = await Promise.all([window.va.initialModel(), window.va.initialView()]);
+  const [initialModel, view, name] = await Promise.all([
+    window.va.initialModel(), window.va.initialView(), window.va.characterName(),
+  ]);
+  showName(name);
   portrait = view === 'portrait';
   const initial = await checkAvatar(initialModel);
   activateAvatar(initial);

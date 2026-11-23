@@ -1,7 +1,7 @@
 .DEFAULT_GOAL := run
 VA := ./bin/va.js
 
-.PHONY: install run dev test status stop build build-win build-all audio-helper doubao-helper integrations
+.PHONY: install run dev test status stop build audio-helper doubao-helper zipvoice-tts integrations
 
 install:
 	npm ci
@@ -25,10 +25,8 @@ stop:
 build:
 	npm run build:mac $(if $(ELECTRON_ZIP_DIR),-- --electron-zip-dir="$(ELECTRON_ZIP_DIR)")
 
-build-win:
-	npm run build:win $(if $(ELECTRON_ZIP_DIR),-- --electron-zip-dir="$(ELECTRON_ZIP_DIR)")
-
-build-all: build build-win
+zipvoice-tts:
+	bash scripts/install-zipvoice.sh
 
 integrations:
 	mkdir -p dist/integrations

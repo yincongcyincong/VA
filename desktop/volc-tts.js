@@ -8,7 +8,7 @@ export const volcDefaults = { speaker: 'zh_female_vv_uranus_bigtts', resourceId:
 
 export function volcKey(config) {
   const key = typeof config?.apiKey === 'string' ? config.apiKey.trim() : '';
-  return key || process.env.VOLC_TTS_API_KEY?.trim() || '';
+  return key || (config?.apiKeyEnv && process.env[config.apiKeyEnv]?.trim()) || process.env.VOLC_TTS_API_KEY?.trim() || '';
 }
 
 // An HTTP read can split a JSON object or contain several objects.
@@ -64,11 +64,13 @@ function toWav(chunks, length) {
   return Buffer.concat([header, ...chunks], header.length + length);
 }
 
-export async function volcSpeech(text, config, signal) {
+export async function volcSpeech(text, config, signal, { rate = 0, volume = 0 } = {}) {
   const key = volcKey(config);
   if (!key) throw new ControlError('VOICE_CONFIG', '请先填写火山 TTS 的 API Key。');
   const { speaker, resourceId } = { ...volcDefaults, ...config };
   const reqParams = { text, speaker, audio_params: { format: 'pcm', sample_rate: sampleRate } };
+  if (rate) reqParams.audio_params.speech_rate = rate;
+  if (volume) reqParams.audio_params.loudness_rate = volume;
   if (resourceId === 'seed-icl-2.0') reqParams.model = 'seed-tts-2.0-standard';
   const timeout = AbortSignal.timeout(20_000);
   try {

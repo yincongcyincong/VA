@@ -8,6 +8,7 @@ export const modelSources = {
   vroid: 'https://hub.vroid.com/en',
 };
 export const localAhaName = '星神';
+export const coverName = 'VA 封面角色';
 
 const packEntry = /^\d{2}_(.+)_V\d+$/u;
 const packFormats = { 'model.vrm': 'VRM', 'model.glb': 'GLB' };
@@ -31,7 +32,7 @@ export function modelPage(value) {
   throw new ControlError('MODEL_LINK', '请粘贴模之屋或 VRoid Hub 的 HTTPS 模型详情链接。');
 }
 
-export function createModelLibrary(manifest, { bundledModel, localAha }) {
+export function createModelLibrary(manifest, { bundledModel, coverModel, localAha }) {
   const save = settingsWriter(manifest);
   let importing = false;
 
@@ -55,13 +56,16 @@ export function createModelLibrary(manifest, { bundledModel, localAha }) {
   }
 
   async function availableEntries() {
-    const [imported, bundled, aha] = await Promise.all([
+    const [imported, bundled, aha, cover] = await Promise.all([
       currentEntries(), lstat(bundledModel).catch(() => undefined),
       localAha && lstat(localAha.path).catch(() => undefined),
+      coverModel && lstat(coverModel).catch(() => undefined),
     ]);
     const entries = [];
+    if (cover?.isFile()) entries.push({ path: coverModel, id: 'va-cover', label: coverName, format: 'VRM',
+      size: cover.size, builtIn: true, isDefault: true, rigged: true, mouthSync: true });
     if (aha?.isFile()) entries.push({ path: localAha.path, id: 'aha-default', label: localAhaName, format: 'PMX',
-      size: aha.size, builtIn: true, isDefault: true, rigged: true, mouthSync: true });
+      size: aha.size, builtIn: true, isDefault: !entries.length, rigged: true, mouthSync: true });
     const hasGeminiVrm = imported.some(model => model.id === '04_Gemini_V2' && model.format === 'VRM');
     const showBundledGemini = bundled?.isFile() && !hasGeminiVrm;
     if (showBundledGemini) entries.push({ path: bundledModel, id: 'gemini-default', label: 'Gemini', format: 'GLB',

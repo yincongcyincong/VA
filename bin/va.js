@@ -1,10 +1,11 @@
 #!/usr/bin/env node
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { listActions } from '../lib/catalog.js';
 import { ControlError, request } from '../lib/control.js';
 import { startDesktop, takeSelfie } from '../lib/start.js';
+import { configCatalog, maxConfigBytes, parseConfigCommand } from '../lib/configuration.js';
 
 const usage = `VA · 桌面角色
 
@@ -19,13 +20,15 @@ const usage = `VA · 桌面角色
   va photo [--out <文件.png>] [--clipboard]
   va selfie [--out <文件.png>] [--clipboard] [--say <台词>]
   va settings | character               打开设置或读取人设和默认台词
+  va config list | get <配置组>           查询配置组、操作或当前配置
+  va config <set|run> <目标> [JSON|--file <文件>|--stdin]
   va prompt [--voice]                   输出当前角色和可用动作的完整 Prompt
-  va chat [消息] [--speak]                打开聊天、发送消息或用自然语言让角色做动作
+  va chat [消息] [--speak]                打开接入设置，或通过命令行向已接入的 Agent 发送消息
   va chat-status | chat-new | chat-cancel
   va chat-context                        向已绑定的豆包对话同步 VA 角色能力
-  va chat-bind <会话ID|current>           续接 Agent 会话，或绑定豆包当前对话
+  va chat-bind <会话ID|current>           绑定 Agent 会话，或绑定豆包当前对话
   va chat-use <codex|claude|deepseekharness|omp|custom|none>
-  va integration [off|local|doubao-client|doubao|api|astrbot|openclaw]
+  va integration [off|local|doubao-client|astrbot|openclaw]
   va model [文件|default]                查看、选择模型或恢复默认模型
   va model-check <文件>                  检测模型、骨骼、表情和内置动画
   va senses [--json]                    查看屏幕观察和音乐状态
@@ -60,6 +63,38 @@ function count(positionals, length) {
 }
 
 const normalizeName = name => name.normalize('NFKC').trim().toLowerCase();
+
+async function configuration() {
+  const { positionals, values } = options({ file: { type: 'string' }, stdin: { type: 'boolean' } });
+  const [operation, target, inline, ...extra] = positionals;
+  const sources = Number(inline !== undefined) + Number(Boolean(values.file)) + Number(Boolean(values.stdin));
+  if (!target && operation === 'list' && !sources) return configCatalog();
+  if (!target || extra.length || sources > 1 || (operation === 'get' && sources)) {
+    invalid('用法：va config list、get <配置组>、set <配置组> 或 run <操作>。');
+  }
+  let input = inline;
+  if (values.file) {
+    const file = await readFile(resolve(values.file));
+    if (file.length > maxConfigBytes) invalid('配置 JSON 最多 512 KiB。');
+    input = file.toString('utf8');
+  } else if (values.stdin) {
+    const chunks = [];
+    let bytes = 0;
+    for await (const chunk of process.stdin) {
+      bytes += chunk.length;
+      if (bytes > maxConfigBytes) invalid('配置 JSON 最多 512 KiB。');
+      chunks.push(chunk);
+    }
+    input = Buffer.concat(chunks).toString('utf8');
+  }
+  if (input !== undefined && Buffer.byteLength(input) > maxConfigBytes) invalid('配置 JSON 最多 512 KiB。');
+  let value;
+  if (input !== undefined) {
+    try { value = JSON.parse(input); } catch { invalid('配置需要有效的 JSON。'); }
+  }
+  if (value && typeof value.path === 'string') value.path = resolve(value.path);
+  return request({ type: 'configuration', ...parseConfigCommand({ operation, target, value }) });
+}
 
 function presetId(entries, input, label, labelOf) {
   const name = normalizeName(input);
@@ -104,6 +139,7 @@ async function performFromCli() {
 }
 
 async function execute() {
+  if (command === 'config') return configuration();
   if (command === 'bridge') {
     count(options().positionals, 0);
     const { runBotBridge } = await import('../lib/bot-bridge.js');

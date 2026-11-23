@@ -2,8 +2,9 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { actions } from '../desktop/actions.js';
 import { chatPerformancePrompt, replyPerformance, requestedPerformance, requestsSelfie } from '../desktop/character-performance.js';
+import { danceMotion } from '../desktop/dance-motion.js';
 import { compilePerformance, describePerformance } from '../desktop/performance-config.js';
-import { createSpeechMotion, textSpeechDuration } from '../desktop/speech-motion.js';
+import { createSpeechMotion, smoothMouthWeight, textSpeechDuration } from '../desktop/speech-motion.js';
 
 const model = { mode: 'vrm', clips: [], bones: ['head'], motions: Object.keys(actions), morphs: ['happy'] };
 
@@ -59,4 +60,35 @@ test('mouth follows audio when available and text timing otherwise', () => {
   assert.ok(lively(.5).hand > natural(.5).hand);
   assert.equal(textSpeechDuration('短句'), 2100);
   assert.equal(textSpeechDuration('长'.repeat(200)), 12_000);
+});
+
+test('sound peaks change the mouth while body gestures keep their own rhythm', () => {
+  let level = 0;
+  const sample = createSpeechMotion('我在这里，听你说。', 'lively', 3, () => level);
+  const { open: closed, round: _closedRound, ...quietPose } = sample(1);
+  level = .95;
+  const { open, round, ...loudPose } = sample(1);
+  assert.equal(closed, 0);
+  assert.ok(open > .45 && open < .7);
+  assert.ok(round > 0);
+  assert.deepEqual(quietPose, loudPose);
+  const oneFrame = smoothMouthWeight(0, open, 1 / 60);
+  const afterPause = smoothMouthWeight(oneFrame, 0, 1 / 60);
+  assert.ok(oneFrame > 0 && oneFrame < open / 3);
+  assert.ok(afterPause > 0 && afterPause < oneFrame);
+});
+
+test('dance steps have bounded lift and movement while the spin still completes a full turn', () => {
+  const dt = .01;
+  for (const action of ['dance', 'dance-side', 'dance-spin', 'dance-bounce']) {
+    for (let time = dt; time < actions[action].seconds; time += dt) {
+      const pose = danceMotion(action, time, 1);
+      const previous = danceMotion(action, time - dt, 1);
+      assert.ok(Math.abs(pose.x - previous.x) / dt < 3, action);
+      assert.ok(Math.abs(pose.y - previous.y) / dt < 1.6, action);
+      assert.ok(Math.abs(pose.yaw - previous.yaw) / dt < 2.2, action);
+    }
+  }
+  assert.ok(danceMotion('dance-bounce', .25, 1).y > .22);
+  assert.equal(danceMotion('dance-spin', actions['dance-spin'].seconds, 1).yaw, Math.PI * 2);
 });

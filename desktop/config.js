@@ -61,24 +61,28 @@ export async function readConfig(path, defaults, code, name) {
 }
 
 export async function readCharacter(path, defaults) {
-  const config = await readConfig(path, defaults, 'CHARACTER_CONFIG', 'character.json');
+  return parseCharacter(await readConfig(path, defaults, 'CHARACTER_CONFIG', 'character.json'), defaults);
+}
+
+export function parseCharacter(config, defaults) {
   const { name, prompt, dialogue } = config ?? {};
   if (typeof name !== 'string' || !name.trim() || typeof prompt !== 'string' || !prompt.trim()) {
     throw new ControlError('CHARACTER_CONFIG', '角色配置需要填写 name 和 prompt。');
   }
   const displayName = name.trim() === 'Gemini 娘' ? 'Gemini' : name.trim();
-  const previousNames = [defaults.name, '阿哈', '星神', 'Gemini 娘'];
+  const previousNames = [defaults.name, '阿哈', '星神', 'Gemini', 'Gemini 娘'];
   const expand = (line, templates) => {
     const legacy = templates.find(template => previousNames.some(oldName =>
       template.replaceAll('{{name}}', () => oldName) === line));
     return (legacy ?? line).replaceAll('{{name}}', () => displayName);
   };
-  const lines = {};
-  for (const [action, templates] of Object.entries(defaults.dialogue)) {
+  const actions = new Set([...Object.keys(defaults.dialogue), ...Object.keys(dialogue ?? {})]);
+  const lines = Object.fromEntries([...actions].map(action => {
+    const templates = Object.hasOwn(defaults.dialogue, action) ? defaults.dialogue[action] : [];
     const override = dialogue?.[action];
     const valid = (Array.isArray(override) ? override : [override])
       .filter(line => typeof line === 'string' && line.trim() && line.length <= 300);
-    lines[action] = (valid.length ? valid : templates).map(line => expand(line.trim(), templates));
-  }
+    return [action, (valid.length ? valid : templates).map(line => expand(line.trim(), templates))];
+  }));
   return { name: displayName, prompt: expand(prompt.trim(), [defaults.prompt]), dialogue: lines };
 }

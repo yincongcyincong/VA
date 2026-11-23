@@ -3,7 +3,8 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { actions, facePresets, speechActionStyles } from './actions.js';
 import { danceMotion } from './dance-motion.js';
 import { disposeModel, loadModel } from './model-loaders.js';
-import { createSpeechMotion } from './speech-motion.js';
+import { createSpeechMotion, smoothMouthWeight } from './speech-motion.js';
+import { armBindDrop, createHandGestures } from './hand-gestures.js';
 
 const smooth = value => {
   const t = THREE.MathUtils.clamp(value, 0, 1);
@@ -24,6 +25,7 @@ function visibleBounds(mesh) {
 }
 
 const idle = { motion: 'idle', seconds: 0, face: {} };
+const blendMotion = motion => motion.startsWith('dance') || Boolean(speechActionStyles[motion]);
 const weightFor = (map, name) => map && Object.hasOwn(map, name) ? map[name] : undefined;
 const pmxSpeech = ['まばたき', 'あ', 'お'];
 const basicPmxMorphs = new Set([...pmxSpeech, ...Object.values(facePresets).flatMap(face => Object.keys(face.pmx ?? {}))]);
@@ -35,7 +37,8 @@ const humanoid = {
 
 export async function loadAvatar(stage, model) {
   const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
-  renderer.setPixelRatio(Math.min(devicePixelRatio, 1.7));
+  // Oversample the bundled VRM on standard-density displays, where thin edges are most visible.
+  renderer.setPixelRatio(model.builtIn && model.format === 'vrm' ? 2 : Math.min(devicePixelRatio, 1.7));
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(32, 1, 0.1, 240);
   const controls = new OrbitControls(camera, renderer.domElement);
@@ -171,6 +174,16 @@ export async function loadAvatar(stage, model) {
     ? mesh.skeleton?.getBoneByName(pmxBones[key])
     : vrm?.humanoid?.getNormalizedBoneNode(humanoid[key])]));
   const proceduralIdle = Boolean(vrm && !defaultClip && rig.leftArm && rig.rightArm);
+  const rightBindDrop = vrm ? armBindDrop(rig.rightArm, rig.rightElbow) : 0;
+  const leftBindDrop = vrm ? armBindDrop(rig.leftArm, rig.leftElbow) : 0;
+  const fingerNames = { middle: '中指', index: '人指', ring: '薬指', little: '小指' };
+  const handGestures = createHandGestures(rig, modelRoot, (side, finger, segment = 'Proximal') => {
+    if (!pmx) return vrm?.humanoid?.getNormalizedBoneNode(side + finger[0].toUpperCase() + finger.slice(1) + segment);
+    const name = (side === 'right' ? '右' : '左') + fingerNames[finger];
+    return segment === 'Intermediate'
+      ? mesh.skeleton?.getBoneByName(name + '２') ?? mesh.skeleton?.getBoneByName(name + '2')
+      : mesh.skeleton?.getBoneByName(name + '１') ?? mesh.skeleton?.getBoneByName(name + '1');
+  });
   const bones = new Map();
   const genericMorphs = new Map();
   mesh.traverse(node => {
@@ -201,15 +214,17 @@ export async function loadAvatar(stage, model) {
     }
   }
   setPmxTargets();
-  const morph = (name, target, fade) => {
+  const morph = (name, target, fade, dt) => {
     const index = mesh.morphTargetDictionary?.[name];
     if (index !== undefined) {
       const weights = mesh.morphTargetInfluences;
-      weights[index] = THREE.MathUtils.lerp(weights[index], target, fade);
+      weights[index] = name === 'あ' || name === 'お' ? smoothMouthWeight(weights[index], target, dt)
+        : THREE.MathUtils.lerp(weights[index], target, fade);
     }
   };
 
   let plan = idle;
+  let motionTransition;
   let lastCustomPose = new Map();
   const vrmRest = new Map(Object.values(rig).filter(Boolean).map(bone => [bone, bone.rotation.clone()]));
   const affectedMorphs = new Set();
@@ -224,7 +239,22 @@ export async function loadAvatar(stage, model) {
   let previousTime = performance.now() / 1000;
   const reducedMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
   const neutralSpeech = createSpeechMotion('', 'natural', 0);
+  function blendFromCurrentPose() {
+    const yaw = modelRoot.rotation.y;
+    const angleToFront = Math.abs(Math.atan2(Math.sin(yaw), Math.cos(yaw)));
+    motionTransition = {
+      start: performance.now() / 1000, duration: Math.max(.24, angleToFront * .4),
+      position: modelRoot.position.clone(), yaw,
+      rotations: [...vrmRest.keys()].map(bone => [bone, bone.quaternion.clone()]),
+    };
+  }
   function play(next = idle) {
+    if (next === idle && plan === idle) return;
+    // Use the last rendered pose when a gesture is interrupted or the move changes.
+    if ((pmx || proceduralIdle) && !plan.clip && !next.clip && !plan.bones && !next.bones) {
+      if (blendMotion(plan.motion) || blendMotion(next.motion)) blendFromCurrentPose();
+    } else motionTransition = undefined;
+    handGestures.reset();
     if (procedural && vrm) {
       for (const [bone, rest] of vrmRest) bone.rotation.copy(rest);
     }
@@ -246,8 +276,11 @@ export async function loadAvatar(stage, model) {
     const now = time / 1000;
     const dt = Math.max(0, Math.min(now - previousTime, 0.1));
     previousTime = now;
-    const elapsed = Math.max(0, now - startedAt);
-    if (plan.seconds && elapsed >= plan.seconds) play();
+    let elapsed = Math.max(0, now - startedAt);
+    if (plan.seconds && elapsed >= plan.seconds) {
+      play();
+      elapsed = 0;
+    }
     const { motion: action, seconds: length, face = {}, clip, bones: offsets } = plan;
     const motionTime = length ? elapsed * actions[action].seconds / length : 0;
     procedural = Boolean(vrm && !clip && (action !== 'idle' || proceduralIdle));
@@ -264,9 +297,10 @@ export async function loadAvatar(stage, model) {
     // The mouth can keep moving during a deliberate pose, wave or dance.
     const gesture = action === 'idle' || actionStyle
       ? speech ? talking : speechGesture?.(elapsed) ?? neutralSpeech(0) : neutralSpeech(0);
-    const strength = length ? smooth(elapsed / Math.min(.38, length / 3)) *
-      smooth((length - elapsed) / Math.min(.45, length / 3)) : 0;
-    const armRest = proceduralIdle ? (1 - strength) * .65 : 0;
+    const dancing = action.startsWith('dance');
+    const strength = length ? smooth(elapsed / Math.min(dancing ? .62 : .38, length / 3)) *
+      smooth((length - elapsed) / Math.min(dancing ? .72 : .45, length / 3)) : 0;
+    const armRest = proceduralIdle ? .65 * (1 - (actionStyle ? 0 : strength * (dancing ? .68 : 1))) : 0;
     const breathing = reducedMotion ? 0 : Math.sin(now * 1.65) * 0.017;
     const wave = action === 'wave' ? strength : 0;
     const nod = action === 'nod' ? strength : 0;
@@ -302,14 +336,14 @@ export async function loadAvatar(stage, model) {
       breathing * 1.6 - sway * 0.16 + pose * 0.14 + .49 * look - .32 * hero,
       wave * 0.08 + sway * 0.12 + pose * 0.16 + pet * (0.21 + 0.05 * Math.sin(beat * 1.8)) + gesture.tilt + .16 * kiss + .14 * heart - .18 * hero);
     rotate('rightArm', -0.06 - wave * 0.22 + sway * 0.35 - 0.24 * pose - gesture.hand * .53 - .64 * heart - .32 * stretch - 1.5 * thinking,
-      -wave * 0.22 - .3 * kiss - .22 * heart, 0.42 + armRest - wave * 0.69 - rightLift * 0.72 - sway * 0.51 - pose * 0.65 - gesture.hand * .57
+      -wave * 0.22 - .3 * kiss - .22 * heart, 0.42 + armRest - rightBindDrop - wave * 0.69 - rightLift * 0.72 - sway * 0.51 - pose * 0.65 - gesture.hand * .57
         - .68 * happy + .22 * angry - .6 * kiss - .48 * throwKiss - .37 * heart + .36 * hero - 1.4 * stretch - 2 * thinking);
     rotate('rightElbow', 0.03, 0.08, -wave * 1.53 - rightLift * 0.72 - pose * 1.48 - gesture.hand * 1.22
       - 1.72 * kiss + 1.14 * throwKiss - .62 * angry - 1.42 * heart - 1.16 * hero - .42 * stretch - 4.2 * thinking);
     rotate('rightWrist', 0, wave * 0.32 + pose * 0.4 + gesture.hand * .38,
       wave * Math.sin(motionTime * 13) * 0.37 - pulse * 0.24 + .46 * throwKiss + .43 * heart);
     rotate('leftArm', -0.07 - sway * 0.35 - gesture.oppositeHand * .46 - .64 * heart - .32 * stretch, .22 * heart,
-      -0.42 - armRest + laugh * 0.18 + leftLift * 0.72 - sway * 0.51 + gesture.oppositeHand * .6 + .76 * happy - .18 * angry + .37 * heart + 1.4 * stretch);
+      -0.42 - armRest + leftBindDrop - .45 * wave + laugh * 0.18 + leftLift * 0.72 - sway * 0.51 + gesture.oppositeHand * .6 + .76 * happy - .18 * angry + .37 * heart + 1.4 * stretch);
     rotate('leftElbow', -pet * 0.4, -0.05 - laugh * 0.50,
       laugh * 0.20 + leftLift * 0.72 + pet * 0.5 + gesture.oppositeHand + 1.42 * heart + .42 * stretch);
     rotate('leftWrist', 0, 0, pulse * 0.24 - .43 * heart);
@@ -317,6 +351,18 @@ export async function loadAvatar(stage, model) {
     rotate('leftLeg', -leftStep * 0.24, 0, sway * 0.12);
     rotate('rightKnee', rightStep * 0.44, 0, 0);
     rotate('leftKnee', leftStep * 0.44, 0, 0);
+    if (motionTransition) {
+      const decay = 1 - smooth((now - motionTransition.start) / motionTransition.duration);
+      if (decay === 0) motionTransition = undefined;
+      else {
+        modelRoot.position.lerp(motionTransition.position, decay);
+        const turn = motionTransition.yaw - modelRoot.rotation.y;
+        motionTransition.yawOffset ??= Math.atan2(Math.sin(turn), Math.cos(turn));
+        modelRoot.rotation.y += motionTransition.yawOffset * decay;
+        for (const [bone, rotation] of motionTransition.rotations) bone.quaternion.slerp(rotation, decay);
+      }
+    }
+    if (!clip) handGestures.apply(action, motionTime, strength);
 
     const fade = 1 - Math.exp(-dt * 19);
     const blinkTime = now % 4.6;
@@ -327,7 +373,7 @@ export async function loadAvatar(stage, model) {
     if (pmx) {
       for (const name of Object.keys(mesh.morphTargetDictionary ?? {})) {
         const weight = (weightFor(face.pmx, name) ?? 0) * (name === 'にやり' ? 1 - mouth : name === '笑い' ? 1 - mouth * .55 : 1);
-        morph(name, Math.max(weight, weightFor(automaticPmx, name) ?? 0), fade);
+        morph(name, Math.max(weight, weightFor(automaticPmx, name) ?? 0), fade, dt);
       }
     }
     if (vrm) {
@@ -341,7 +387,9 @@ export async function loadAvatar(stage, model) {
         if (!expressionManager?.getExpression(name)) continue;
         const target = weightFor(face.vrm, name);
         const value = Math.max(target ?? 0, weightFor(automatic, name) ?? 0);
-        const blended = THREE.MathUtils.lerp(expressionManager.getValue(name) ?? 0, value, fade);
+        const previous = expressionManager.getValue(name) ?? 0;
+        const blended = name === 'aa' || name === 'oh' ? smoothMouthWeight(previous, value, dt)
+          : THREE.MathUtils.lerp(previous, value, fade);
         expressionManager.setValue(name, blended);
         if (target === undefined && blended < .001) affectedVrm.delete(name);
       }
@@ -428,6 +476,8 @@ export async function loadAvatar(stage, model) {
       speech = { start: performance.now() / 1000, text, style, duration: durationMs / 1000, level: audioLevel };
     },
     stopSpeaking() {
+      if (speech && (pmx || proceduralIdle) && !plan.clip && !plan.bones &&
+          (plan.motion === 'idle' || speechActionStyles[plan.motion])) blendFromCurrentPose();
       speech = undefined;
     },
     showPortrait(closeup) {

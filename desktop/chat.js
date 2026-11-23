@@ -1,43 +1,29 @@
-import { choices, choiceValue, markChoice, onChoice } from './settings-tabs.js';
-import { renderDoubao } from './doubao-chat.js';
+import { markChoice, onChoice } from './settings-tabs.js';
 
 const byId = id => document.getElementById(id);
-const configuration = byId('configuration');
-const routeConfiguration = byId('route-configuration');
+const call = window.va.localChat;
 const modes = byId('mode');
 const providers = byId('providers');
+const configuration = byId('configuration');
 const binding = byId('binding');
-const composer = byId('composer');
-const history = byId('history');
-const connection = byId('connection');
+const unbind = byId('unbind-session');
+const sessions = byId('session-history');
+const routeConfiguration = byId('route-configuration');
+const promptForm = byId('agent-prompt-form');
+const promptInput = promptForm.elements.prompt;
 const status = byId('chat-status');
 const clientStatus = byId('doubao-bind-status');
-const send = byId('send');
-const stop = byId('stop');
-const newChat = byId('new');
-const message = composer.elements.message;
-const call = window.va.localChat;
-
-const profileList = byId('profiles');
-const profileDialog = byId('profile-dialog');
-const profileForm = byId('profile-form');
-const profileTabs = byId('profile-tabs');
-const profileStatus = byId('profile-status');
-const captionPanel = byId('doubao-captions-panel');
 const captionStart = byId('doubao-caption-start');
 const captionStop = byId('doubao-caption-stop');
 const captionActions = byId('doubao-caption-actions');
 const listenActions = byId('doubao-listen-actions');
 const captionStatus = byId('doubao-caption-status');
-const micStatus = byId('doubao-mic-status');
-const captionText = byId('doubao-caption-text');
-const protocols = [['chat', 'OpenAI Chat'], ['responses', 'OpenAI Responses'], ['anthropic', 'Anthropic']];
-const modelKinds = ['language', 'vision'];
-let editingProfile;
+
 let current;
-let responding = false;
 let working = false;
-let switchingMode = false;
+let savedPrompt;
+let sessionListKey;
+let revision = 0;
 
 function errorText(error) {
   return error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
@@ -48,111 +34,100 @@ function renderCaptions(state) {
   captionStart.disabled = captionActions.disabled = listenActions.disabled = running;
   captionStop.disabled = !running;
   captionStatus.textContent = state.message;
+  byId('doubao-caption-text').textContent = state.text;
+  const micStatus = byId('doubao-mic-status');
   micStatus.textContent = state.micStatus ?? '';
   micStatus.hidden = !state.micStatus;
-  captionText.textContent = state.text;
 }
 
 function controls() {
-  const busy = switchingMode || working || current?.busy;
-  const local = current?.integration.mode === 'local';
-  const api = current?.integration.mode === 'api';
-  const client = current?.integration.mode === 'doubao-client';
-  for (const button of modes.children) button.disabled = button.hidden || switchingMode || (working && !responding) || !current;
-  for (const button of providers.children) button.disabled = Boolean(busy);
-  for (const form of [configuration, routeConfiguration]) {
-    for (const control of form.elements) control.disabled = Boolean(busy);
+  const busy = working || !current || current.busy;
+  for (const group of [modes, providers, configuration, routeConfiguration]) {
+    for (const control of group.querySelectorAll('button, input')) control.disabled = Boolean(busy);
   }
-  const unavailable = Boolean(busy) || !(client ? current.client?.title && !current.client.problem
-    : api ? current.activeApi : local && current.provider);
-  for (const control of binding.elements) control.disabled = unavailable || !local;
-  newChat.disabled = unavailable;
-  send.disabled = switchingMode || (working && !responding) || !current;
+  for (const control of binding.elements) control.disabled = Boolean(busy || !current?.provider);
+  unbind.disabled ||= !current?.sessionId;
+  for (const control of sessions.querySelectorAll('button')) control.disabled = Boolean(busy || control.dataset.active);
+  const bound = Boolean(current?.client?.title);
   byId('doubao-client-bind').disabled = Boolean(busy);
-  byId('doubao-client-unbind').disabled = !current?.client?.title || working;
-  byId('doubao-client-context').disabled = unavailable || !client;
-  byId('doubao-client-read').disabled = unavailable || !client;
-  stop.disabled = !responding && !current?.busy;
-  for (const button of byId('api-panel').querySelectorAll('button')) {
-    button.disabled = Boolean(busy);
+  byId('doubao-client-unbind').disabled = Boolean(busy || !bound);
+  for (const id of ['doubao-client-context', 'doubao-client-read']) {
+    byId(id).disabled = Boolean(busy || !bound || current.client.problem);
   }
+  promptForm.querySelector('button').disabled = Boolean(working || !current);
 }
 
-function line(who, text, user = false) {
-  const item = document.createElement('li');
-  item.className = user ? 'user' : 'agent';
-  const author = document.createElement('small');
-  const paragraph = document.createElement('p');
-  author.textContent = who;
-  paragraph.textContent = text;
-  item.append(author, paragraph);
-  history.append(item);
-  history.scrollTop = history.scrollHeight;
+function sessionButton(text, handle) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.textContent = text;
+  button.addEventListener('click', handle);
+  return button;
 }
 
-function button(label, onClick) {
-  const element = document.createElement('button');
-  element.type = 'button';
-  element.textContent = label;
-  element.addEventListener('click', onClick);
-  return element;
-}
-
-function renderProfiles({ profiles = [], selected }) {
-  profileList.replaceChildren();
-  byId('profile-empty').hidden = profiles.length > 0;
-  for (const profile of profiles) {
+function renderSessions(provider, history) {
+  const records = history.filter(record => record.provider === provider);
+  const key = JSON.stringify([provider, records]);
+  if (key === sessionListKey) return;
+  sessionListKey = key;
+  const empty = byId('session-empty');
+  empty.hidden = records.length > 0;
+  empty.textContent = provider ? '这个 Agent 还没有绑定记录。' : '选择一个 Agent 查看绑定记录。';
+  sessions.replaceChildren(...records.map(record => {
     const item = document.createElement('li');
-    item.className = 'profile';
-    const summary = document.createElement('div');
+    const info = document.createElement('div');
     const title = document.createElement('strong');
-    title.textContent = profile.name;
-    const parts = [profile.language.model, profile.language.baseUrl].filter(Boolean);
-    summary.append(title);
-    if (parts.length) {
-      const metadata = document.createElement('p');
-      metadata.textContent = parts.join(' · ');
-      summary.append(metadata);
-    }
-    if (profile.reason) {
-      const warning = document.createElement('p');
-      warning.textContent = profile.reason;
-      summary.append(warning);
+    const id = document.createElement('code');
+    const cwd = document.createElement('p');
+    title.textContent = record.label;
+    id.textContent = record.id;
+    cwd.textContent = record.cwd;
+    info.append(title, id, cwd);
+    if (record.boundAt) {
+      const time = document.createElement('time');
+      time.dateTime = record.boundAt;
+      time.textContent = new Date(record.boundAt).toLocaleString();
+      info.append(time);
     }
     const actions = document.createElement('div');
     actions.className = 'row';
-    if (selected === profile.id && !profile.reason) {
-      const active = document.createElement('span');
-      active.className = 'profile-state';
-      active.textContent = '使用中';
-      actions.append(active);
-    } else if (!profile.reason) {
-      actions.append(button('使用', () => void edit('api-profile', { op: 'select', id: profile.id })));
-    }
-    if (profile.source === 'cli') actions.append(button('复制为自定义…', () => openProfile(profile, true)));
-    else actions.append(button('编辑…', () => openProfile(profile)));
-    item.append(summary, actions);
-    profileList.append(item);
-  }
+    const restore = sessionButton(record.active ? '当前绑定' : '重新绑定',
+      () => void edit('restore-session', record.ref, '已恢复会话绑定。'));
+    if (record.active) restore.dataset.active = 'true';
+    actions.append(restore);
+    if (record.canOpen) actions.append(sessionButton('打开会话',
+      () => void edit('open-session', record.ref, '已交给终端打开。')));
+    item.append(info, actions);
+    return item;
+  }));
 }
 
-function render(state, syncFields) {
-  current = state;
-  const { mode, selected, profiles, route } = current.integration;
+function render(state, syncFields = false) {
+  const { mode, route } = state.integration;
   const local = mode === 'local';
-  const api = mode === 'api';
-  const doubao = mode === 'doubao';
   const client = mode === 'doubao-client';
-  modes.querySelector('[data-choice="doubao-client"]').hidden = state.integration.nativeDoubao === false;
-  const profile = profiles?.find(entry => entry.id === selected);
-  current.activeApi = Boolean(profile && !profile.reason);
-  current.agentLabel = local ? state.label : api ? (profile?.name ?? '模型 API')
-    : [...modes.children].find(button => button.dataset.choice === mode)?.textContent;
+  syncFields ||= mode !== current?.integration.mode || state.provider !== current?.provider;
+  current = state;
+
   markChoice(modes, mode);
-  if (doubao) modes.firstElementChild.tabIndex = 0;
-  byId('local-panel').hidden = !local;
-  byId('doubao-client-panel').hidden = !client;
-  captionPanel.hidden = !client;
+  byId('local-panel').hidden = byId('session-panel').hidden = !local;
+  byId('doubao-client-panel').hidden = byId('doubao-captions-panel').hidden = !client;
+  routeConfiguration.hidden = !route;
+  byId('openclaw-fields').hidden = mode !== 'openclaw';
+  byId('connection').textContent = local ? (state.provider
+    ? state.label + (state.sessionId ? ' · ' + state.sessionId : ' · 未绑定会话') : '请选择 Agent')
+    : route ? (route.target ? '接收频道回复 · ' + route.target : '请配置目标频道')
+      : client ? (state.client?.title || '未绑定本机对话') : '智能体接入已关闭';
+
+  if (local) {
+    markChoice(providers, state.provider);
+    renderSessions(state.provider, state.sessionHistory ?? []);
+    if (syncFields) {
+      configuration.elements.cwd.value = state.workingDirectory;
+      configuration.elements.cwd.placeholder = state.launchDirectory;
+      configuration.elements.speak.checked = state.speakReplies;
+    }
+  }
   if (client) {
     if (syncFields) {
       captionActions.checked = state.autoActions;
@@ -162,59 +137,41 @@ function render(state, syncFields) {
   } else clientStatus.textContent = '';
   byId('doubao-client-hint').textContent = state.client?.problem ||
     (state.client?.contextSent ? '已将角色能力发到这条豆包对话。' : '');
-  renderDoubao(current.integration.doubao, current.doubao, doubao, syncFields);
-  byId('open-realtime').hidden = !doubao;
-  byId('api-panel').hidden = !api;
-  routeConfiguration.hidden = !route;
-  byId('conversation').hidden = mode === 'off' || doubao;
-  composer.hidden = !local && !api && !client;
-  newChat.hidden = !local && !api;
-  byId('openclaw-fields').hidden = mode !== 'openclaw';
-  connection.textContent = local ? (state.provider ? state.label + (state.sessionId ? ' · ' + state.sessionId : ' · 新会话') : '请选择 Agent')
-    : route ? (route.target ? '接收频道回复 · ' + route.target : '请配置目标频道')
-      : api ? (current.activeApi ? profile.name : '请选择 API 配置')
-        : doubao ? '当前接入 · 火山实时语音' : client ? (state.client.title || '未绑定本机对话') : '所有对话接入已关闭';
-  if (syncFields && local) {
-    const { cwd, model, prompt, speak } = configuration.elements;
-    markChoice(providers, state.provider);
-    byId('model-field').hidden = !['codex', 'claude', 'omp'].includes(state.provider);
-    model.value = state.models[state.provider] ?? '';
-    cwd.value = state.workingDirectory;
-    cwd.placeholder = state.launchDirectory;
-    prompt.value = state.prompt;
-    speak.checked = state.speakReplies;
-  }
-  if (api) renderProfiles(current.integration);
-  if (syncFields && route) {
+  if (route && syncFields) {
     for (const field of ['target', 'channel', 'accountId', 'sessionKey']) routeConfiguration.elements[field].value = route[field];
     routeConfiguration.elements.speak.checked = route.speakReplies;
   }
-  history.replaceChildren();
-  for (const turn of state.history) {
-    if (turn.message) line('你', turn.message, true);
-    line(current.agentLabel, turn.reply);
-  }
+  if (savedPrompt === undefined || promptInput.value === savedPrompt) promptInput.value = state.prompt;
+  savedPrompt = state.prompt;
   controls();
 }
 
-async function refresh(syncFields = false) {
+async function refresh() {
+  const requested = ++revision;
   try {
-    const state = await call('status');
-    render(state, syncFields || state.integration.mode !== current?.integration.mode || state.provider !== current?.provider);
-  } catch (error) { status.textContent = errorText(error); }
+    const result = await call('status');
+    if (requested === revision && !working) render(result);
+  } catch (error) {
+    if (requested === revision) status.textContent = errorText(error);
+  }
 }
 
 async function edit(operation, value, success = '', pending = '') {
-  const feedback = operation.startsWith('doubao-client-') ? clientStatus : status;
+  if (working) return false;
+  revision++;
+  const feedback = operation === 'prompt' ? byId('agent-prompt-status')
+    : operation.startsWith('doubao-client-') ? clientStatus : status;
   working = true;
   feedback.textContent = pending;
   controls();
   try {
-    render(await call(operation, value), true);
+    const result = await call(operation, value);
+    if (operation === 'prompt' && promptInput.value === value) promptInput.value = savedPrompt;
+    if (operation !== 'open-session') render(result, operation !== 'prompt');
     feedback.textContent = success;
     return true;
   } catch (error) {
-    (profileDialog.open ? profileStatus : feedback).textContent = errorText(error);
+    feedback.textContent = errorText(error);
     return false;
   } finally {
     working = false;
@@ -222,26 +179,46 @@ async function edit(operation, value, success = '', pending = '') {
   }
 }
 
-onChoice(modes, async mode => {
-  if (mode === current?.integration.mode) return;
-  switchingMode = true;
-  try {
-    await edit('integration', { mode });
-  } finally {
-    switchingMode = false;
-    controls();
-  }
+onChoice(modes, mode => {
+  if (mode !== current?.integration.mode) void edit('integration', { mode });
 });
-byId('open-realtime').addEventListener('click', () => byId('tab-voice').click());
-for (const action of ['open', 'read']) {
+onChoice(providers, provider => {
+  if (provider !== current?.provider) void edit('configure', { provider });
+});
+configuration.addEventListener('submit', event => {
+  event.preventDefault();
+  const { cwd, speak } = configuration.elements;
+  void edit('configure', { cwd: cwd.value, speakReplies: speak.checked }, '已保存 Agent。');
+});
+binding.addEventListener('submit', async event => {
+  event.preventDefault();
+  if (await edit('bind', binding.elements.session.value, '已绑定会话。')) binding.reset();
+});
+unbind.addEventListener('click', () => void edit('bind', null, '已解除当前绑定。'));
+promptForm.addEventListener('submit', event => {
+  event.preventDefault();
+  void edit('prompt', promptInput.value, '已保存共用 Prompt。');
+});
+routeConfiguration.addEventListener('submit', event => {
+  event.preventDefault();
+  const { target, channel, accountId, sessionKey, speak } = routeConfiguration.elements;
+  void edit('integration', { mode: current.integration.mode, route: { target: target.value, channel: channel.value,
+    accountId: accountId.value, sessionKey: sessionKey.value, speakReplies: speak.checked } }, '已保存频道。');
+});
+byId('config-file').addEventListener('click', async () => {
+  try { status.textContent = await call('open-config') || ''; }
+  catch (error) { status.textContent = errorText(error); }
+});
+for (const [action, success, pending] of [
+  ['open', '', ''],
+  ['read', '', ''],
+  ['bind', '已绑定豆包当前对话。', '正在识别豆包当前对话…'],
+  ['unbind', '已解除绑定。', ''],
+  ['context', '已同步共用 Prompt 和角色能力。', '正在同步共用 Prompt 和角色能力…'],
+]) {
   const operation = 'doubao-client-' + action;
-  byId(operation).addEventListener('click', () => void edit(operation));
+  byId(operation).addEventListener('click', () => void edit(operation, undefined, success, pending));
 }
-byId('doubao-client-bind').addEventListener('click', () =>
-  void edit('doubao-client-bind', undefined, '已绑定豆包当前对话。', '正在识别豆包当前对话…'));
-byId('doubao-client-unbind').addEventListener('click', () =>
-  void edit('doubao-client-unbind', undefined, '已解除绑定。'));
-byId('doubao-client-context').addEventListener('click', () => void edit('doubao-client-context', undefined, '豆包已回复角色能力同步消息。'));
 captionStart.addEventListener('click', async () => {
   captionStart.disabled = captionActions.disabled = listenActions.disabled = true;
   try {
@@ -251,149 +228,14 @@ captionStart.addEventListener('click', async () => {
   }
 });
 captionStop.addEventListener('click', async () => {
-  try {
-    renderCaptions(await call('doubao-caption-stop'));
-  } catch (error) {
-    captionStatus.textContent = errorText(error);
-  }
+  try { renderCaptions(await call('doubao-caption-stop')); }
+  catch (error) { captionStatus.textContent = errorText(error); }
 });
 window.va.onDoubaoCaptions(renderCaptions);
 byId('doubao-caption-privacy').addEventListener('click', async () => {
   try { await window.va.openCapturePrivacy(); }
   catch (error) { captionStatus.textContent = errorText(error); }
 });
-onChoice(providers, provider => { if (provider !== current?.provider) void edit('configure', { provider }); });
-routeConfiguration.addEventListener('submit', event => {
-  event.preventDefault();
-  const { target, channel, accountId, sessionKey, speak } = routeConfiguration.elements;
-  void edit('integration', { mode: current.integration.mode, route: { target: target.value, channel: channel.value,
-    accountId: accountId.value, sessionKey: sessionKey.value, speakReplies: speak.checked } }, '已保存频道。');
-});
-configuration.addEventListener('submit', event => {
-  event.preventDefault();
-  const { cwd, prompt, model, speak } = configuration.elements;
-  void edit('configure', { cwd: cwd.value, prompt: prompt.value, model: model.value, speakReplies: speak.checked }, '已保存 Agent。');
-});
-binding.addEventListener('submit', event => {
-  event.preventDefault();
-  void edit('bind', binding.elements.session.value, '已绑定会话。');
-});
-newChat.addEventListener('click', () => void edit('bind', null, '已准备好新会话。'));
-byId('config-file').addEventListener('click', async () => {
-  try { status.textContent = await call('open-config') || ''; }
-  catch (error) { status.textContent = errorText(error); }
-});
-
-function showProfileTab(tab) {
-  markChoice(profileTabs, tab);
-  for (const name of modelKinds) byId('profile-' + name).hidden = name !== tab;
-}
-onChoice(profileTabs, showProfileTab);
-for (const kind of modelKinds) {
-  const group = byId(kind + '-protocol');
-  choices(group, protocols);
-  onChoice(group, protocol => markChoice(group, protocol));
-}
-
-function openProfile(profile, copy = false) {
-  editingProfile = copy ? undefined : profile?.id;
-  byId('profile-title').textContent = editingProfile ? '编辑模型 API 配置' : '添加模型 API 配置';
-  byId('remove-profile').hidden = !editingProfile;
-  byId('remove-profile').textContent = '删除配置';
-  profileForm.reset();
-  const fields = profileForm.elements;
-  fields.name.value = copy ? profile.name + '（自定义）' : profile?.name ?? '';
-  fields.speak.checked = profile?.speakReplies === true;
-  fields.prompt.value = profile?.prompt ?? '';
-  fields.remote.checked = profile?.vision?.allowRemoteScreenshots === true;
-  for (const kind of modelKinds) {
-    const model = profile?.[kind];
-    fields[kind + '-url'].value = model?.baseUrl ?? '';
-    fields[kind + '-model'].value = model?.model ?? '';
-    fields[kind + '-key'].placeholder = editingProfile && model?.hasKey ? '留空保留已保存的密钥' : '可选';
-    fields[kind + '-clear'].parentElement.hidden = !editingProfile || !model?.hasKey;
-    markChoice(byId(kind + '-protocol'), model?.protocol ?? 'chat');
-  }
-  profileStatus.textContent = '';
-  showProfileTab('language');
-  profileDialog.showModal();
-}
-
-byId('add-profile').addEventListener('click', () => openProfile());
-byId('refresh-profiles').addEventListener('click', () => void refresh());
-byId('close-profile').addEventListener('click', () => profileDialog.close());
-profileDialog.addEventListener('close', () => profileForm.reset());
-byId('remove-profile').addEventListener('click', async event => {
-  if (event.target.textContent === '删除配置') {
-    event.target.textContent = '确认删除';
-    return;
-  }
-  if (await edit('api-profile', { op: 'remove', id: editingProfile }, '已删除配置。')) profileDialog.close();
-});
-profileForm.addEventListener('submit', async event => {
-  event.preventDefault();
-  const fields = profileForm.elements;
-  const model = kind => ({ protocol: choiceValue(byId(kind + '-protocol')), baseUrl: fields[kind + '-url'].value,
-    model: fields[kind + '-model'].value, apiKey: fields[kind + '-key'].value, clearKey: fields[kind + '-clear'].checked });
-  const language = model('language');
-  if (!language.baseUrl.trim() || !language.model.trim()) {
-    showProfileTab('language');
-    profileStatus.textContent = '请填写语言模型的 Base URL 和模型名。';
-    return;
-  }
-  const submit = byId('save-profile');
-  submit.disabled = true;
-  try {
-    if (await edit('api-profile', { op: 'save', id: editingProfile, name: fields.name.value,
-      language, vision: { ...model('vision'), allowRemoteScreenshots: fields.remote.checked }, prompt: fields.prompt.value,
-      speakReplies: fields.speak.checked }, '已保存配置。')) profileDialog.close();
-  } finally { submit.disabled = false; }
-});
-
-stop.addEventListener('click', async () => {
-  try {
-    await call('cancel');
-    if (!responding) await refresh();
-  } catch (error) { status.textContent = errorText(error); }
-});
-message.addEventListener('keydown', event => {
-  if ((event.metaKey || event.ctrlKey) && event.key === 'Enter' && !event.isComposing) {
-    event.preventDefault();
-    if (!send.disabled) composer.requestSubmit();
-  }
-});
-composer.addEventListener('submit', async event => {
-  event.preventDefault();
-  const text = message.value.trim();
-  if (send.disabled || !text) return;
-  if (responding) {
-    try {
-      const result = await call('action-input', text);
-      if (result.handled) {
-        if (message.value.trim() === text) message.value = '';
-        status.textContent = result.reply;
-      }
-    } catch (error) { status.textContent = errorText(error); }
-    return;
-  }
-  responding = working = true;
-  message.value = '';
-  line('你', text, true);
-  status.textContent = '正在等待 ' + current.agentLabel + '…';
-  controls();
-  try {
-    const result = await call('send', text);
-    status.textContent = result.handled ? result.reply : '';
-  } catch (error) {
-    if (!message.value) message.value = text;
-    status.textContent = errorText(error);
-  } finally {
-    responding = working = false;
-    await refresh();
-    controls();
-    message.focus();
-  }
-});
-
 window.va.onChatRefresh(() => { if (!working) void refresh(); });
-await refresh(true);
+controls();
+await refresh();

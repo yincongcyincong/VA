@@ -16,15 +16,20 @@ const musicDance = document.getElementById('music-dance');
 const screenState = document.getElementById('screen-state');
 const musicState = document.getElementById('music-state');
 const status = document.getElementById('status');
-const voiceName = document.getElementById('voice-name');
 const voiceProvider = document.getElementById('voice-provider');
+const systemVoicePicker = document.getElementById('system-voice-picker');
+const systemVoiceMenu = document.getElementById('system-voice-menu');
+const systemVoiceCurrent = document.getElementById('system-voice-current');
+const systemVoiceChoices = document.getElementById('system-voice-choices');
+const systemVoiceQuery = document.getElementById('system-voice-query');
+const systemVoiceRefresh = document.getElementById('system-voice-refresh');
+const systemVoiceResults = document.getElementById('system-voice-results');
 const actionSound = document.getElementById('action-sound');
+const zipVoiceForm = document.getElementById('zipvoice-form');
 const volcForm = document.getElementById('volc-form');
 const volcResource = document.getElementById('volc-resource');
 const voiceStatus = document.getElementById('voice-status');
-const voiceFile = document.getElementById('voice-file');
 const listen = document.getElementById('voice-preview');
-const original = document.getElementById('voice-original');
 const modelSummary = document.getElementById('model-summary');
 const modelStatus = document.getElementById('model-status');
 const modelFile = document.getElementById('model-file');
@@ -45,6 +50,11 @@ let actionReady = false;
 let catalogKey;
 let previewCategory = 'dance';
 let previewAction = 'idle';
+let installedVoices;
+let voiceListError = '';
+let voiceOptionsKey;
+let voiceConfig;
+const languageNames = new Intl.DisplayNames(['zh-Hans'], { type: 'language' });
 
 function renderModelReport(model) {
   const checked = model?.checked;
@@ -117,12 +127,14 @@ for (const operation of ['open', 'reload', 'preview']) {
 }
 
 const tabs = document.getElementById('settings-tabs');
+document.getElementById('quit-va').addEventListener('click', () => window.va.quit());
 function showSection(section) {
   const selected = tabs.querySelectorAll('[data-choice]');
   if (![...selected].some(button => button.dataset.choice === section)) return;
   markChoice(tabs, section);
   for (const button of selected) document.getElementById(button.getAttribute('aria-controls')).hidden = button.dataset.choice !== section;
   window.scrollTo(0, 0);
+  if (section !== 'voice') closeSystemVoices();
 }
 onChoice(tabs, showSection);
 window.va.onSettingsSection(showSection);
@@ -153,9 +165,7 @@ function render(settings) {
   screenWatch.disabled = !settings.screenTarget && !settings.screenWatch;
   screenDestination.textContent = settings.screenTarget === 'local'
     ? '由当前选中的本地 Agent 识别截图。使用远端模型时，截图可能发给其模型服务。角色隐藏时暂停。'
-    : settings.screenTarget === 'api'
-      ? '由当前 API 配置中的视觉模型识别截图。角色隐藏时暂停。'
-      : '选用支持图片的本地 Agent 或配置了视觉模型的 API 后可开启。';
+    : '选用支持图片的本地 Agent 后可开启。';
   renderSenses(settings.senses);
   if (settings.model) {
     const model = settings.model;
@@ -218,6 +228,7 @@ async function update(change) {
 }
 
 window.va.onSettings(render);
+window.va.onVoiceChanged(renderVoice);
 window.va.onSenses(renderSenses);
 scale.addEventListener('input', () => {
   value.value = scale.value + '%';
@@ -241,22 +252,152 @@ for (const [id, open] of [
 }
 
 function renderVoice(config) {
+  voiceConfig = config;
   actionSound.checked = config.actionSound;
   actionSound.disabled = false;
-  voiceName.textContent = config.referenceName || '未选择录音';
   markChoice(voiceProvider, config.provider);
+  systemVoicePicker.hidden = config.provider !== 'system';
+  if (systemVoicePicker.hidden) closeSystemVoices();
+  zipVoiceForm.hidden = config.provider !== 'zipvoice';
+  for (const [key, value] of Object.entries(config.zipvoice)) zipVoiceForm.elements[key].value = value;
   volcForm.hidden = config.provider !== 'volc';
+  renderSystemVoices();
   volcForm.elements.speaker.value = config.volc.speaker;
   volcForm.elements.apiKey.value = '';
   volcForm.elements.apiKey.placeholder = config.volc.hasKey ? '已配置，留空保留' : '输入控制台 API Key';
   markChoice(volcResource, config.volc.resourceId);
-  original.disabled = !config.referenceName;
 }
+
+const localVoiceNames = { Tingting: '婷婷', Meijia: '美佳', Sinji: '善怡' };
+const systemDefault = '跟随系统朗读音色';
+
+function systemVoiceLabel(name) {
+  return (Object.hasOwn(localVoiceNames, name) ? localVoiceNames[name] + ' · ' + name : name) || systemDefault;
+}
+
+function systemVoiceLanguage(language) {
+  try { return languageNames.of(language) ?? language; }
+  catch { return language; }
+}
+
+function renderSystemVoices() {
+  const selected = voiceConfig?.systemVoice ?? '';
+  systemVoiceCurrent.textContent = systemVoiceLabel(selected);
+  systemVoiceCurrent.title = systemVoiceCurrent.textContent;
+  if (systemVoiceMenu.hidden) return;
+  const query = systemVoiceQuery.value.trim().toLowerCase().split(/\s+/u).filter(Boolean);
+  const matches = (...terms) => query.every(word => terms.some(term => term?.toLowerCase().includes(word)));
+  const filtered = (installedVoices ?? []).filter(({ name, language }) =>
+    matches(systemVoiceLabel(name), language, systemVoiceLanguage(language)));
+  const priority = voice => voice.name === selected ? 0 : voice.language.startsWith('zh-') ? 1 : 2;
+  filtered.sort((a, b) => priority(a) - priority(b));
+  const options = filtered.map(({ name, language }) =>
+    [name, name.includes(' (') ? name : systemVoiceLabel(name) + ' · ' + systemVoiceLanguage(language)]);
+  if (matches(systemDefault)) options.splice(options[0]?.[0] === selected ? 1 : 0, 0, ['', systemDefault]);
+  const optionsKey = JSON.stringify(options);
+  if (voiceOptionsKey !== optionsKey) {
+    const focused = systemVoiceChoices.contains(document.activeElement) ? document.activeElement.dataset.choice : undefined;
+    systemVoiceChoices.replaceChildren();
+    choices(systemVoiceChoices, options);
+    voiceOptionsKey = optionsKey;
+    if (focused !== undefined) {
+      const option = [...systemVoiceChoices.children].find(button => button.dataset.choice === focused);
+      (option ?? systemVoiceQuery).focus();
+    }
+  }
+  markChoice(systemVoiceChoices, selected);
+  const hasVoices = Boolean(installedVoices?.length);
+  if (systemVoiceRefresh.disabled) {
+    systemVoiceResults.textContent = hasVoices ? '正在后台更新音色…' : '正在读取本机音色…';
+  } else if (voiceListError) {
+    systemVoiceResults.textContent = voiceListError + (hasVoices ? ' 已保留上次读取的音色。' : '');
+  } else {
+    systemVoiceResults.textContent = options.length ? '' : '没有找到匹配的音色。';
+  }
+}
+
+async function refreshSystemVoices() {
+  systemVoiceRefresh.disabled = true;
+  renderSystemVoices();
+  try {
+    if (!installedVoices) {
+      installedVoices = await window.va.cachedSystemVoices().catch(() => []);
+      renderSystemVoices();
+    }
+    installedVoices = await window.va.systemVoices();
+    voiceListError = '';
+  } catch (error) {
+    voiceListError = error.message.replace(/^Error invoking remote method '[^']+': (?:Error: )?/, '');
+  } finally {
+    systemVoiceRefresh.disabled = false;
+    renderSystemVoices();
+  }
+}
+
+function openSystemVoices() {
+  if (!systemVoiceMenu.hidden) return;
+  systemVoiceMenu.hidden = false;
+  if (!installedVoices && !systemVoiceRefresh.disabled) void refreshSystemVoices();
+  else renderSystemVoices();
+}
+systemVoiceQuery.addEventListener('focus', openSystemVoices);
+systemVoiceQuery.addEventListener('click', openSystemVoices);
+systemVoiceQuery.addEventListener('input', () => {
+  if (systemVoiceMenu.hidden) openSystemVoices();
+  else renderSystemVoices();
+});
+systemVoiceRefresh.addEventListener('click', () => {
+  systemVoiceMenu.hidden = false;
+  void refreshSystemVoices();
+});
+function closeSystemVoices() {
+  systemVoiceMenu.hidden = true;
+  systemVoiceQuery.value = '';
+}
+document.addEventListener('pointerdown', event => {
+  if (!systemVoiceMenu.hidden && !systemVoicePicker.contains(event.target)) closeSystemVoices();
+});
+systemVoicePicker.addEventListener('focusout', event => {
+  if (event.relatedTarget && !systemVoicePicker.contains(event.relatedTarget)) closeSystemVoices();
+});
+systemVoicePicker.addEventListener('keydown', event => {
+  if (event.isComposing) return;
+  if (event.target === systemVoiceQuery && event.key === 'ArrowDown') openSystemVoices();
+  if (systemVoiceMenu.hidden) return;
+  if (event.key === 'Escape') {
+    event.preventDefault();
+    systemVoiceQuery.focus();
+    closeSystemVoices();
+    return;
+  }
+  const options = [...systemVoiceChoices.querySelectorAll('button')];
+  if (event.target === systemVoiceQuery && event.key === 'Enter' && options.length === 1) {
+    event.preventDefault();
+    options[0].click();
+    return;
+  }
+  const index = options.indexOf(event.target);
+  if (event.key === 'ArrowDown' && (index >= 0 || event.target === systemVoiceQuery)) {
+    event.preventDefault();
+    options[Math.min(index + 1, options.length - 1)]?.focus();
+  } else if (event.key === 'ArrowUp' && index >= 0) {
+    event.preventDefault();
+    (options[index - 1] ?? systemVoiceQuery).focus();
+  }
+});
+systemVoiceChoices.addEventListener('click', event => {
+  const option = event.target.closest('button[data-choice]');
+  if (!option) return;
+  const value = option.dataset.choice;
+  systemVoiceQuery.focus();
+  closeSystemVoices();
+  if (value !== voiceConfig?.systemVoice) void updateVoice({ provider: 'system', systemVoice: value });
+});
 
 async function updateVoice(change) {
   try {
     renderVoice(await window.va.voiceConfig(change));
-    voiceStatus.textContent = change?.provider === 'volc' ? '已启用火山 TTS。' : '';
+    voiceStatus.textContent = { volc: '已启用火山 TTS。', zipvoice: '已启用本地音色复刻。' }[change?.provider] ?? '';
   } catch (error) {
     voiceStatus.textContent = error.message.replace(/^Error invoking remote method '[^']+': Error: /, '');
   }
@@ -279,10 +420,36 @@ actionSound.addEventListener('change', async () => {
 
 onChoice(voiceProvider, value => {
   if (value === 'system') void updateVoice({ provider: 'system' });
-  else {
+  else if (value === 'zipvoice') {
+    zipVoiceForm.hidden = false;
+    volcForm.hidden = true;
+    zipVoiceForm.elements.referenceAudio.focus();
+  } else {
     volcForm.hidden = false;
+    zipVoiceForm.hidden = true;
     volcForm.elements.apiKey.focus();
   }
+});
+document.getElementById('choose-voice-reference').addEventListener('click', async () => {
+  try {
+    const path = await window.va.chooseVoiceReference();
+    if (path) {
+      zipVoiceForm.elements.referenceAudio.value = path;
+      zipVoiceForm.elements.referenceText.focus();
+    }
+  } catch (error) {
+    voiceStatus.textContent = error.message;
+  }
+});
+zipVoiceForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const zipvoice = Object.fromEntries([...new FormData(zipVoiceForm)].map(([key, text]) => [key, text.trim()]));
+  const save = zipVoiceForm.querySelector('button[type=submit]');
+  save.disabled = true;
+  voiceStatus.textContent = '正在加载 ZipVoice 并检查参考录音…';
+  try {
+    await updateVoice({ provider: 'zipvoice', zipvoice });
+  } finally { save.disabled = false; }
 });
 onChoice(volcResource, value => markChoice(volcResource, value));
 volcForm.addEventListener('submit', async event => {
@@ -296,20 +463,9 @@ volcForm.addEventListener('submit', async event => {
   } finally { save.disabled = false; }
 });
 
-voiceFile.addEventListener('click', async () => {
-  voiceFile.disabled = true;
-  try {
-    renderVoice(await window.va.chooseVoiceFile());
-    voiceStatus.textContent = '';
-  } catch (error) {
-    voiceStatus.textContent = error.message;
-  } finally {
-    voiceFile.disabled = false;
-  }
-});
 listen.addEventListener('click', async () => {
   listen.disabled = true;
-  voiceStatus.textContent = '正在生成试听…';
+  voiceStatus.textContent = '正在试听…';
   try {
     const preview = await window.va.previewVoice();
     voiceStatus.textContent = preview.voiceWarning || '试听完成。';
@@ -319,28 +475,8 @@ listen.addEventListener('click', async () => {
     listen.disabled = false;
   }
 });
-original.addEventListener('click', async () => {
-  original.disabled = true;
-  let url;
-  let audio;
-  try {
-    url = URL.createObjectURL(new Blob([await window.va.previewReference()], { type: 'audio/wav' }));
-    audio = new Audio(url);
-    await new Promise((resolve, reject) => {
-      audio.addEventListener('ended', resolve, { once: true });
-      audio.addEventListener('error', () => reject(new Error('无法播放参考录音。')), { once: true });
-      audio.play().catch(reject);
-    });
-    voiceStatus.textContent = '已播放参考原声。';
-  } catch (error) {
-    voiceStatus.textContent = error.message;
-  } finally {
-    if (url) URL.revokeObjectURL(url);
-    original.disabled = false;
-  }
-});
 document.getElementById('voice-config').addEventListener('click', async () => {
-  const error = await window.va.openVoiceFile().catch(error => error.message);
+  const error = await window.va.openVoiceConfig().catch(error => error.message);
   voiceStatus.textContent = error || '';
 });
 

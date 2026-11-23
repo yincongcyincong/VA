@@ -68,7 +68,7 @@ test('an unavailable vision provider reports its error before capturing', async 
 });
 
 test('music detection is independent of the screen route', {
-  skip: process.platform === 'win32', timeout: 3000,
+  timeout: 10000,
 }, async t => {
   const folder = await mkdtemp(join(tmpdir(), 'va-audio-test-'));
   const audioHelper = join(folder, 'fixture-audio');

@@ -1,32 +1,41 @@
 {
   "mode": "off",
-  "vision": {
-    "baseUrl": "http://127.0.0.1:11434/v1",
-    "model": "",
-    "apiKey": "",
-    "apiKeyEnv": "VA_AGENT_API_KEY",
-    "allowRemoteScreenshots": false
-  },
-  "language": {
-    "baseUrl": "http://127.0.0.1:11434/v1",
-    "model": "",
-    "apiKey": "",
-    "apiKeyEnv": "VA_LANGUAGE_API_KEY"
-  },
+  "prompt": "",
   "localAgent": {
     "provider": "",
     "cwd": "",
-    "prompt": "",
     "speakReplies": false,
-    "codex": { "command": "codex", "model": "" },
-    "claude": { "command": "claude", "model": "" },
-    "deepseekharness": { "command": "dsh" },
-    "omp": { "command": "omp", "model": "" },
-    "custom": { "command": "", "args": [] }
+    "codex": {
+      "command": "codex",
+      "model": ""
+    },
+    "claude": {
+      "command": "claude",
+      "model": ""
+    },
+    "deepseekharness": {
+      "command": "dsh"
+    },
+    "omp": {
+      "command": "omp",
+      "model": ""
+    },
+    "custom": {
+      "command": "",
+      "args": []
+    }
   },
-  "doubao": { "voice": "zh_female_vv_jupiter_bigtts", "prompt": "", "allowDance": true },
   "channels": {
-    "astrbot": { "target": "", "speakReplies": false },
-    "openclaw": { "channel": "", "target": "", "accountId": "", "sessionKey": "", "speakReplies": false }
+    "astrbot": {
+      "target": "",
+      "speakReplies": false
+    },
+    "openclaw": {
+      "channel": "",
+      "target": "",
+      "accountId": "",
+      "sessionKey": "",
+      "speakReplies": false
+    }
   }
 }

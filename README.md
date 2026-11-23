@@ -1,11 +1,20 @@
 <p align="center"><img src="assets/app-icon.png" width="96" alt="VA 软件图标"></p>
 <h1 align="center">VA · 桌面 3D 角色</h1>
 
-VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。可以拖动底部把手移动窗口，拖动角色旋转视角，用滚轮缩放。底部控制条提供缩放和设置。macOS 菜单栏和 Windows 系统托盘可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
+VA 在 macOS 桌面上显示透明悬浮的 3D 角色。鼠标靠近时会显示顶部角色名和底部控制条，拖动名字或底部把手可移动角色。拖动模型可以旋转视角，用滚轮可以缩放。菜单栏可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
 
-VA 优先使用本机的 **星神（星穹铁道）**，并随源码提供 ApprenTice 制作的 **Gemini**。喜欢这些角色，可以到模之屋查看原作者的作品。[阿哈 · 模之屋原帖](https://www.aplaybox.com/details/model/vODgdw8vDdb3) · [AI 娘全家桶 · 模之屋原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+[默认形象](#默认形象) · [角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体接入](#智能体接入) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型) · [代码结构](docs/architecture.md) · [许可证](#许可证)
 
-[角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体与模型](#智能体与模型) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型) · [代码结构](docs/architecture.md)
+## 默认形象
+
+首次启动 VA 时会显示 **VA 封面角色**。下面是默认模型在 VA 中渲染的正面和背面。
+
+<p align="center">
+  <img src="docs/gallery/cover-avatar.png" width="246" alt="VA 默认 3D 角色的正面">
+  <img src="docs/gallery/cover-avatar-back.png" width="246" alt="VA 默认 3D 角色的背面">
+</p>
+
+默认模型在项目的 `assets/models/VA Cover.vrm`。打包后位于 `VA.app/Contents/Resources/app.asar` 内的同一相对路径。运行 `va model --json` 可以查看当前加载的模型和路径。[下载默认形象](assets/models/VA%20Cover.vrm)
 
 ## 3D 角色展示
 
@@ -26,19 +35,17 @@ npm ci
 | 操作 | 命令 | 产物或启动入口 |
 | --- | --- | --- |
 | macOS 从源码启动 | `make dev` | 编译 Swift 助手后打开 VA |
-| Windows 从源码启动 | `npm start` | 打开 VA |
 | 打包 macOS | `npm run build:mac` | 双击 `dist/VA-darwin-arm64/VA.app` 或 `dist/VA-darwin-x64/VA.app`，取决于构建用的 Mac |
-| 打包 Windows x64 | `npm run build:win` | 双击 `dist/VA-win32-x64/VA.exe`，分发时保留整个目录 |
-| 打包 Windows ARM64 | `npm run build:win -- --arch=arm64` | 双击 `dist/VA-win32-arm64/VA.exe`，分发时保留整个目录 |
-| 在 macOS 一次打包两个平台 | `npm run build:all` 或 `make build-all` | macOS 本机架构的包和 Windows x64 包 |
 
-macOS 的 Swift 助手需要在目标架构的 Mac 上编译。Windows 上可以打包 Windows 版。Windows 版的豆包对话可以使用火山实时语音；本机豆包客户端联动、通话字幕和系统音乐检测由 macOS 助手提供。
+Swift 助手需要在目标架构的 Mac 上编译，为豆包客户端联动、通话字幕和系统音乐检测提供支持。
 
-如果已经下载了项目所用版本的 Electron ZIP，可用 `make build-all ELECTRON_ZIP_DIR=/路径/到/ZIP目录` 从本地归档打包。
+在设置页右上角点击「退出 VA」，或运行 `make stop`，即可结束当前 VA 进程。
 
-下载阿哈后，把整个模型包解压到系统的「文稿」或「下载」目录，保留原文件夹名及贴图。VA 启动时自动查找 `星穹铁道-阿哈2.pmx`，也可以用 `AVATAR_DIR` 指定模型目录。原包使用规则禁止二次配布，阿哈文件从本机读取。[阿哈下载页](https://www.aplaybox.com/details/model/vODgdw8vDdb3)
+如果已经下载了项目所用版本的 Electron ZIP，可用 `make build ELECTRON_ZIP_DIR=/路径/到/ZIP目录` 从本地归档打包。
 
-安装后也可以直接使用随包提供的 Gemini。模型是静态 GLB，适合旋转预览和拍照。舞蹈和口型需要相应骨骼和表情的模型，可在「设置 → 桌面角色」切换。内置模型遵循 CC BY-NC-SA 4.0。[模型署名和使用条件](assets/models/ATTRIBUTION.md)
+如需使用星神，把阿哈模型包解压到系统的「文稿」或「下载」目录，保留原文件夹名和贴图。VA 启动时会将找到的 `星穹铁道-阿哈2.pmx` 加入模型库，也可以用 `AVATAR_DIR` 指定模型目录。原包使用规则禁止二次配布，阿哈文件从本机读取。[阿哈下载页](https://www.aplaybox.com/details/model/vODgdw8vDdb3)
+
+封面角色是从封面设计重建的带贴图 VRM，支持骨骼动作、口型和表情。已有模型选择会随设置保存。可用 `va model default` 或在模型库选择「VA 封面角色」恢复默认。随包提供的 Gemini 是静态 GLB，适合旋转预览和拍照，沿用 CC BY-NC-SA 4.0。[模型制作与署名](assets/models/ATTRIBUTION.md)
 
 在项目根目录也可用 `node bin/va.js start` 启动已打包的本机版本，或用 `node bin/va.js status --json` 查询状态。在 macOS 可把命令链接成 PATH 中的 `va`：
 
@@ -51,11 +58,38 @@ ln -s "$PWD/bin/va.js" ~/.local/bin/va
 
 在仓库运行 `npm test` 或 `make test`。测试使用临时配置、模拟截图和模拟 Agent，对外部服务和系统录制权限均无依赖。
 
-VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启动时，以执行命令时所在的目录为准。直接打开打包应用且系统提供的工作目录是磁盘根目录时，以 `.app` 或 `.exe` 的所在目录为准。macOS 下可运行 `tail -f logs/va.log` 跟踪日志。
+VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启动时，以执行命令时所在的目录为准。直接打开打包应用且系统提供的工作目录是磁盘根目录时，以 `.app` 的所在目录为准。可运行 `tail -f logs/va.log` 跟踪日志。
 
 日志每行一条 JSON，记录启动、模型检查、接入切换、对话结果、豆包绑定、动作和传感器状态。错误按错误码记录，聊天正文、截图、录音和 API 密钥仅用于各自的功能。日志达到约 2 MiB 时轮换，上一份保存在 `logs/va.log.1`。
 
 ## 命令行
+
+### 从命令行和 MCP 配置 VA
+
+运行 `va config list --json` 查看配置组、操作、参数 JSON Schema 和示例。读取和修改配置需运行 VA。用 `get` 查看，用 `set` 合并变更，用 `run` 执行导入、绑定等操作。保存后即时应用。读取音色和接入配置时，密钥字段仅显示配置状态。
+
+| 配置组 | 可操作内容 |
+| --- | --- |
+| `desktop` | 主题、说话风格、缩放、视角、鼠标穿透、屏幕观察、间隔和音乐 |
+| `character` | 显示名、人设和默认台词 |
+| `actions` | 按编号合并动作和表情，`null` 删除单个覆盖 |
+| `voice` | 系统或火山 TTS 音色、火山资源和动作朗读开关 |
+| `agent` | 接入方式、共用 Prompt、本地 Agent 的命令、机器人路由和豆包通话字幕选项 |
+| `model` | 使用模型文件或模型库编号，路径设为 `null` 恢复默认 |
+
+```bash
+va config get desktop --json
+va config set desktop '{"view":"portrait","scale":55,"screenInterval":30}' --json
+va config set agent '{"mode":"local","localAgent":{"provider":"claude"}}' --json
+va config set agent '{"prompt":"用自然中文简短回复。"}' --json
+va config run system-voices --json
+va config run model-library --json
+va config set model '{"id":"va-cover"}' --json
+```
+
+带密钥的 JSON 可用 `--file <文件>` 或 `--stdin` 传入。MCP 对应工具为 `va_config_list`、`va_config_get`、`va_config_set` 和 `va_config_run`。将 [VA Desktop Skill](skills/va-desktop/SKILL.md) 提供给智能体，即可按相同配置组操作。
+
+### 操作桌面角色
 
 ```bash
 va actions --supported --json
@@ -99,21 +133,25 @@ va stop
 - **MCP 客户端**可添加名为 `va-desktop` 的本机 stdio 服务，命令填 `va`，参数填 `["mcp"]`。若客户端有独立 PATH，用 `va` 的绝对路径，或用 Node.js 绝对路径作为命令并传入 `bin/va.js` 的绝对路径与 `mcp`。可调用 `va_start`、`va_status`、`va_actions`、`va_perform`、`va_stop` 和 `va_photo`，其中照片直接返回 PNG。
 - **机器人**可以在同一台 Mac 用子进程调用 `va ... --json`。成功会输出 `{"ok":true,...}`，失败会输出 `{"ok":false,"error":{"code":"...","message":"..."}}` 并返回非零退出码。拿到照片的 `path` 后，用自己的渠道上传附件。远端机器人需要在运行 VA 的这台 Mac 上部署一个能调用 `va` 的桥接进程。
 
-桌面控制在 macOS 使用当前用户独占的 Unix socket，在 Windows 使用带随机凭据的本机回环连接。Windows 从项目目录以 `node bin/va.js` 执行命令。Agent 的受限环境需要允许本机 IPC。
+桌面控制使用当前用户独占的 Unix socket。Agent 的受限环境需要允许本机 IPC。
 
 ## 配置与互动
 
-macOS 可以用 `make run` 启动已有的打包版本、`make build` 生成本机 `.app`、`make stop` 退出。Windows 可以双击 `VA.exe` 启动，或从托盘菜单退出。
+可以用 `make run` 启动已有的打包版本、`make build` 生成本机 `.app`、`make stop` 退出。
 
-点击角色下方的「设置」、从菜单栏「VA」选择「设置…」、按 **Control + Option + V**，或执行 `va settings`，都可以打开配置窗口。鼠标穿透只作用在角色窗口，底部控制条仍可点击。用控制条的「− / +」可每次调整 5%，设置里的滑块可实时调整 40–110%，也可以执行 `va scale 55`。默认大小为 68%，调整后会保存。关闭穿透时，单击角色触发摸摸反应。拖动模型仍可旋转视角。
+鼠标靠近角色或底部控制条所在位置时，顶部显示角色名，底部显示拖动把手和设置齿轮。点击齿轮可打开设置，开启鼠标穿透时也可使用。还可以从菜单栏「VA」选「设置…」、按 **Control + Option + V** 或执行 `va settings`。设置里的「角色大小」滑块可实时调整 40–110%，也可以执行 `va scale 55`。默认大小为 68%，调整后会保存。关闭穿透时，单击角色触发摸摸反应。拖动模型仍可旋转视角。
 
 「桌面角色 → 界面主题」可在经典、樱花漫画、星夜霓虹之间切换。主题会同时应用到设置窗口和桌面对话气泡。
+
+![桌面角色设置中的模型检测、界面主题、角色大小、视角和鼠标穿透](docs/screenshots/desktop.png)
 
 「设置」中的「桌面模型」可以选择 PMX、VRM、GLB、glTF、FBX 或 OBJ。通过终端切换可用 `va model "/path/to/character.vrm"`，查询用 `va model --json`，恢复默认用 `va model default`。导入成功后会记住模型路径。带外部资源的模型请连同贴图、`.bin` 或 `.mtl` 一起解压，保留相对目录结构。
 
 导入前会检查文件、可见网格和实际渲染结果，检测通过后才替换当前角色。可先点「检测模型…」或执行 `va model-check "/path/to/character.glb" --json`，预查骨骼、表情目标和动画片段。检测失败会保留当前角色。模型能渲染时，缺少部分贴图会显示提醒。
 
-在「设置 → 模型库 → 3D模型」可以预览本机的星神和内置的 Gemini，也可以按名称搜索内置或已导入的模型。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 VRM 或 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+在「设置 → 模型库 → 3D模型」可以预览封面角色、本机的星神和内置的 Gemini，也可以按名称搜索内置或已导入的模型。要加入其他角色，从模之屋下载并解压 AI 娘全家桶，点「导入解压目录…」，VA 会逐个检测并列出能显示的 VRM 或 GLB。原包提供 Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包七款静态 GLB。DeepSeek、Claude 和 GPT 提供的是 Blender 5.2 源文件，可从 Blender 导出为 `model.glb`，与 `model.blend` 放在同一目录，再导入整个模型包。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+
+![模型库的默认角色 3D 预览、模型搜索和导入入口](docs/screenshots/model-library.png)
 
 安装 Blender 5.2 或更新版本后，也可以用命令导出这三个角色。脚本保留已有的 GLB，导出后在模型库重新导入解压目录。
 
@@ -135,6 +173,8 @@ PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FB
 ### 自定义动作
 
 在「设置 → 动作」打开 `performance.json`。编辑并保存后点「重新加载配置」，也可执行 `va actions --reload`。配置出错时，VA 会保留上一份可用配置。配置路径可用 `VA_PERFORMANCE_CONFIG` 指定。
+
+![动作设置中的类别、舞步预览和重新加载配置按钮](docs/screenshots/actions.png)
 
 让 Agent 代做时，使用 [Agent 自定义动作指南](docs/agent-custom-actions.md) 或仓库里的 [VA Skill](skills/va-desktop/SKILL.md)。
 
@@ -177,37 +217,43 @@ PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FB
 
 MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角色名。改完动作配置后用 `va_reload_actions`，再从 `supported: true` 和 `supportedExpressions` 选择编号。`va_say` 和 `va_perform` 会在角色旁显示对白气泡，表演可以自带台词或使用默认对白。`va_selfie` 成功时只返回 780 × 1040 的透明 PNG，CLI 用 `va selfie --out /tmp/va-selfie.png --json` 获取文件。角色隐藏或 VA 退出时也可以自拍。
 
-## 智能体与模型
+## 智能体接入
 
-从菜单栏「VA → 智能体与模型…」或桌面设置的同名按钮打开，也可执行 `va chat`。VA 同时只启用一种接入。切换时停止原接入并保留配置。选择「关闭」会停止全部自动交互，包括实时语音、屏幕观察和音乐跟随。
+从「设置 → 智能体接入」或菜单栏「VA → 智能体接入…」打开，也可执行 `va chat`。VA 一次启用一种接入。选择「关闭」会暂停自动交互、屏幕观察和音乐跟随。
 
-- **本地 Agent** 选择 Codex、Claude Code、DeepSeek Harness、OMP 或自定义 Agent。在「连接设置」可绑定会话、设置附加 Prompt 和工作目录。目录留空时使用启动 VA 时所在的目录。VA 使用已安装 Agent 自己的模型服务。
-- **豆包客户端** 使用 Mac 上已登录的豆包及当前对话。VA 可以发送文字和显示新的回复，语音输入与朗读由豆包客户端负责。[客户端设置](#本机豆包客户端)
-- **火山实时语音** 在「参考音色」配置并切换到实时语音，可在 VA 直接开麦聊天。语音流驱动角色口型，回复同步到桌面气泡。[实时语音设置](#豆包实时语音)
-- **模型 API** 列出本机可读取的 Codex CLI、Claude Code 和自定义配置。可直接选择可用的 CLI 配置，也可点「添加配置」填写名称、API 协议、Base URL、模型名、API Key 和附加 Prompt。支持 OpenAI Chat、OpenAI Responses 和 Anthropic Messages。只有 CLI 登录而没有 API Key 时，可继续使用「本地 Agent」或复制为自定义配置并补全。CLI 配置按需读取，密钥不会显示在列表中。
-- **AstrBot / OpenClaw** 在本窗口保存目标频道。Bot 调用自己的模型，VA 显示选定频道已经发出的回复。[安装与使用](#openclaw-和-astrbot)
+- **本地 Agent** 支持 Codex、Claude Code、DeepSeek Harness、OMP 或自定义 Agent。先选择 Agent 并保存工作目录，留空时使用 VA 启动目录。
+- **豆包客户端** 绑定 Mac 上已登录的豆包对话，在豆包里聊天或打电话。[客户端设置](#本机豆包客户端)
+- **AstrBot / OpenClaw** 在 VA 保存目标频道，在机器人频道对话，VA 在角色旁展示回复。[安装与使用](#openclaw-和-astrbot)
 
-配置保存在 `~/Library/Application Support/VA Desktop/agent.json`。CLI 可用 `va integration [off|local|doubao-client|doubao|api|astrbot|openclaw]` 查询或切换接入方式。手动编辑 JSON 的 `mode` 后重启 VA。
+### 绑定并打开本地会话
 
-角色人设提供统一语气和动作的默认台词。人设和接入设置里的 `{{name}}` 会替换成当前显示名。运行 `va prompt` 可以查看当前模型的完整动作和表情 Prompt，复制给语音或外部机器人时可运行 `va prompt --voice`。动作请求可以直接触发，Agent 也能根据自己的回复主动安排表演。[Prompt 与动作配置](docs/agent-custom-actions.md#对话如何触发动作)
+在 Codex 或 Claude Code 里开启或续用已有会话，然后把会话 ID 填到 VA 并点「绑定会话」。Codex CLI 可从 `/status` 查看会话信息。Claude Code 填本机的会话 ID，与 `claude --resume <会话ID>` 使用同一个 ID。点击「解除绑定」会清除当前选择，会话仍保存在绑定记录里。[Codex CLI 会话信息](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [Claude Code 会话命令](https://code.claude.com/docs/zh-CN/commands)
 
-在本地 Agent 模式，第一次发送会创建会话。VA 会记住每个 Agent 和工作目录的会话 ID，重启后继续使用。可在界面绑定已有的、当前空闲的会话 ID，或点「新会话」解除当前绑定。聊天窗口保留本次 VA 运行中最近 20 轮。回复也会在桌面角色旁显示气泡，最多 300 字。勾选「让角色朗读回复」可以同时听到语音。
+「会话绑定记录」只显示当前选中的 Agent 的会话，切换 Agent 会更新列表。可点击「重新绑定」恢复选择。「打开会话」会在 macOS 终端用原目录续接对应的 Codex 或 Claude Code 会话。命令行也可向已绑定的会话发送消息并让 VA 展示回复。
+
+![本地 Agent 的会话绑定记录和共用 Prompt 设置](docs/screenshots/local-agent.png)
 
 ```sh
-va chat "我们刚才聊到哪里了？" --json
-va chat "打个招呼" --speak
-va chat-use omp
-va chat-status --json
+va integration local
+va chat-use codex
 va chat-bind <会话ID>
-va chat-new
-va chat-cancel
+va config run chat-sessions --json
+va config run chat-open-session '{"ref":"绑定记录返回的 ref"}'
+va config run chat-restore-session '{"ref":"绑定记录返回的 ref"}'
+va chat "我们刚才聊到哪里了？" --speak
 ```
 
-配置与视觉、语言模型和频道一起放在 `agent.json` 的 `localAgent` 中。Codex 和 Claude Code 可用各自的 `command` 指定可执行文件。模型可在聊天窗口选择，留空时使用 Agent 自己的配置。Codex 在只读沙箱中运行，续聊时通过 `thread/inject_items` 传入最新指令。Claude Code 的内置工具在 VA 聊天中关闭。模型请求走所选 Agent 已配置的服务。
+### 共用 Prompt
 
-接入其他本机 Agent 时，在 `localAgent.custom.command` 填可执行文件的绝对路径，在 `args` 填它的参数。VA 直接运行该命令，以工作目录为 cwd，通过 stdin 发送一行 JSON `{"message":"你好","prompt":"角色和附加指令","sessionId":null}`。适配器通过 stdout 返回一个 JSON 对象 `{"reply":"你好","sessionId":"my-session-id"}` 后以 0 退出。续聊会收到相同的 `sessionId`。屏幕观察请求的 `sessionId` 为 `null`，图片在 `image.mime` 和 `image.data`，后者为 Base64。诊断写到 stderr。
+在「智能体接入 → 共用 Prompt」编辑指令，也可以执行 `va config set agent '{"prompt":"请用自然中文回复，称呼自己为 {{name}}。"}'`。保存后供本地 Agent 与机器人插件后续请求使用。豆包客户端可以点「同步角色能力」把同样的指令发给绑定会话。OpenClaw 的 Prompt 同步由插件设置 `workspacePrompt` 启用。
+
+VA 将共用 Prompt 与角色人设和当前可用动作一起发给 Agent。运行 `va prompt` 可以查看完整版，用 `va prompt --voice` 获取适用于豆包与机器人频道的版本。明确的动作请求可以在本机触发，接入方也能通过回复表达表演意图。[Prompt 与动作配置](docs/agent-custom-actions.md#对话如何触发动作)
+
+接入配置保存在 `~/Library/Application Support/VA Desktop/agent.json`。命令行可用 `va integration [off|local|doubao-client|astrbot|openclaw]` 切换。自定义 Agent 在 `localAgent.custom.command` 填可执行文件的绝对路径，`args` 填参数。VA 通过 stdin 传入一行 JSON，其中包含 `message`、`prompt` 和 `sessionId`。适配器通过 stdout 返回带 `reply` 和 `sessionId` 的 JSON。屏幕观察请求的 `sessionId` 为 `null`，图片作为 `image.mime` 和 Base64 格式的 `image.data` 传入。
 
 ### 本机豆包客户端
+
+![豆包客户端的对话绑定、角色能力同步和通话字幕选项](docs/screenshots/doubao-client.png)
 
 在 macOS「系统设置 → 隐私与安全性」按所用功能授权。
 
@@ -216,23 +262,23 @@ va chat-cancel
 | 从 VA 发文字、读取对话回复、调用豆包的朗读按钮 | 辅助功能 | VA |
 | 在豆包里打电话或按住空格说话 | 麦克风 | 豆包 |
 | 在 VA 显示豆包的语音字幕和口型 | 录屏与系统录音 → 仅系统录音 | VA |
-| 让 VA 在豆包客户端通话中识别你说的跳舞请求 | 麦克风 | VA |
+| 让 VA 在豆包客户端通话中识别你说的动作请求 | 麦克风 | VA |
 
 如果「辅助功能」列表没有 VA，点「添加」并选择 `dist/VA-darwin-arm64/VA.app`。打开开关时，macOS 可能要求用触控 ID 或登录密码确认。「系统录制权限…」可以从 VA 的字幕设置页打开录制授权。
 
-1. 在「智能体与模型 → 豆包客户端」点「打开豆包」。用豆包内已登录的账号，打开一条已有对话。
+1. 在「智能体接入 → 豆包客户端」点「打开豆包」。用豆包内已登录的账号，打开一条已有对话。
 2. 给 VA 开启「辅助功能」后，回到 VA 点「绑定当前对话」。关掉设置窗口后仍会在桌面显示新回复。切换接入方式、退出 VA 或点「解除绑定」会结束绑定。
-3. 可以从 VA 发送文字，也可以在豆包客户端输入框按住空格说话。新回复会显示在 VA 的对话和桌面气泡里。「用豆包朗读最近回复」调用豆包客户端自己的朗读按钮。
-4. 点「同步角色能力」或运行 `va chat-context`，把角色名称、桌面舞步和跳舞机制发到绑定的豆包文字对话。从 VA 发本次绑定后的第一条普通消息时，也会附上能力说明。有在本机安排的跳舞请求时，VA 会在下一条发给豆包的文字里补充动作反馈。
+3. 在豆包客户端发送文字或按住输入框的空格说话。新回复会显示在角色旁的桌面气泡里。「用豆包朗读最近回复」调用豆包客户端自己的朗读按钮。
+4. 点「同步角色能力」或运行 `va chat-context`，把共用 Prompt、角色名称和动作说明发到绑定的豆包文字对话。从 VA 发本次绑定后的第一条普通消息时，也会附上能力说明。有在本机安排的跳舞请求时，VA 会在下一条发给豆包的文字里补充动作反馈。
 
-如果普通文字发送失败，先检查 VA 的「辅助功能」，再打开绑定的豆包对话并清理草稿。VA 会查找豆包的「发送」按钮，并确认豆包接受了输入；豆包输入框里已有其他草稿时会保留该草稿。
+如果同步角色能力或从命令行发送失败，先检查 VA 的「辅助功能」，再打开绑定的豆包对话并清理草稿。VA 会查找豆包的「发送」按钮，并确认豆包接受了输入；豆包输入框里已有其他草稿时会保留该草稿。
 
 #### 打电话和字幕
 
 1. 按上表给豆包开启麦克风，并给 VA 开启系统录音。字幕需要 macOS 26，首次启动时可能下载 Apple 的中文识别资源。[Apple 本机语音识别](https://developer.apple.com/documentation/speech/speechanalyzer)
 2. 如果 VA 字幕已经开着，先点「停止字幕」。在豆包客户端选择「更多技能 → 打电话」，等电话接通。
-3. 回到「VA → 智能体与模型 → 豆包客户端」，点「开始字幕」。豆包播放下一句回复后，字幕会显示在角色旁的气泡和 VA 设置页。通话字幕适用于当前豆包客户端的声音，只有从 VA 发文字或同步某条对话的文字回复才需要绑定该对话。
-4. 想在通话里直接让角色跳舞时，开始字幕前勾选「识别麦克风里的跳舞请求」，并允许 VA 使用麦克风。VA 用本机转写判断你说的请求，识别完成后即可跳舞。麦克风识别随字幕停止。
+3. 回到「VA → 智能体接入 → 豆包客户端」，点「开始字幕」。豆包播放下一句回复后，字幕会显示在角色旁的气泡和 VA 设置页。通话字幕适用于当前豆包客户端的声音，只有从 VA 发文字或同步某条对话的文字回复才需要绑定该对话。
+4. 想在通话里直接让角色做动作时，开始字幕前勾选「识别麦克风里的动作请求」，并允许 VA 使用麦克风。VA 用本机转写判断你说的请求，识别后会播放对应动作。麦克风识别随字幕停止。
 
 「同步角色能力」会在绑定的文字对话中留下一条消息。豆包客户端的通话模式如何使用文字历史由豆包决定。
 
@@ -240,26 +286,20 @@ VA 通过 Core Audio 采集豆包及其音频助手的输出，中文转写在 M
 
 字幕状态会依次显示等待豆包出声、已收到音频和正在显示字幕。可以在豆包选一条回复点「朗读」测试。听到朗读后如果仍停在等待状态，可以用同页的「系统录制权限…」检查授权。打电话接不通时，可以先停止字幕、重启豆包，再按上述顺序重拨。
 
-打开「让本机模型根据通话内容决定是否跳舞」时，VA 把识别完成的片段交给 Mac 上的模型判断。优先用 Apple Intelligence。Apple Intelligence 不可用时使用 macOS 的中文句向量模型，在语义与表演请求或舞蹈庆祝足够接近时触发。设置页会提示所用方式。这个判断由 VA 在本机依据豆包的语音回复完成。[Apple 设备端模型](https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel)
-
-### 豆包实时语音
-
-1. 在火山引擎开通豆包端到端实时语音（Seeduplex）。在 VA 打开「参考音色 → 火山实时语音」，填入拥有实时语音权限的火山 API Key，或在 VA 的启动环境设置 `VOLC_REALTIME_API_KEY`。音色可以留空使用默认的 Vivi，也可以填写实时语音的音色 ID。附加 Prompt 会与阿哈的人设一起发给豆包。[火山实时语音文档](https://docs.volcengine.com/docs/doubao-voice/end-to-end-real-time-voice-full-duplex-version?lang=zh)
-2. 点「保存实时语音配置」，再点「切换到实时语音」和「开始语音对话」。首次使用时，在 macOS「系统设置 → 隐私与安全性 → 麦克风」允许 **VA** 访问。通话中，设置窗口显示双方的字幕，阿哈旁边的气泡同步显示豆包回复，嘴型跟随播放的语音。点「结束」或关闭设置窗口即可停止采集。
-3. 说「跳个舞吧」时，VA 收到用户语音的转写就开始跳舞。默认还允许豆包根据聊天内容主动发起表演，例如听到「今天有好消息，庆祝一下吧」。主动表演开关在「火山实时语音」里。
-
-VA 建立实时语音会话时会把桌面角色能跳的舞步发给模型。如果同一轮已经从用户语音识别并安排了舞蹈，跳舞工具会返回已安排的状态。
-
-VA 在桌面采集麦克风和播放音频，豆包在火山引擎生成回复。这个接入使用实时语音 API Key，音色和「参考音色」中的火山 TTS 分别配置。
+打开「让本机模型根据通话内容决定是否做动作」时，VA 把识别完成的片段交给 Mac 上的模型判断。优先用 Apple Intelligence。Apple Intelligence 不可用时使用 macOS 的中文句向量模型，在语义与表演请求或舞蹈庆祝足够接近时触发。设置页会提示所用方式。这个判断由 VA 在本机依据豆包的语音回复完成。[Apple 设备端模型](https://developer.apple.com/documentation/foundationmodels/systemlanguagemodel)
 
 ## OpenClaw 和 AstrBot
 
-在仓库运行 `make integrations` 生成两个插件。在 VA 打开「智能体与模型」，选择一个机器人接入。两个机器人沿用各自的语言模型和人设。VA 把绑定频道中机器人发出的文字显示在阿哈身边，打开「朗读机器人回复」后同时播放语音和口型。
+在仓库运行 `make integrations` 生成两个插件。在 VA 打开「智能体接入」，选择一个机器人接入。两个机器人沿用各自的语言模型和人设。VA 把绑定频道中机器人发出的文字显示在阿哈身边，打开「朗读机器人回复」后同时播放语音和口型。
 
 | 接入方式 | 安装与频道绑定 |
 | --- | --- |
 | OpenClaw | 执行 `openclaw plugins install --link /VA仓库绝对路径/integrations/openclaw`，也可安装 `dist/integrations/openclaw-va-desktop-0.2.0.tgz`。在插件设置中让 `command` 数组指向 VA 命令。在 Telegram 等目标频道用授权账号发送 `/va route`，把返回的 `channel`、`target`、`accountId`、`sessionKey` 填到 VA。 |
 | AstrBot | 在管理面板导入 `dist/integrations/astrbot_plugin_va.zip`，设置 `command` 为 Bot 能执行的 VA 命令。用授权账号在目标频道发送 `/va route`，将返回的 UMO 填到 VA 的「目标频道」。 |
+
+| OpenClaw 频道设置 | AstrBot 频道设置 |
+| --- | --- |
+| ![OpenClaw 的目标频道、渠道、账号 ID 和会话 Key](docs/screenshots/openclaw.png) | ![AstrBot 的目标频道和机器人回复朗读开关](docs/screenshots/astrbot.png) |
 
 Bot 与 VA 同机运行时使用同一个 macOS 登录用户。远端 Bot 可通过 SSH 调用 VA，Docker 可使用仓库里的 [目录桥接](integrations/docker/bridge.py)。两个 Bot 共用一个 Telegram token 时，每次只开启一个 Bot 的 Telegram 适配器。[桥接参数和排查](integrations/README.md)
 
@@ -276,13 +316,15 @@ OpenClaw 按频道的配对或访问策略授权，AstrBot 允许管理员或插
 
 绑定 Telegram 后，可以直接发「给我发张自拍」。AstrBot 和 OpenClaw 都会在调用模型前让 VA 拍照，把 PNG 作为唯一回复发回绑定的聊天。更新 Docker 中的机器人插件后，重启对应的容器让修改生效。
 
-给 VA 单独配置了 OpenClaw 工作区时，可开启 `plugins.entries.va-desktop.config.workspacePrompt`。VA 会在绑定对话进入模型前，把当前角色名和动作清单同步到 `agents.defaults.workspace` 下 `SOUL.md` 的 VA 区块。`SOUL.md` 会用于该工作区的会话。AstrBot 会在授权账号的绑定对话里自动追加同样的 Prompt。机器人发出的「我来挥手」等回复会在 VA 上触发对应动作。[OpenClaw 工作区](https://docs.openclaw.ai/concepts/agent-workspace)
+给 VA 单独配置了 OpenClaw 工作区时，可开启 `plugins.entries.va-desktop.config.workspacePrompt`。VA 会在绑定对话进入模型前，把共用 Prompt、当前角色名和动作清单同步到 `agents.defaults.workspace` 下 `SOUL.md` 的 VA 区块。`SOUL.md` 会用于该工作区的会话。AstrBot 会在授权账号的绑定对话里自动追加同样的 Prompt。机器人发出的「我来挥手」等回复会在 VA 上触发对应动作。[OpenClaw 工作区](https://docs.openclaw.ai/concepts/agent-workspace)
 
 ## 视觉 Agent 与系统音乐
 
 在 VA 的「设置 → 屏幕与音乐」分别开启屏幕观察和音乐跟随。两项功能默认关闭，角色隐藏时暂停。观察间隔可选 `10s`、`30s`、`1min`、`5min`、`10min`、`30min`、`1h`、`6h`、`24h`，默认 `10s`。截屏按间隔发起，分析较慢时只保留一张最新待处理截图。也可用 `va sense interval 30`、`va sense screen on` 和 `va sense music on`，状态可用 `va senses --json` 查询。首次使用时，在 macOS 的「隐私与安全性 → 屏幕与系统音频录制」授权 VA，然后退出并重新启动。源码模式下，macOS 可能将授权归给启动 VA 的终端。
 
-屏幕观察跟随当前接入。本地 Agent 模式只把截图交给当前选择的 Agent，选用远端模型时可能把画面发送给其模型服务。模型 API 模式使用当前 API 配置的「屏幕识别」模型，远程 API 需要 HTTPS 并勾选「允许发截图到远端视觉模型」。豆包客户端、火山实时语音及机器人接入期间，屏幕观察暂停。开启观察后，MCP 客户端可用 `va_observe` 请求一次观察并取得文字结果，用 `va_senses` 查看状态。
+![屏幕观察的间隔选项、录制权限入口和音乐跟随开关](docs/screenshots/screen-and-music.png)
+
+屏幕观察把截图交给当前选择的本地 Agent。Agent 使用远端服务时，画面可能由 Agent 发给其模型服务。切换到豆包客户端或机器人频道时，屏幕观察会暂停。MCP 客户端可用 `va_observe` 请求一次观察并取得文字结果，用 `va_senses` 查看状态。
 
 macOS 上已选用一种交互接入时，可独立开启音乐跟随。音频分类在本机进行。
 
@@ -290,22 +332,46 @@ macOS 上已选用一种交互接入时，可独立开启音乐跟随。音频�
 
 ## 语音和口型
 
-「设置 → 参考音色」可选择 **macOS 系统音色**或 **火山 TTS**。「试听当前音色」用选定音色朗读一段台词。台词朗读用于点击摸摸、手动动作、CLI、MCP 和启用了朗读的 Agent 或机器人回复。
+「设置 → 语音」可选择**本机音色**、**本地音色复刻**或**火山 TTS**。选择本机音色后，点击「搜索本机音色或语言」即可浏览列表，也可以输入「中文」或「婷婷」来筛选。VA 会先显示上次读取的音色，再在后台更新列表。当前选择会自动保存，「试听当前音色」会播放测试台词。更多音色可在 macOS「系统设置 → 辅助功能 → 阅读与朗读 → 系统声音」中下载，完成后回到 VA 点「刷新」。命令行可用 `va config run system-voices --json` 查看音色名称，再用 `va config set voice '{"provider":"system","systemVoice":"Tingting"}' --json` 切换。[Apple 朗读音色设置](https://support.apple.com/zh-cn/guide/mac-help/mchlp2290/mac)
 
-同一页的「说话风格」可选自然聊天、活泼雀跃、轻声思考或舞台演说。带口型的角色在静音文字回复中会按文字节奏开合嘴巴，朗读时跟随音频。语音可与挥手、跳舞等显式动作同时播放。
+![语音设置中的说话风格和本机中文音色搜索结果](docs/screenshots/system-voice.png)
+
+同一页的「说话风格」可选自然聊天、活泼雀跃、轻声思考或舞台演说。风格会调整说话动作以及 VA 朗读的语速和音量。「活泼雀跃」说得更快、抬手更频繁，「轻声思考」会放慢、降低音量并歪头，「舞台演说」手势更开阔。豆包客户端通话的口型跟随客户端播放的原声。
+
+台词气泡先显示，朗读开始后口型随声音动。同一句台词使用相同的服务、音色和风格时会重用已经合成的音频。缓存只保留在本次 VA 运行的内存中。
+
+### 本地音色复刻
+
+VA 使用 **Sherpa-ONNX + ZipVoice-Distill INT8** 从参考录音复刻音色，支持中文和英文。VA 启动时会后台加载已启用的模型。用 Apple M4 的 4 个 CPU 线程和一段 3.3 秒参考音测试，预热后的三条 15–25 字中文台词约 0.61–0.99 秒生成完整音频。[ZipVoice 模型和示例](https://k2-fsa.github.io/sherpa/onnx/tts/zipvoice.html)
+
+1. 首次在项目目录运行 `make zipvoice-tts`。安装器在 `~/Library/Application Support/VA Desktop/zipvoice-tts` 创建 Python 虚拟环境并下载模型，也可以在「运行路径」中指定已有的模型目录和 Python。
+2. 打开「设置 → 语音 → 本地音色复刻」，选择约 3 秒的清晰人声录音，支持 WAV、M4A、MP3。填写这段录音的准确原文，点「保存并使用 ZipVoice」，再点「试听当前音色」。VA 会按原路径读取录音。
+3. 对话沿用各接入的朗读开关。要朗读动作台词，打开「做动作时发出声音」。口型会跟随合成音频。日常合成失败时会回退到系统音色，试听会显示错误。
+
+录音和朗读文本在本机处理。CLI 和 MCP 也能配置同一音色。
+
+```bash
+va config set voice '{"provider":"zipvoice","zipvoice":{"referenceAudio":"/path/to/reference.wav","referenceText":"你好，我在这里。"}}' --json
+```
 
 ### 开启火山 TTS
 
+![火山 TTS 的 API Key、音色 ID 和模型资源设置](docs/screenshots/volc-tts.png)
+
 1. 在火山引擎开通语音合成，准备 API Key 和该资源支持的 Speaker ID。标准语音合成选择 `seed-tts-2.0`。已有火山复刻音色时，选择 `seed-icl-2.0` 并填写该音色的 Speaker ID。[火山语音合成接口](https://docs.volcengine.com/docs/doubao-voice/unidirectional-streaming-text-to-speech-http?lang=zh)
-2. 在「设置 → 参考音色」选择「火山 TTS」，填入 API Key 和 Speaker ID，选中资源，再点「保存并使用火山」。API Key 也可通过 VA 启动进程的 `VOLC_TTS_API_KEY` 提供。
+2. 在「设置 → 语音」选择「火山 TTS」，填入 API Key 和 Speaker ID，选中资源，再点「保存并使用火山」。API Key 也可通过 VA 启动进程的 `VOLC_TTS_API_KEY` 提供。
 3. 点击「试听当前音色」确认可播放。要听 Telegram 的机器人回复，在 VA 的频道配置中打开「朗读机器人回复」。
 
 VA 通过 HTTPS 将朗读文本提交给火山引擎。语音设置保存在 `~/Library/Application Support/VA Desktop/voice.json`，也可通过 `VA_VOICE_CONFIG` 指定位置。火山服务请求失败时，日常对白回退到系统音色，试听会显示错误。
 
-### 本地参考录音
-
-本地 Qwen3-TTS 音色模仿已因合成耗时停用。先前导入的阿哈原声仍可通过「本地原声 → 播放参考原声」播放，也可导入新的 WAV、M4A 或 MP3。参考录音保存在本机，火山 TTS 读出的音色由填写的 Speaker ID 决定。
-
 ## 半身视角
 
 「设置 → 角色视角」可选择全身或半身，重启会恢复上次视角。也可执行 `va view portrait` 或 `va view full`。
+
+## 许可证
+
+VA 源码采用 Apache License 2.0。第三方模型及其展示素材按各自的许可证使用。[Apache License 2.0 全文](LICENSE) · [模型授权与署名](assets/models/ATTRIBUTION.md)
+
+## 感谢
+
+感谢 LINUX DO 社区为开源项目提供交流与分享的空间。 [LINUX DO](https://linux.do/)

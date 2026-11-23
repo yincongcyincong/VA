@@ -62,7 +62,7 @@ export async function modelResource(binding, parts) {
   const root = await realpath(binding.root);
   const candidates = [resolve(root, ...parts)];
   const extension = extname(parts[0]).toLowerCase();
-  // FBXLoader keeps the basename of Windows-style texture paths.
+  // FBXLoader keeps the basename of texture paths with backslashes.
   if (binding.format === 'fbx' && parts.length === 1 &&
       (modelMime[extension]?.startsWith('image/') || ['.dds', '.tga'].includes(extension))) {
     candidates.push(resolve(root, 'Textures', parts[0]), resolve(root, 'textures', parts[0]));

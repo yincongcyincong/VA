@@ -1,55 +1,59 @@
 import { app, BrowserWindow, Menu, Tray, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, nativeImage,
-  protocol, screen, session, shell, systemPreferences } from 'electron';
+  protocol, screen, shell, systemPreferences } from 'electron';
 import { mkdir, readFile, stat } from 'node:fs/promises';
 import { homedir } from 'node:os';
-import { basename, dirname, extname, join, resolve } from 'node:path';
+import { dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { actionSupported, compilePerformance, describePerformance, performanceDefaults } from './performance-config.js';
 import { danceIntent } from './dance-intent.js';
-import { characterPerformancePrompt, chatPerformancePrompt, replyPerformance, requestedPerformance, requestsSelfie } from './character-performance.js';
+import { chatPerformancePrompt, replyPerformance, requestedPerformance, requestsSelfie } from './character-performance.js';
 import { ControlError, startControl } from '../lib/control.js';
 import { createLogger, errorCode } from '../lib/logger.js';
+import { mergeConfigEntries, parseConfigCommand } from '../lib/configuration.js';
+import { agentConfigSnapshot, normalizeAgentConfig, patchAgentConfig, sharedAgentPrompt } from './agent-settings.js';
 import { defaultScale, isScale, minScale, maxScale,
-  readCharacter, readConfig, readSettings, settingsWriter } from './config.js';
-import { defaultSpeakingStyle, isSpeakingStyle } from './speech-motion.js';
+  parseCharacter, readCharacter, readConfig, readSettings, settingsWriter } from './config.js';
+import { speechActionStyles } from './actions.js';
+import { defaultSpeakingStyle, isSpeakingStyle, speakingPreset } from './speech-motion.js';
 import { defaultScreenInterval, isScreenInterval, screenIntervalLabel, themes } from './preferences.js';
-import { apiProfileSnapshot, editApiProfiles, resolveApiConfig, selectedApiId } from './api-profiles.js';
 import { createSenses } from './senses.js';
-import { prepareVisionObservation } from './vision-agent.js';
-import { botRoute, checkBotRoute, configureIntegration, createApiChat, externalModes, integrationMode, integrationSnapshot, screenMode } from './integration.js';
+import { botRoute, checkBotRoute, configureIntegration, externalModes, integrationMode, integrationSnapshot, screenMode } from './integration.js';
 import { createLocalAgent } from './local-agent.js';
-import { importReference, sampleLimit, systemSpeech } from './speech.js';
+import { createSystemVoiceCatalog, systemSpeech } from './speech.js';
+import { createSpeechCache } from './speech-cache.js';
+import { createZipVoice, zipVoiceReference } from './zipvoice-tts.js';
 import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
-import { configureDoubao, createDoubaoConversation, doubaoConfig, doubaoSnapshot } from './doubao.js';
 import { callDoubaoClient, createDoubaoClient } from './doubao-client.js';
 import { createDoubaoCaptions } from './doubao-captions.js';
 import { bindModel, modelFormats, modelMime, modelResource } from './model-files.js';
-import { createModelLibrary, localAhaName, modelPage, modelSources } from './model-library.js';
+import { coverName, createModelLibrary, localAhaName, modelPage, modelSources } from './model-library.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-const mac = process.platform === 'darwin';
+if (process.platform !== 'darwin') throw new ControlError('UNSUPPORTED_PLATFORM', 'VA 桌面版目前支持 macOS。');
 const appIconPath = join(root, 'assets', 'app-icon.png');
 const cwd = process.cwd();
 const launchDirectory = resolve(process.env.VA_START_CWD || (app.isPackaged && cwd === dirname(cwd)
-  ? (mac ? resolve(process.execPath, '../../../..') : dirname(process.execPath)) : cwd));
+  ? resolve(process.execPath, '../../../..') : cwd));
 const logger = createLogger(launchDirectory);
 const pageURL = 'va-app://desktop/index.html';
 const bubbleURL = 'va-app://desktop/bubble.html';
 const settingsURL = 'va-app://desktop/settings.html';
 const controlsURL = 'va-app://desktop/controls.html';
 const bundledModelPath = join(root, 'assets', 'models', 'Gemini 娘.glb');
+const coverModelPath = join(root, 'assets', 'models', 'VA Cover.vrm');
+const builtInModels = new Set([bundledModelPath, coverModelPath]);
 const ahaPack = '星穹铁道-阿哈_by_崩坏：星穹铁道_df69373aacbea0a160459be2ce0eb56e';
 const ahaFile = '星穹铁道-阿哈2.pmx';
-let defaultModelPath = bundledModelPath;
+let defaultModelPath = coverModelPath;
 const mime = {
   ...modelMime,
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.wasm': 'application/wasm',
 };
 const pages = new Set(['index.html', 'style.css', 'renderer.js', 'voice.js', 'avatar.js', 'actions.js',
-  'speech-motion.js', 'dance-motion.js', 'bubble.html', 'bubble.css', 'bubble.js', 'chat.js', 'settings-tabs.js', 'preferences.js',
+  'speech-motion.js', 'dance-motion.js', 'hand-gestures.js', 'bubble.html', 'bubble.css', 'bubble.js', 'chat.js', 'settings-tabs.js', 'preferences.js',
   'model-loaders.js', 'settings.html', 'settings.css', 'settings.js', 'controls.html', 'controls.css', 'controls.js',
-  'doubao-chat.js', 'doubao-mic.js', 'doubao-playback.js', 'model-gallery.js']);
+  'doubao-playback.js', 'model-gallery.js']);
 
 protocol.registerSchemesAsPrivileged([{
   scheme: 'va-app',
@@ -62,10 +66,22 @@ const characterPath = resolve(process.env.VA_CHARACTER_CONFIG || join(app.getPat
 const performancePath = resolve(process.env.VA_PERFORMANCE_CONFIG || join(app.getPath('userData'), 'performance.json'));
 const agentPath = resolve(process.env.VA_AGENT_CONFIG || join(app.getPath('userData'), 'agent.json'));
 const voicePath = resolve(process.env.VA_VOICE_CONFIG || join(app.getPath('userData'), 'voice.json'));
+const zipVoiceDirectory = join(app.getPath('userData'), 'zipvoice-tts');
+const zipVoiceDefaults = {
+  python: join(zipVoiceDirectory, '.venv', 'bin', 'python'),
+  modelDirectory: join(zipVoiceDirectory, 'sherpa-onnx-zipvoice-distill-int8-zh-en-emilia'),
+  referenceAudio: '',
+};
+const zipVoice = createZipVoice(app.isPackaged ? join(process.resourcesPath, 'zipvoice-tts.py')
+  : join(root, 'native', 'zipvoice-tts.py'));
+const systemVoiceCatalog = createSystemVoiceCatalog(join(dirname(voicePath), 'system-voices.json'), {
+  onSaveError: error => logger.write('warn', 'voice.catalog_save_failed', { code: errorCode(error) }),
+});
 const saveSettings = settingsWriter(settingsPath);
 const saveAgent = settingsWriter(agentPath);
 const saveVoice = settingsWriter(voicePath);
 const saveCharacter = settingsWriter(characterPath);
+const savePerformance = settingsWriter(performancePath);
 const launchHidden = process.argv.includes('--va-hidden');
 
 let window;
@@ -76,21 +92,24 @@ let screenRevision = 0;
 let controlsWindow;
 let controlsReady = false;
 let controlsPosition;
+let controlsHoverTimer;
+let controlsLastNearAt = -Infinity;
+let nameplateBounds;
+let ignoringMouse;
 let tray;
 let server;
 let defaultCharacter;
 let performanceCatalog = compilePerformance({});
 let performanceWarning;
-let characterName = 'Gemini';
+let characterName = 'VA';
 let nameEdits = Promise.resolve();
+let performanceEdits = Promise.resolve();
 let defaultVoice;
 let voiceEdits = Promise.resolve();
+const speechCache = createSpeechCache();
 let localAgent;
-let apiChat;
-let doubao;
 let doubaoClient;
 let doubaoCaptions;
-let doubaoStartRevision = 0;
 let captionStartRevision = 0;
 let captionAutoActions = false;
 let getAgentConfig;
@@ -126,8 +145,10 @@ let speakingStyle = defaultSpeakingStyle;
 let shortcutRegistered = false;
 const bubbleWidth = 236;
 const bubbleHeight = 164;
-const controlsWidth = 172;
-const controlsHeight = 28;
+const controlsWidth = 72;
+const controlsHeight = 34;
+const controlsHoverMargin = 14;
+const controlsHideDelay = 250;
 let view = 'full';
 let modelPath;
 let selectedModel;
@@ -145,7 +166,10 @@ async function getCharacter() {
   const character = await readCharacter(characterPath, defaultCharacter);
   if (characterName !== character.name) {
     characterName = character.name;
-    if (window && !window.isDestroyed()) window.setTitle(characterName + ' · VA');
+    if (window && !window.isDestroyed()) {
+      window.setTitle(characterName + ' · VA');
+      window.webContents.send('va:character-name-changed', characterName);
+    }
     if (tray) {
       tray.setToolTip('VA · ' + characterName);
       updateTray();
@@ -153,7 +177,6 @@ async function getCharacter() {
     if (selectedModel) {
       const settings = settingsSnapshot();
       settingsWindow?.webContents.send('va:settings-changed', settings);
-      controlsWindow?.webContents.send('va:settings-changed', settings);
     }
   }
   return character;
@@ -192,34 +215,48 @@ async function asset(request) {
 
 async function getVoiceConfig() {
   const stored = await readConfig(voicePath, defaultVoice, 'VOICE_CONFIG', 'voice.json');
-  const { provider, actionSound, volc, reference, gptSoVits } = stored ?? {};
+  const { provider, actionSound, volc, systemVoice, zipvoice } = stored ?? {};
   return {
-    provider: provider === 'volc' ? 'volc' : 'system',
+    provider: ['volc', 'zipvoice'].includes(provider) ? provider : 'system',
+    systemVoice: typeof systemVoice === 'string' ? systemVoice : 'Tingting',
     actionSound: actionSound === true,
     volc: { ...volcDefaults, ...volc },
-    reference: reference ?? {
-      referenceAudio: gptSoVits?.referenceAudio ?? '',
-      referenceName: gptSoVits?.referenceName ?? '',
-    },
+    zipvoice: Object.fromEntries([...Object.keys(zipVoiceDefaults), 'referenceText']
+      .map(key => [key, typeof zipvoice?.[key] === 'string' ? zipvoice[key].trim() : ''])),
   };
 }
 
+function zipVoiceSettings(config) {
+  const paths = Object.fromEntries(Object.entries(zipVoiceDefaults).map(([key, fallback]) =>
+    [key, config[key] ? resolve(launchDirectory, config[key]) : fallback]));
+  return { ...paths, referenceText: config.referenceText };
+}
+
+async function warmZipVoice(settings) {
+  const config = zipVoiceSettings(settings);
+  await zipVoice.warm(config, await zipVoiceReference(config));
+}
+
 function voiceSnapshot(config) {
-  const { provider, actionSound, volc, reference } = config;
+  const { provider, actionSound, systemVoice, volc, zipvoice } = config;
   return {
     provider,
     actionSound,
-    referenceName: reference.referenceName || (reference.referenceAudio ? basename(reference.referenceAudio) : ''),
-    volc: { speaker: volc.speaker, resourceId: volc.resourceId, hasKey: Boolean(volcKey(volc)) },
+    systemVoice,
+    zipvoice: zipVoiceSettings(zipvoice),
+    volc: { speaker: volc.speaker, resourceId: volc.resourceId, apiKeyEnv: volc.apiKeyEnv, hasKey: Boolean(volcKey(volc)) },
   };
 }
 
 function editVoice(edit) {
   voiceEdits = voiceEdits.catch(() => {}).then(async () => {
     const config = await getVoiceConfig();
-    edit(config);
+    await edit(config);
     await saveVoice(config);
-    return voiceSnapshot(config);
+    if (config.provider !== 'zipvoice') zipVoice.stop();
+    const snapshot = voiceSnapshot(config);
+    settingsWindow?.webContents.send('va:voice-changed', snapshot);
+    return snapshot;
   });
   return voiceEdits;
 }
@@ -233,20 +270,41 @@ async function synthesize(text, job) {
   const { signal } = controller;
   job.synthesis = controller;
   const preview = job.source === 'voice-preview';
+  const { rate, volume } = speakingPreset(job.style ?? speakingStyle);
+  const prosody = { rate, volume };
   try {
     let warning;
+    let config;
     try {
-      const config = await getVoiceConfig();
+      config = await getVoiceConfig();
       signal.throwIfAborted();
+      if (config.provider === 'zipvoice') {
+        const settings = zipVoiceSettings(config.zipvoice);
+        const { python, modelDirectory } = settings;
+        const reference = await zipVoiceReference(settings);
+        const { audio, cached } = await speechCache.get(text, ['zipvoice', python, modelDirectory, reference, rate, volume],
+          signal, () => zipVoice.speak(text, settings, reference, signal, prosody));
+        logger.write('info', 'speech.ready', { provider: 'zipvoice', cached });
+        return transferAudio(audio);
+      }
       if (config.provider === 'volc') {
-        return transferAudio(await volcSpeech(text, config.volc, signal));
+        const { speaker, resourceId } = config.volc;
+        const apiKey = volcKey(config.volc);
+        const { audio, cached } = await speechCache.get(text, ['volc', speaker, resourceId, apiKey, rate, volume],
+          signal, () => volcSpeech(text, { speaker, resourceId, apiKey }, signal, prosody));
+        logger.write('info', 'speech.ready', { provider: 'volc', cached });
+        return transferAudio(audio);
       }
     } catch (error) {
       signal.throwIfAborted();
       if (preview) throw error;
       warning = error.message + ' 本次改用系统声音。';
     }
-    return transferAudio(await systemSpeech(text, signal), warning);
+    const voice = config?.systemVoice ?? 'Tingting';
+    const { audio, cached } = await speechCache.get(text, ['system', voice, rate, volume],
+      signal, () => systemSpeech(text, signal, { voice, ...prosody }));
+    logger.write('info', 'speech.ready', { provider: 'system', cached });
+    return transferAudio(audio, warning);
   } finally {
     job.synthesis = undefined;
   }
@@ -286,6 +344,15 @@ ipcMain.handle('va:initial-model', event => {
 ipcMain.on('va:open-settings', event => {
   if (controlsAuthorized(event)) openSettings();
 });
+ipcMain.on('va:nameplate-bounds', (event, bounds) => {
+  if (!authorized(event) || !bounds ||
+    !['top', 'width', 'height'].every(key => Number.isFinite(bounds[key]) && bounds[key] >= 0)) return;
+  nameplateBounds = bounds;
+  syncMousePassthrough();
+});
+ipcMain.on('va:quit', event => {
+  if (settingsAuthorized(event)) app.quit();
+});
 ipcMain.on('va:open-chat', event => {
   if (settingsAuthorized(event) || controlsAuthorized(event)) openChat();
 });
@@ -299,14 +366,12 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
   }
   switch (operation) {
     case 'status': return chatStatus();
-    case 'send': return sendChat(value);
-    case 'action-input':
-      requireChatInput();
-      return queueInputPerformance(value) ?? { handled: false };
     case 'bind': return bindChat(value);
+    case 'open-session': return openAgentSession(value);
+    case 'restore-session': return restoreAgentSession(value);
+    case 'prompt': return configureAgentPrompt(value);
     case 'configure': return localConfig(value);
     case 'integration': return changeIntegration(value);
-    case 'api-profile': return changeApiProfile(value);
     case 'doubao-client-open': {
       requireMode('doubao-client');
       const paths = ['/Applications/Doubao.app', join(homedir(), 'Applications/Doubao.app')];
@@ -331,78 +396,20 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
     case 'doubao-client-context':
       await syncDoubaoContext();
       return chatStatus();
-    case 'doubao-caption-start': {
-      requireMode('doubao-client');
-      const { autoActions, listen } = value ?? {};
-      if (typeof autoActions !== 'boolean' || typeof listen !== 'boolean') {
-        throw new ControlError('INVALID_REQUEST', '请选择通话字幕选项。');
-      }
-      const revision = ++captionStartRevision;
-      const microphoneAllowed = !listen || await systemPreferences.askForMediaAccess('microphone');
-      if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
-      requireMode('doubao-client');
-      await editAgentConfig(config => ({ ...config, doubaoClient: {
-        ...config.doubaoClient, autoActions, listenForActions: listen && microphoneAllowed,
-      } }));
-      if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
-      requireMode('doubao-client');
-      captionAutoActions = autoActions;
-      return doubaoCaptions.start({ autoActions, listen: listen && microphoneAllowed,
-        micStatus: microphoneAllowed ? '' : '请在 macOS 系统设置允许 VA 使用麦克风。' });
-    }
-    case 'doubao-caption-stop':
-      captionStartRevision++;
-      cancelActionVoice();
-      doubaoCaptions.stop();
-      return doubaoCaptions.state();
-    case 'doubao-config':
-      if (doubao.running()) throw new ControlError('BUSY', '请先结束语音对话。');
-      await editAgentConfig(config => configureDoubao(config, value));
-      return chatStatus();
-    case 'doubao-start': {
-      requireMode('doubao');
-      if (changingModel || active || petting || state.state !== 'ready') {
-        throw new ControlError('BUSY', '请等角色准备好后再开始语音对话。');
-      }
-      const revision = doubaoStartRevision;
-      const [config, character] = await Promise.all([getAgentConfig(), getCharacter()]);
-      requireMode('doubao');
-      if (revision !== doubaoStartRevision || event.sender !== settingsWindow?.webContents) {
-        throw new ControlError('CANCELED', '已取消语音连接。');
-      }
-      if (changingModel || active || petting) {
-        throw new ControlError('BUSY', '角色还在忙，请稍后再试。');
-      }
-      const voice = doubaoConfig(config);
-      return await doubao.start(voice, characterPerformancePrompt(character, performanceSnapshot(), { style: 'voice', dance: voice.allowDance }), character.name);
-    }
-    case 'doubao-stop':
-      doubaoStartRevision++;
-      return doubao.stop();
-    case 'cancel':
-      if (currentMode === 'doubao-client') return doubaoClient.cancel();
-      return currentMode === 'api' ? apiChat.cancel() : localAgent.cancel();
+    case 'doubao-caption-start': return startDoubaoCaptions(value);
+    case 'doubao-caption-stop': return stopDoubaoCaptions();
     case 'open-config': return shell.openPath(agentPath);
     default: throw new Error('无效的 Agent 操作。');
   }
-});
-ipcMain.on('va:doubao-audio', (event, id, pcm) => {
-  if (currentMode === 'doubao' && settingsAuthorized(event)) doubao.audio(id, pcm);
-});
-ipcMain.on('va:adjust-scale', (event, amount) => {
-  if (!controlsAuthorized(event) || ![-5, 5].includes(amount)) return;
-  const next = Math.max(minScale, Math.min(maxScale, scale + amount));
-  applySettings({ scale: next }).catch(error => console.error(error.message));
 });
 ipcMain.on('va:preview-scale', (event, value) => {
   if (!settingsAuthorized(event) || !isScale(value) || value === scale) return;
   scale = value;
   syncBounds();
-  controlsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
 });
 ipcMain.on('va:pet', event => {
-  if (!authorized(event) || !['local', 'api', 'doubao'].includes(currentMode) ||
-      doubao?.running() || clickThrough || petting || active?.action === 'pet') return;
+  if (!authorized(event) || currentMode !== 'local' ||
+      clickThrough || petting || active?.action === 'pet') return;
   petting = true;
   (async () => {
     if (active) await stopPerformance();
@@ -425,7 +432,6 @@ ipcMain.on('va:bubble-painted', (event, revision) => {
   }
 });
 ipcMain.handle('va:settings', (event, change) => {
-  if (controlsAuthorized(event) && change === undefined) return settingsSnapshot();
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
   return applySettings(change).catch(error => {
     logger.write('warn', 'settings.failed', { code: errorCode(error) });
@@ -518,34 +524,70 @@ ipcMain.handle('va:open-character', async event => {
   return shell.openPath(characterPath);
 });
 ipcMain.handle('va:character-name', async (event, value) => {
+  if (authorized(event) && value === undefined) return characterName;
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
   const name = typeof value === 'string' ? value.trim() : '';
   if (!name || name.length > 40 || /[\r\n\p{Cc}]/u.test(name)) {
     throw new ControlError('CHARACTER_CONFIG', '请输入 1–40 个字符的角色名。');
   }
+  return configureCharacter({ name });
+});
+
+function configureCharacter(change) {
   nameEdits = nameEdits.catch(() => {}).then(async () => {
     const data = await readConfig(characterPath, defaultCharacter, 'CHARACTER_CONFIG', 'character.json');
-    await saveCharacter({ ...data, name });
+    const next = { ...data, ...change, dialogue: { ...data.dialogue, ...change.dialogue } };
+    for (const key of Object.keys(change.dialogue ?? {})) {
+      if (change.dialogue[key] === null) delete next.dialogue[key];
+    }
+    parseCharacter(next, defaultCharacter);
+    await saveCharacter(next);
     await getCharacter();
     return settingsSnapshot();
   });
   return nameEdits;
-});
+}
 ipcMain.handle('va:open-capture-privacy', event => {
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
-  if (mac) return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
+  return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
 });
 ipcMain.handle('va:voice-config', async (event, change) => {
   if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
   if (!change) return voiceSnapshot(await getVoiceConfig());
-  return editVoice(config => {
+  return configureVoice(change);
+});
+ipcMain.handle('va:system-voices', (event, cached) => {
+  if (!settingsAuthorized(event)) throw new Error('无效的音色请求。');
+  return cached === true ? systemVoiceCatalog.cached() : systemVoiceCatalog.refresh();
+});
+ipcMain.handle('va:choose-voice-reference', async event => {
+  if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
+  const { canceled, filePaths } = await dialog.showOpenDialog(settingsWindow, {
+    title: '选择参考录音',
+    properties: ['openFile'],
+    filters: [{ name: '参考录音', extensions: ['wav', 'm4a', 'mp3'] }],
+  });
+  return canceled ? '' : filePaths[0];
+});
+
+async function configureVoice(change) {
+  if (Object.hasOwn(change, 'systemVoice')) {
+    const voice = change.systemVoice;
+    const hasVoice = voices => voices.some(item => item.name === voice);
+    if (voice !== '' && !hasVoice(await systemVoiceCatalog.cached()) && !hasVoice(await systemVoiceCatalog.refresh())) {
+      throw new ControlError('VOICE_CONFIG', '请选择本机已安装的朗读音色。');
+    }
+  }
+  return editVoice(async config => {
+    if (Object.hasOwn(change, 'systemVoice')) config.systemVoice = change.systemVoice;
     if (Object.hasOwn(change, 'actionSound')) {
       if (typeof change.actionSound !== 'boolean') throw new ControlError('VOICE_CONFIG', '无效的动作发声设置。');
       config.actionSound = change.actionSound;
       if (!config.actionSound) cancelActionVoice();
     }
     if (change.volc) {
-      const { speaker, resourceId, apiKey, clearKey } = change.volc;
+      const { speaker, resourceId } = { ...config.volc, ...change.volc };
+      const { apiKey = '', apiKeyEnv, clearKey } = change.volc;
       if (typeof speaker !== 'string' || !/^[-_a-z0-9.]{1,160}$/i.test(speaker) ||
           !['seed-tts-2.0', 'seed-icl-2.0'].includes(resourceId) ||
           typeof apiKey !== 'string' || apiKey.length > 1024 || /[\r\n]/.test(apiKey)) {
@@ -554,52 +596,44 @@ ipcMain.handle('va:voice-config', async (event, change) => {
       Object.assign(config.volc, { speaker, resourceId });
       if (clearKey) delete config.volc.apiKey;
       else if (apiKey.trim()) config.volc.apiKey = apiKey.trim();
+      if (apiKeyEnv !== undefined) config.volc.apiKeyEnv = apiKeyEnv;
+    }
+    if (change.zipvoice) {
+      for (const [key, value] of Object.entries(change.zipvoice)) {
+        const limit = key === 'referenceText' ? 1000 : 4096;
+        if (!Object.hasOwn(config.zipvoice, key) || typeof value !== 'string' || value.length > limit || value.includes('\0')) {
+          throw new ControlError('VOICE_CONFIG', '请检查 ZipVoice 的参考录音、录音原文和运行路径。');
+        }
+        config.zipvoice[key] = value.trim();
+      }
     }
     if (Object.hasOwn(change, 'provider')) {
-      if (!['system', 'volc'].includes(change.provider)) throw new ControlError('VOICE_CONFIG', '无效的声音来源。');
+      if (!['system', 'volc', 'zipvoice'].includes(change.provider)) throw new ControlError('VOICE_CONFIG', '无效的声音来源。');
       if (change.provider === 'volc' && !volcKey(config.volc)) {
         throw new ControlError('VOICE_CONFIG', '请填写火山 TTS 的 API Key。');
       }
       config.provider = change.provider;
     }
+    if (config.provider === 'zipvoice' && (change.provider === 'zipvoice' || change.zipvoice)) {
+      await warmZipVoice(config.zipvoice);
+    }
   });
-});
-ipcMain.handle('va:voice-file', async event => {
-  if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
-  const { canceled, filePaths: [selected] } = await dialog.showOpenDialog(settingsWindow, {
-    title: '选择一段参考录音',
-    properties: ['openFile'],
-    filters: [{ name: '参考录音', extensions: mac ? ['wav', 'm4a', 'mp3'] : ['wav'] }],
-  });
-  if (canceled || !selected) return voiceSnapshot(await getVoiceConfig());
-  const reference = await importReference(selected, join(dirname(voicePath), 'voice-samples'));
-  return editVoice(config => { config.reference = reference; });
-});
-ipcMain.handle('va:open-voice-file', event => {
+}
+
+ipcMain.handle('va:open-voice-config', event => {
   if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
   return shell.openPath(voicePath);
 });
 ipcMain.handle('va:voice-preview', async event => {
   if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
+  return previewVoice();
+});
+
+async function previewVoice() {
   if (active && ['music', 'screen'].includes(active.source)) await stopPerformance();
   return await perform({ speech: `嗨，我是${characterName}。听听我现在的声音！`, expression: 'smile' },
     { source: 'voice-preview' });
-});
-ipcMain.handle('va:voice-reference-preview', async event => {
-  if (!settingsAuthorized(event)) throw new Error('无效的音色请求。');
-  const path = (await getVoiceConfig()).reference.referenceAudio;
-  if (typeof path !== 'string' || !path) throw new ControlError('VOICE_REFERENCE', '请先选择参考录音。');
-  const info = await stat(path).catch(() => null);
-  if (!info?.isFile() || info.size > (mac ? 700_000 : sampleLimit)) {
-    throw new ControlError('VOICE_REFERENCE', '参考录音不可用，请重新导入。');
-  }
-  const audio = await readFile(path).catch(() => null);
-  if (!audio || audio.length > 700_000 || audio.toString('ascii', 0, 4) !== 'RIFF' ||
-      audio.toString('ascii', 8, 12) !== 'WAVE') {
-    throw new ControlError('VOICE_REFERENCE', '参考录音不可用，请重新导入。');
-  }
-  return transferAudio(audio).audio;
-});
+}
 ipcMain.handle('va:speech', (event, text) => {
   if (!authorized(event) || typeof text !== 'string' || !text.trim() || text.length > 300) {
     throw new Error('无效的语音请求。');
@@ -655,7 +689,7 @@ function status() {
     senses: senses?.status(),
     speech: captionText || speechText || null,
     doubaoCaptions: currentMode === 'doubao-client' ? doubaoCaptions?.state() : undefined,
-    settingsShortcut: shortcutRegistered ? (mac ? 'Control+Option+V' : 'Ctrl+Alt+V') : null,
+    settingsShortcut: shortcutRegistered ? 'Control+Option+V' : null,
     view,
     model: modelSnapshot(),
     character: characterName,
@@ -668,7 +702,7 @@ function status() {
 function menu() {
   const run = command => handle(command).catch(error => console.error(error.message));
   return Menu.buildFromTemplate([
-    { label: '智能体与模型…', click: () => openChat() },
+    { label: '智能体接入…', click: () => openChat() },
     { label: '动作…', click: () => openSettings('performance') },
     { label: '模型库…', click: () => openSettings('models') },
     { label: '设置…', click: () => openSettings() },
@@ -679,8 +713,8 @@ function menu() {
     { label: `看屏幕 · ${screenIntervalLabel(screenInterval)}`, type: 'checkbox', checked: screenWatch,
       enabled: Boolean(screenMode(currentMode)) || screenWatch,
       click: item => run({ type: 'sense', channel: 'screen', enabled: item.checked }) },
-    ...(mac ? [{ label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance, enabled: currentMode !== 'off',
-      click: item => run({ type: 'sense', channel: 'music', enabled: item.checked }) }] : []),
+    { label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance, enabled: currentMode !== 'off',
+      click: item => run({ type: 'sense', channel: 'music', enabled: item.checked }) },
     { label: view === 'full' ? '半身视角' : '全身视角',
       click: () => run({ type: 'view', mode: view === 'full' ? 'portrait' : 'full' }) },
     { type: 'separator' },
@@ -748,7 +782,6 @@ function performancePlan(action, selectedExpression) {
 }
 
 async function perform(command, { selfie = false, source = 'manual', readAloud = true, defaultDialogue = true } = {}) {
-  if (doubao?.running()) throw new ControlError('BUSY', '角色正在进行豆包语音对话。');
   const { action = 'idle', expression, speech = '', wait = true } = command;
   if (typeof action !== 'string' || (expression !== undefined && typeof expression !== 'string') ||
       typeof speech !== 'string' || speech.length > 300 || typeof wait !== 'boolean') {
@@ -758,7 +791,8 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
   if (active) throw new ControlError('BUSY', '角色正在表演。等表演结束，或使用 va stop。');
   const plan = performancePlan(action, expression);
   cancelActionVoice();
-  const job = { id: ++nextId, action, speech: speech.trim(), source };
+  const style = speechActionStyles[plan.motion] ?? speakingStyle;
+  const job = { id: ++nextId, action, speech: speech.trim(), source, style };
   active = job;
   const startedAt = Date.now();
   const context = { id: job.id, action, source };
@@ -774,9 +808,9 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
     const speak = readAloud && Boolean(line) && (!actionDialogue || await actionSoundEnabled());
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     job.started = true;
-    const automatedReply = ['local-agent', 'api-chat', 'bot-chat'].includes(source);
-    const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud: speak, speakingStyle,
-      showWhilePreparing: automatedReply }, automatedReply ? 120_000 : 80_000);
+    const automatedReply = ['local-agent', 'bot-chat'].includes(source);
+    const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud: speak, speakingStyle: style },
+      automatedReply ? 120_000 : 80_000);
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     logger.write('info', 'performance.completed', { ...context, durationMs: Date.now() - startedAt });
     return {
@@ -922,7 +956,7 @@ function queueInputPerformance(text) {
     lastInputPerformanceAt = Date.now();
     return result;
   }
-  const liveVoice = doubao.running() || doubaoCaptions.running();
+  const liveVoice = doubaoCaptions.running();
   const reply = '好呀，看这边。';
   const queued = liveVoice ? queueVoicePerformance(effect)
     : queueSpeech(effect.action && effect.action !== 'idle' ? '' : reply, 'input-action', true, effect);
@@ -944,14 +978,13 @@ function drainAutomatic() {
       inputDances.length = 0;
       return;
     }
-    if (doubao.running() || doubaoCaptions.running()) {
+    if (doubaoCaptions.running()) {
       queueVoicePerformance({ action }, true);
     } else {
       void perform({ action }, { source: 'input-dance' }).catch(reportAutomaticError);
     }
     return;
   }
-  if (doubao.running()) return;
   if (channelSpeech.length) {
     const { speech, source, readAloud, effect } = channelSpeech.shift();
     const catalog = performanceSnapshot();
@@ -988,47 +1021,48 @@ function photoResult(imageURL, copy) {
 }
 
 function requireMode(mode) {
-  if (currentMode !== mode) throw new ControlError('INTEGRATION_MODE', mode === 'doubao'
-    ? '请先在「参考音色」启用火山实时语音。' : '请先在「智能体与模型」选择对应的接入方式。');
+  if (currentMode !== mode) throw new ControlError('INTEGRATION_MODE', '请先在「智能体接入」选择对应的接入方式。');
 }
 
 function requireChatInput() {
-  if (['local', 'api', 'doubao-client'].includes(currentMode)) return;
-  if (currentMode === 'doubao') throw new ControlError('INTEGRATION_MODE', '请在「参考音色」开始实时语音对话。');
+  if (['local', 'doubao-client'].includes(currentMode)) return;
   if (externalModes.includes(currentMode)) throw new ControlError('INTEGRATION_MODE', '请在已绑定的机器人频道对话。');
   throw new ControlError('INTEGRATION_MODE', '交互已关闭，请先选择一种接入方式。');
 }
 
 async function chatStatus() {
   const config = await getAgentConfig();
-  const integration = { ...integrationSnapshot(config, currentMode), nativeDoubao: mac, doubao: doubaoSnapshot(config) };
-  const doubaoState = doubao.state();
-  if (integration.mode === 'local') return { integration, doubao: doubaoState, ...await localAgent.status() };
-  if (integration.mode === 'doubao-client') return { integration, doubao: doubaoState, ...doubaoClient.state(),
+  const integration = integrationSnapshot(config, currentMode);
+  const prompt = sharedAgentPrompt(config);
+  if (integration.mode === 'local') return { integration, prompt, ...await localAgent.status() };
+  if (integration.mode === 'doubao-client') return { integration, prompt, ...doubaoClient.state(),
     captions: doubaoCaptions.state(), autoActions: (config.doubaoClient?.autoActions ?? config.doubaoClient?.autoDance) !== false,
     listenForActions: (config.doubaoClient?.listenForActions ?? config.doubaoClient?.listenForDance) === true };
-  if (integration.mode === 'api') return { integration: { ...integration, ...await apiProfileSnapshot(config) }, doubao: doubaoState, ...apiChat.state() };
-  return { integration, doubao: doubaoState, history: externalHistory, busy: false };
+  return { integration, prompt, history: externalHistory, busy: false };
+}
+
+async function configureAgentPrompt(prompt) {
+  await configureAgent(parseConfigCommand({ operation: 'set', target: 'agent', value: { prompt } }).value);
+  return chatStatus();
 }
 
 async function changeIntegration(value) {
-  if (!mac && value?.mode === 'doubao-client') {
-    throw new ControlError('UNSUPPORTED_PLATFORM', '豆包客户端联动需要 macOS。');
-  }
   const next = await editAgentConfig(config => configureIntegration(config, value));
-  if (currentMode !== next.mode) {
-    logger.write('info', 'integration.changed', { previous: currentMode, mode: next.mode });
-    currentMode = next.mode;
-    doubaoStartRevision++;
+  await activateIntegration(next.mode);
+  return chatStatus();
+}
+
+async function activateIntegration(mode) {
+  if (currentMode !== mode) {
+    logger.write('info', 'integration.changed', { previous: currentMode, mode });
+    currentMode = mode;
     captionStartRevision++;
-    doubao.stop({ immediate: true });
     doubaoClient.unbind();
     if (doubaoCaptions.running()) doubaoCaptions.stop();
     clearTimeout(captionTimer);
     captionText = '';
     lastCaptionAt = 0;
     syncBubble();
-    apiChat.reset();
     localAgent.cancel();
     externalHistory = [];
     channelSpeech.length = 0;
@@ -1039,7 +1073,7 @@ async function changeIntegration(value) {
     if (clearSensors) screenWatch = musicDance = false;
     queuedSpeech = undefined;
     screenRevision++;
-    const stop = ['screen', 'music', 'local-agent', 'api-chat', 'bot-chat', 'bot-action', 'doubao-client', 'input-dance', 'input-action'].includes(active?.source)
+    const stop = ['screen', 'music', 'local-agent', 'bot-chat', 'bot-action', 'doubao-client', 'input-dance', 'input-action'].includes(active?.source)
       ? stopPerformance().catch(reportAutomaticError) : undefined;
     syncSenses();
     await stop;
@@ -1048,26 +1082,19 @@ async function changeIntegration(value) {
   updateTray();
   settingsWindow?.webContents.send('va:chat-refresh');
   settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
-  return chatStatus();
 }
 
-async function changeApiProfile(value) {
-  requireMode('api');
-  let affectsActive;
-  await editAgentConfig(async config => {
-    if (integrationMode(config) !== 'api') throw new ControlError('INTEGRATION_MODE', '请先选择模型 API。');
-    const previous = selectedApiId(config);
-    const next = await editApiProfiles(config, value);
-    affectsActive = previous !== selectedApiId(next) || (value.op === 'save' && previous === value.id);
-    return next;
-  });
-  if (affectsActive) {
-    apiChat.reset();
+async function configureAgent(change) {
+  const next = await editAgentConfig(config => patchAgentConfig(config, change, launchDirectory));
+  const mode = integrationMode(next);
+  if (mode === currentMode && mode === 'local' && (change.localAgent || change.prompt !== undefined)) {
+    if (change.localAgent) localAgent.cancel();
     queuedSpeech = undefined;
     screenRevision++;
     syncSenses();
   }
-  return chatStatus();
+  await activateIntegration(mode);
+  return agentConfigSnapshot(next, currentMode);
 }
 
 async function localConfig(value) {
@@ -1095,12 +1122,55 @@ async function bindDoubao(isActive) {
 async function bindChat(id) {
   if (currentMode === 'doubao-client' && id === 'current') {
     await bindDoubao(() => currentMode === 'doubao-client');
-  } else if (currentMode === 'api' && id === null) apiChat.reset();
-  else {
+  } else {
     requireMode('local');
     await localAgent.bind(id);
   }
   return chatStatus();
+}
+
+async function openAgentSession(ref) {
+  requireMode('local');
+  await localAgent.openSession(ref);
+  return { opened: true };
+}
+
+async function restoreAgentSession(ref) {
+  requireMode('local');
+  await localAgent.restoreSession(ref);
+  screenRevision++;
+  syncSenses();
+  return chatStatus();
+}
+
+async function startDoubaoCaptions(value) {
+  requireMode('doubao-client');
+  const revision = ++captionStartRevision;
+  const stored = (await getAgentConfig()).doubaoClient;
+  const { autoActions = (stored?.autoActions ?? stored?.autoDance) !== false,
+    listen = (stored?.listenForActions ?? stored?.listenForDance) === true } = value ?? {};
+  if (typeof autoActions !== 'boolean' || typeof listen !== 'boolean') {
+    throw new ControlError('INVALID_REQUEST', '请选择通话字幕选项。');
+  }
+  if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
+  const microphoneAllowed = !listen || await systemPreferences.askForMediaAccess('microphone');
+  if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
+  requireMode('doubao-client');
+  await editAgentConfig(config => ({ ...config, doubaoClient: {
+    ...config.doubaoClient, autoActions, listenForActions: listen && microphoneAllowed,
+  } }));
+  if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
+  requireMode('doubao-client');
+  captionAutoActions = autoActions;
+  return doubaoCaptions.start({ autoActions, listen: listen && microphoneAllowed,
+    micStatus: microphoneAllowed ? '' : '请在 macOS 系统设置允许 VA 使用麦克风。' });
+}
+
+function stopDoubaoCaptions() {
+  captionStartRevision++;
+  cancelActionVoice();
+  doubaoCaptions.stop();
+  return doubaoCaptions.state();
 }
 
 async function sendChat(message, speak) {
@@ -1121,14 +1191,7 @@ async function dispatchChat(message, speak) {
   const performance = queueInputPerformance(message);
   if (performance) return performance;
   if (currentMode === 'local') return localAgent.send(message, { speak });
-  if (currentMode === 'doubao-client') return sendDoubaoClient(message);
-  requireMode('api');
-  try {
-    const result = await apiChat.send(message);
-    return { reply: result.reply, bubbleQueued: showReply(result.reply, 'api-chat', speak ?? result.readAloud, result.effect) };
-  } finally {
-    settingsWindow?.webContents.send('va:chat-refresh');
-  }
+  return sendDoubaoClient(message);
 }
 
 async function syncDoubaoContext() {
@@ -1145,22 +1208,15 @@ async function sendDoubaoClient(message, sync = false) {
   return doubaoClient.send(message, { context, sync });
 }
 
-async function conversationPrompt(style) {
-  return characterPerformancePrompt(await getCharacter(), performanceSnapshot(), { style });
+async function conversationPrompt(style, savedConfig) {
+  const [character, config] = await Promise.all([getCharacter(), savedConfig ?? getAgentConfig()]);
+  return chatPerformancePrompt(character, performanceSnapshot(), sharedAgentPrompt(config), style);
 }
 
 function showReply(text, source, readAloud, effect) {
   const selection = effect ?? replyPerformance(text, performanceSnapshot());
   const speech = selection.speech ?? text;
   return queueSpeech(speech.length > 300 ? speech.slice(0, 299) + '…' : speech, source, readAloud, selection);
-}
-
-function performVoiceReply(text, allowDance) {
-  const effect = replyPerformance(text, performanceSnapshot());
-  const action = performanceCatalog.actions[effect.action];
-  const dancing = action?.category === 'dance' || action?.motion.startsWith('dance');
-  if (dancing && (!allowDance || Date.now() - lastInputDanceAt < 10_000)) return false;
-  return queueVoicePerformance(effect);
 }
 
 function canAnimateFromCaption() {
@@ -1202,12 +1258,91 @@ async function receiveBotInput(command) {
   return result ? { accepted: true, ...result } : { accepted: false };
 }
 
+function configureActions(change) {
+  performanceEdits = performanceEdits.catch(() => {}).then(async () => {
+    const previous = await readConfig(performancePath, performanceDefaults, 'PERFORMANCE_CONFIG', 'performance.json');
+    const next = {
+      actions: mergeConfigEntries(previous.actions, change.actions),
+      expressions: mergeConfigEntries(previous.expressions, change.expressions),
+    };
+    let catalog;
+    try { catalog = compilePerformance(next); }
+    catch (error) { throw new ControlError('PERFORMANCE_CONFIG', error.message); }
+    await savePerformance(next);
+    performanceCatalog = catalog;
+    performanceWarning = undefined;
+    updateTray();
+    settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
+    return performanceSnapshot();
+  });
+  return performanceEdits;
+}
+
+async function handleConfiguration(command) {
+  const { operation, target, value } = parseConfigCommand(command);
+  if (operation === 'get') {
+    switch (target) {
+      case 'desktop': return { theme, speakingStyle, scale, view, clickThrough, screenWatch, screenInterval, musicDance };
+      case 'character': {
+        const { name, prompt, dialogue } = await readConfig(characterPath, defaultCharacter, 'CHARACTER_CONFIG', 'character.json');
+        return { name, displayName: (await getCharacter()).name, prompt, dialogue };
+      }
+      case 'actions': return readConfig(performancePath, performanceDefaults, 'PERFORMANCE_CONFIG', 'performance.json');
+      case 'voice': return voiceSnapshot(await getVoiceConfig());
+      case 'agent': return agentConfigSnapshot(await getAgentConfig(), currentMode);
+      case 'model': return { model: modelSnapshot(), useDefault: modelPath === null };
+    }
+  }
+  if (operation === 'set') {
+    switch (target) {
+      case 'desktop': return applySettings(value);
+      case 'character': return configureCharacter(value);
+      case 'actions': return configureActions(value);
+      case 'voice': return configureVoice(value);
+      case 'agent': return configureAgent(value);
+      case 'model': {
+        const path = value.id ? (await modelLibrary.preview(value.id)).path : value.path;
+        return { model: await changeModel(path === null || path === defaultModelPath ? null : resolve(launchDirectory, path)) };
+      }
+    }
+  }
+  switch (target) {
+    case 'model-library': return { models: await modelLibrary.list() };
+    case 'model-import': return modelLibrary.importPack(resolve(launchDirectory, value.path), path => changeModel(path, true));
+    case 'model-check': return { model: await changeModel(resolve(launchDirectory, value.path), true) };
+    case 'voice-preview': return previewVoice();
+    case 'system-voices': return { voices: await systemVoiceCatalog.refresh() };
+    case 'actions-reload':
+      await reloadPerformance();
+      settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
+      return performanceSnapshot();
+    case 'chat-bind': {
+      const { client, sessionId } = await bindChat(value.id);
+      settingsWindow?.webContents.send('va:chat-refresh');
+      return { client, sessionId };
+    }
+    case 'doubao-unbind':
+      requireMode('doubao-client');
+      doubaoClient.unbind();
+      settingsWindow?.webContents.send('va:chat-refresh');
+      return { bound: false };
+    case 'doubao-context': return syncDoubaoContext();
+    case 'doubao-caption-start': return startDoubaoCaptions(value);
+    case 'doubao-caption-stop': return stopDoubaoCaptions();
+    case 'chat-sessions': return { sessions: (await localAgent.status()).sessionHistory };
+    case 'chat-open-session': return openAgentSession(value.ref);
+    case 'chat-restore-session': return restoreAgentSession(value.ref);
+    default: throw new ControlError('CONFIG_COMMAND', '未知的配置操作。');
+  }
+}
+
 async function handle(command) {
   if (!command || typeof command !== 'object') {
     throw new ControlError('INVALID_REQUEST', '缺少 VA 命令。');
   }
   switch (command.type) {
     case 'status': return status();
+    case 'configuration': return handleConfiguration(command);
     case 'actions':
       if (command.reload === true) await reloadPerformance();
       return { ...performanceSnapshot(), ...(command.includeConfigPath === true && { configPath: performancePath }) };
@@ -1230,9 +1365,10 @@ async function handle(command) {
     case 'bot-present': return presentBot(command);
     case 'bot-input': return receiveBotInput(command);
     case 'bot-prompt': {
-      const route = checkBotRoute(await getAgentConfig(), command.platform, command.origin);
+      const config = await getAgentConfig();
+      const route = checkBotRoute(config, command.platform, command.origin);
       if (!route || currentMode !== command.platform || route.target !== command.origin.target) return { accepted: false };
-      const prompt = await conversationPrompt('voice');
+      const prompt = await conversationPrompt('voice', config);
       return currentMode === command.platform ? { accepted: true, prompt } : { accepted: false };
     }
     case 'chat':
@@ -1246,7 +1382,7 @@ async function handle(command) {
     case 'chat-use': return localConfig({ provider: command.provider });
     case 'chat-bind': return bindChat(command.sessionId);
     case 'chat-new': return bindChat(null);
-    case 'chat-cancel': return currentMode === 'api' ? apiChat.cancel() : localAgent.cancel();
+    case 'chat-cancel': return currentMode === 'doubao-client' ? doubaoClient.cancel() : localAgent.cancel();
     case 'integration':
       return command.mode === undefined ? (await chatStatus()).integration : changeIntegration({ mode: command.mode });
     case 'bot-perform':
@@ -1268,7 +1404,7 @@ async function handle(command) {
       return { opened: true };
     case 'scale': return await applySettings(command.scale === undefined ? undefined : { scale: command.scale });
     case 'show':
-      window.showInactive();
+      showAvatar();
       updateTray();
       return { visible: true };
     case 'hide':
@@ -1298,10 +1434,6 @@ async function handle(command) {
           defaultDialogue: command.bot !== true && command.quiet !== true });
     case 'stop':
       clearInputDances();
-      if (doubao.running()) {
-        doubao.stop();
-        return { stopped: true };
-      }
       if (active?.source === 'music') musicPaused = true;
       await stopPerformance();
       if (channelSpeech.length) drainAutomatic();
@@ -1335,6 +1467,7 @@ function syncBounds() {
 
 function publicModel({ url, format, name, builtIn, path }) {
   if (path === bundledModelPath) name = 'Gemini';
+  if (path === coverModelPath) name = coverName;
   return { url, format, name, builtIn };
 }
 
@@ -1362,13 +1495,13 @@ function persistSettings() {
 }
 
 async function changeModel(path, checkOnly = false) {
-  if (changingModel || doubao?.running()) throw new ControlError('BUSY', '正在切换模型或进行语音对话，请稍后再试。');
+  if (changingModel) throw new ControlError('BUSY', '正在切换模型，请稍后再试。');
   changingModel = true;
   let next;
   let staged = false;
   try {
     const selectedPath = path ?? defaultModelPath;
-    next = await bindModel(selectedPath, selectedPath === bundledModelPath || selectedPath === defaultModelPath);
+    next = await bindModel(selectedPath, builtInModels.has(selectedPath));
     assets.set(next.id, next);
     const info = await renderer({ type: 'model-check', model: publicModel(next), checkOnly,
       deadline: Date.now() + 65_000 }, 70_000);
@@ -1403,7 +1536,7 @@ async function changeModel(path, checkOnly = false) {
 function settingsSnapshot() {
   return { theme, speakingStyle, scale, view, model: modelSnapshot(), characterName, clickThrough, minScale, maxScale,
     screenWatch, screenInterval, screenTarget: screenMode(currentMode), integrationMode: currentMode,
-    nativeSenses: mac, musicDance, senses: senses?.status(),
+    nativeSenses: true, musicDance, senses: senses?.status(),
     performance: performanceSnapshot() };
 }
 
@@ -1442,7 +1575,7 @@ async function applySettings(change) {
   }
   if (Object.hasOwn(change, 'clickThrough')) {
     clickThrough = change.clickThrough === true;
-    window.setIgnoreMouseEvents(clickThrough);
+    syncMousePassthrough();
   }
   let changedSensors = false;
   if (Object.hasOwn(change, 'screenInterval')) {
@@ -1455,7 +1588,6 @@ async function applySettings(change) {
     changedSensors = true;
   }
   if (Object.hasOwn(change, 'musicDance')) {
-    if (!mac && change.musicDance) throw new ControlError('UNSUPPORTED_PLATFORM', '系统音乐检测需要 macOS。');
     if (musicDance !== (change.musicDance === true)) musicPaused = false;
     musicDance = change.musicDance === true;
     changedSensors = true;
@@ -1466,7 +1598,6 @@ async function applySettings(change) {
   }
   const settings = settingsSnapshot();
   settingsWindow?.webContents.send('va:settings-changed', settings);
-  controlsWindow?.webContents.send('va:settings-changed', settings);
   updateTray();
   await persistSettings();
   return settings;
@@ -1500,24 +1631,20 @@ function openSettings(section = 'avatar') {
   settingsWindow.on('closed', () => {
     settingsWindow = undefined;
     dropGalleryPreview();
-    doubao?.stop();
   });
-  settingsWindow.webContents.on('render-process-gone', () => {
-    dropGalleryPreview();
-    doubao?.stop();
-  });
+  settingsWindow.webContents.on('render-process-gone', dropGalleryPreview);
   settingsWindow.once('ready-to-show', () => settingsWindow.show());
   settingsWindow.loadURL(settingsURL).catch(console.error);
 }
 
 function openChat() {
-  openSettings(currentMode === 'doubao' ? 'voice' : 'agent');
+  openSettings('agent');
   settingsWindow?.webContents.send('va:chat-refresh');
 }
 
 async function captureScreen() {
   const message = '读取屏幕需要 macOS「屏幕与系统音频录制」权限。授权后退出并重新启动 VA。';
-  const permission = mac ? systemPreferences.getMediaAccessStatus('screen') : 'granted';
+  const permission = systemPreferences.getMediaAccessStatus('screen');
   if (['denied', 'restricted'].includes(permission)) throw new ControlError('SCREEN_PERMISSION', message);
   const display = screen.getPrimaryDisplay();
   const { width, height } = display.size;
@@ -1529,7 +1656,7 @@ async function captureScreen() {
   const source = sources.find(item => item.display_id === String(display.id))
     ?? (screen.getAllDisplays().length === 1 ? sources[0] : undefined);
   if (!source || source.thumbnail.isEmpty()) {
-    if (mac && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+    if (systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
       throw new ControlError('SCREEN_PERMISSION', message);
     }
     throw new ControlError('SCREEN_UNAVAILABLE', '暂时无法读取主显示器画面。');
@@ -1543,10 +1670,8 @@ async function captureScreen() {
 }
 
 async function prepareObservation() {
-  const target = screenMode(currentMode);
-  if (target === 'local') return localAgent.prepareObservation();
-  if (target === 'api') return prepareVisionObservation(await resolveApiConfig(await getAgentConfig(), 'vision'));
-  throw new ControlError('SCREEN_MODE', '请选用支持截图的本地 Agent，或配置了视觉模型的模型 API。');
+  if (currentMode === 'local') return localAgent.prepareObservation();
+  throw new ControlError('SCREEN_MODE', '请选用支持截图的本地 Agent。');
 }
 
 function syncSenses() {
@@ -1571,10 +1696,65 @@ function positionControls() {
   if (x !== currentX || y !== currentY) controlsWindow.setPosition(x, y);
 }
 
-function showControls() {
-  if (!controlsReady || !window.isVisible()) return;
+function syncControlsVisibility() {
+  const cursor = screen.getCursorScreenPoint();
+  const near = ({ x, y, width, height }) =>
+    cursor.x >= x - controlsHoverMargin && cursor.x <= x + width + controlsHoverMargin &&
+    cursor.y >= y - controlsHoverMargin && cursor.y <= y + height + controlsHoverMargin;
+  const now = performance.now();
+  if (near(window.getBounds()) || near(controlsWindow.getBounds())) {
+    controlsLastNearAt = now;
+    if (!controlsWindow.isVisible()) setControlsVisibility(true);
+  } else if (controlsWindow.isVisible() && now - controlsLastNearAt >= controlsHideDelay) {
+    setControlsVisibility(false);
+  }
+  syncMousePassthrough(cursor);
+}
+
+function syncMousePassthrough(cursor) {
+  if (!window || window.isDestroyed()) return;
+  let ignore = clickThrough;
+  if (ignore && nameplateBounds && window.isVisible() && controlsWindow &&
+      !controlsWindow.isDestroyed() && controlsWindow.isVisible()) {
+    const { top, width, height } = nameplateBounds;
+    const avatar = window.getBounds();
+    const x = avatar.x + (avatar.width - width) / 2;
+    const y = avatar.y + top;
+    cursor ??= screen.getCursorScreenPoint();
+    if (cursor.x >= x && cursor.x < x + width && cursor.y >= y && cursor.y < y + height) ignore = false;
+  }
+  if (ignore === ignoringMouse) return;
+  window.setIgnoreMouseEvents(ignore);
+  ignoringMouse = ignore;
+}
+
+function setControlsVisibility(visible) {
+  if (controlsWindow && !controlsWindow.isDestroyed()) {
+    if (visible) controlsWindow.showInactive();
+    else if (controlsWindow.isVisible()) controlsWindow.hide();
+  }
+  if (window && !window.isDestroyed()) window.webContents.send('va:controls-visible', visible);
+}
+
+function trackControlsHover() {
+  if (!controlsReady || !window.isVisible() || controlsHoverTimer) return;
   positionControls();
-  controlsWindow.showInactive();
+  syncControlsVisibility();
+  controlsHoverTimer = setInterval(syncControlsVisibility, 60);
+}
+
+function showAvatar() {
+  if (!window || window.isDestroyed()) return;
+  window.showInactive();
+  trackControlsHover();
+}
+
+function stopControlsHover() {
+  clearInterval(controlsHoverTimer);
+  controlsHoverTimer = undefined;
+  controlsLastNearAt = -Infinity;
+  setControlsVisibility(false);
+  syncMousePassthrough();
 }
 
 function syncBubble() {
@@ -1642,12 +1822,17 @@ function createControls() {
     const [oldX, oldY] = controlsPosition;
     controlsPosition = [x, y];
     if (x === oldX && y === oldY) return;
+    controlsLastNearAt = performance.now();
     const [modelX, modelY] = window.getPosition();
     window.setPosition(modelX + x - oldX, modelY + y - oldY);
   });
   controlsWindow.once('ready-to-show', () => {
     controlsReady = true;
-    showControls();
+    trackControlsHover();
+  });
+  controlsWindow.once('closed', () => {
+    controlsReady = false;
+    stopControlsHover();
   });
   controlsWindow.loadURL(controlsURL).catch(console.error);
 }
@@ -1679,27 +1864,30 @@ function createWindow() {
     },
   });
   window.setVisibleOnAllWorkspaces(true);
-  window.setIgnoreMouseEvents(clickThrough);
+  syncMousePassthrough();
   localWindow(window.webContents);
   window.on('page-title-updated', event => event.preventDefault());
-  window.on('move', syncBubble);
+  window.on('move', () => {
+    positionControls();
+    syncBubble();
+  });
   window.on('show', () => {
     syncBubble();
-    showControls();
+    trackControlsHover();
     syncSenses();
   });
   window.on('hide', () => {
     syncBubble();
-    if (controlsWindow && !controlsWindow.isDestroyed()) controlsWindow.hide();
+    stopControlsHover();
     syncSenses();
   });
+  window.once('closed', stopControlsHover);
   window.webContents.on('render-process-gone', () => {
     logger.write('error', 'avatar.renderer_exited');
-    doubao?.stop();
     failPending('桌面渲染进程已退出。请重启 VA。');
   });
   window.once('ready-to-show', () => {
-    if (!launchHidden) window.showInactive();
+    if (!launchHidden) showAvatar();
     updateTray();
   });
   window.loadURL(pageURL).catch(error => failPending(error.message));
@@ -1711,19 +1899,19 @@ if (!app.requestSingleInstanceLock()) {
   logger.write('info', 'app.start', { version: app.getVersion(), platform: process.platform, packaged: app.isPackaged });
   process.on('uncaughtExceptionMonitor', error => logger.write('error', 'app.uncaught_exception', { code: errorCode(error) }));
   app.on('second-instance', (_event, args) => {
-    if (!args.includes('--va-hidden')) window?.showInactive();
+    if (!args.includes('--va-hidden')) showAvatar();
   });
   app.on('activate', () => {
-    if (!launchHidden) window?.showInactive();
+    if (!launchHidden) showAvatar();
   });
   app.on('window-all-closed', () => app.quit());
   app.on('before-quit', () => {
     logger.write('info', 'app.stop');
-    doubao?.stop({ immediate: true });
+    zipVoice.stop();
+    stopControlsHover();
     doubaoClient?.unbind();
     if (doubaoCaptions?.running()) doubaoCaptions.stop();
     localAgent?.cancel();
-    apiChat?.cancel();
     senses?.update({ screenWatch: false, musicDance: false, shown: false });
     globalShortcut.unregisterAll();
     server?.close();
@@ -1731,28 +1919,6 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(async () => {
     protocol.handle('va-app', asset);
-    const settingsMic = web => currentMode === 'doubao' && web === settingsWindow?.webContents && web?.getURL() === settingsURL;
-    session.defaultSession.setPermissionCheckHandler((web, permission, _origin, detail) =>
-      permission === 'media' && detail.mediaType === 'audio' && settingsMic(web));
-    session.defaultSession.setPermissionRequestHandler((web, permission, callback, detail) =>
-      callback(permission === 'media' && settingsMic(web) && detail.mediaTypes?.includes('audio') &&
-        !detail.mediaTypes.includes('video')));
-    let realtimePhase;
-    doubao = createDoubaoConversation({
-      onState: value => {
-        if (value.phase !== realtimePhase) {
-          realtimePhase = value.phase;
-          logger.write(value.error ? 'warn' : 'info', 'doubao.realtime_state', { phase: value.phase, failed: Boolean(value.error) });
-        }
-        settingsWindow?.webContents.send('va:doubao-state', value);
-      },
-      onOutput: value => {
-        if (state.state === 'ready' && !window?.isDestroyed()) window?.webContents.send('va:doubao-output', { ...value, speakingStyle });
-      },
-      onDance: () => queueVoicePerformance({ action: nextDance() }),
-      onInput: onVoiceOrClientInput,
-      onReply: performVoiceReply,
-    });
     const doubaoHelper = join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-client');
     let lastDoubaoProblem;
     doubaoClient = createDoubaoClient({
@@ -1813,7 +1979,7 @@ if (!app.requestSingleInstanceLock()) {
     let edits = Promise.resolve();
     editAgentConfig = edit => {
       const result = edits.catch(() => {}).then(async () => {
-        const next = await edit(await getAgentConfig());
+        const next = normalizeAgentConfig(await edit(normalizeAgentConfig(await getAgentConfig())));
         await saveAgent(next);
         return next;
       });
@@ -1822,23 +1988,24 @@ if (!app.requestSingleInstanceLock()) {
     };
     const savedSettings = await readSettings(settingsPath);
     ({ theme, speakingStyle, scale, view, modelPath, clickThrough, screenWatch, screenInterval, musicDance } = savedSettings);
-    if (!mac) musicDance = false;
     const localAha = await findLocalAha();
-    defaultModelPath = localAha?.path ?? bundledModelPath;
-    if (localAha) defaultCharacter.name = localAhaName;
-    modelLibrary = createModelLibrary(join(app.getPath('userData'), 'ai-girls.json'), { bundledModel: bundledModelPath, localAha });
+    if (localAha) builtInModels.add(localAha.path);
+    const cover = await bindModel(coverModelPath, true).catch(() => undefined);
+    defaultModelPath = cover?.path ?? localAha?.path ?? bundledModelPath;
+    if (!cover && localAha) defaultCharacter.name = localAhaName;
+    modelLibrary = createModelLibrary(join(app.getPath('userData'), 'ai-girls.json'), {
+      bundledModel: bundledModelPath, localAha, coverModel: cover?.path,
+    });
     if (modelPath) {
-      selectedModel = await bindModel(modelPath, modelPath === bundledModelPath || modelPath === defaultModelPath)
+      selectedModel = await bindModel(modelPath, builtInModels.has(modelPath))
         .catch(error => { modelWarning = error.message + ' 已显示默认角色。'; });
     }
-    selectedModel ??= localAha ?? await bindModel(bundledModelPath, true, { allowMissing: true });
+    selectedModel ??= cover ?? localAha ?? await bindModel(bundledModelPath, true, { allowMissing: true });
     assets.set(selectedModel.id, selectedModel);
     await getCharacter().catch(error => console.error(error.message));
     try {
       const stored = await getAgentConfig();
       currentMode = integrationMode(stored);
-      if (!mac && currentMode === 'doubao-client') currentMode = 'off';
-      if (stored?.mode !== currentMode) await saveAgent({ ...defaultAgent, ...stored, mode: currentMode });
     } catch (error) {
       console.error(error.message);
     }
@@ -1849,14 +2016,13 @@ if (!app.requestSingleInstanceLock()) {
       screenWatch = false;
       await persistSettings();
     }
-    await getVoiceConfig().catch(error => console.error(error.message));
-    const getApiConfig = async () => resolveApiConfig(await getAgentConfig());
-    const getPrompt = async extra => chatPerformancePrompt(await getCharacter(), performanceSnapshot(), extra);
+    const initialVoice = await getVoiceConfig().catch(error => console.error(error.message));
+    if (initialVoice?.provider === 'zipvoice') {
+      warmZipVoice(initialVoice.zipvoice).catch(error =>
+        logger.write('warn', 'voice.zipvoice_warm_failed', { code: errorCode(error) }));
+    }
+    const getPrompt = () => conversationPrompt('text');
     const parseReply = reply => replyPerformance(reply, performanceSnapshot());
-    apiChat = createApiChat({
-      getConfig: getApiConfig,
-      getPrompt, parseReply,
-    });
     localAgent = createLocalAgent({
       getConfig: async () => (await getAgentConfig())?.localAgent,
       updateConfig: edit => editAgentConfig(async config => ({ ...config, localAgent: await edit(config?.localAgent) })),
@@ -1869,7 +2035,11 @@ if (!app.requestSingleInstanceLock()) {
     const sensorStates = new Map();
     senses = createSenses({
       audioHelper: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-audio-monitor'),
-      getCharacter,
+      getCharacter: async () => {
+        const [character, config] = await Promise.all([getCharacter(), getAgentConfig()]);
+        const extra = sharedAgentPrompt(config).replaceAll('{{name}}', () => character.name);
+        return { ...character, prompt: [character.prompt, extra].filter(Boolean).join('\n\n') };
+      },
       captureScreen,
       prepareObservation,
       onStatus: info => {
@@ -1903,13 +2073,13 @@ if (!app.requestSingleInstanceLock()) {
     const portrait = nativeImage.createFromPath(appIconPath);
     const icon = nativeImage.createEmpty();
     for (const scaleFactor of [1, 2]) {
-      const size = (mac ? 18 : 20) * scaleFactor;
+      const size = 18 * scaleFactor;
       icon.addRepresentation({
         scaleFactor, buffer: portrait.resize({ width: size, height: size, quality: 'best' }).toPNG(),
       });
     }
     tray = new Tray(icon);
-    if (mac) tray.setTitle('VA');
+    tray.setTitle('VA');
     tray.setToolTip('VA · ' + characterName);
     shortcutRegistered = globalShortcut.register('Control+Alt+V', openSettings);
     updateTray();

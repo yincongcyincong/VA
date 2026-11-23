@@ -1,38 +1,35 @@
-:root { color: #fff6ef; font: 12px/1.4 -apple-system, "PingFang SC", sans-serif; }
+:root { color: #f2f0fa; }
 body { margin: 0; background: transparent; user-select: none; }
 nav {
-  height: 26px;
   display: flex;
+  box-sizing: border-box;
+  height: 34px;
+  padding: 2px;
   align-items: center;
   justify-content: center;
-  gap: 2px;
-  border-radius: 20px;
-  background: #251b25f0;
-  border: 1px solid #ecd9cf80;
+  gap: 3px;
+  border: 1px solid #dfd9ff4d;
+  border-radius: 17px;
+  background: linear-gradient(#342d47f0, #201b30f2);
+}
+#handle, #settings {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 28px;
+  border-radius: 14px;
 }
 #handle {
-  white-space: nowrap;
-  min-width: 0;
-  max-width: 72px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: #efc9c9;
-  padding: 3px 5px 3px 2px;
+  color: #d6c9e6;
   cursor: move;
   -webkit-app-region: drag;
 }
-button {
+#settings {
+  padding: 0;
   background: transparent;
   color: inherit;
   border: 0;
-  border-radius: 6px;
-  min-width: 19px;
-  height: 22px;
-  padding: 0 3px;
   cursor: pointer;
-  font: inherit;
 }
-button:hover:enabled, button:focus-visible { background: #fff3; }
-button:disabled { opacity: .35; cursor: default; }
-#scale { min-width: 34px; text-align: center; font-variant-numeric: tabular-nums; }
-#settings { margin-left: 2px; border-left: 1px solid #ffffff30; padding-inline: 5px; }
+#settings:hover, #settings:focus-visible { background: #e3d8ff29; }
+#settings:focus-visible { outline: 1px solid #e3d8ff; outline-offset: -2px; }

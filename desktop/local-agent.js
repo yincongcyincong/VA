@@ -1,8 +1,9 @@
-import { spawn } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises';
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
+import { promisify } from 'node:util';
 import { ControlError } from '../lib/control.js';
 import { readConfig, settingsWriter } from './config.js';
 
@@ -12,6 +13,8 @@ const timeout = 75_000;
 const maxOutput = 8 * 1024 * 1024;
 const sessionPattern = /^[a-z0-9][a-z0-9_.:-]{0,159}$/i;
 const uuidPattern = /^[a-f0-9]{8}-(?:[a-f0-9]{4}-){3}[a-f0-9]{12}$/i;
+const nativeResume = new Set(['codex', 'claude']);
+const exec = promisify(execFile);
 
 function field(value, max, label) {
   if (typeof value !== 'string' || value.length > max || value.includes('\0')) {
@@ -21,11 +24,11 @@ function field(value, max, label) {
 }
 
 function preference(value) {
-  const { provider = '', cwd = '', prompt = '', speakReplies = false } = value ?? {};
+  const { provider = '', cwd = '', speakReplies = false } = value ?? {};
   if (typeof provider !== 'string' || (provider !== '' && !Object.hasOwn(providers, provider)) || typeof speakReplies !== 'boolean') {
     throw new ControlError('AGENT_CONFIG', '请选择受支持的 Agent。');
   }
-  return { provider, cwd: field(cwd, 4096, '工作目录'), prompt: field(prompt, 5000, '注入 Prompt'), speakReplies };
+  return { provider, cwd: field(cwd, 4096, '工作目录'), speakReplies };
 }
 
 function profileModel(config, provider) {
@@ -56,14 +59,29 @@ async function runtime(config, launchDirectory) {
   return { ...settings, label: providers[provider] ?? '请选择 Agent', cwd, cwdSetting: settings.cwd, command, model, models, args, key };
 }
 
+export async function patchLocalAgentConfig(current, patch, launchDirectory) {
+  const config = { ...current, ...patch };
+  for (const provider of Object.keys(providers)) {
+    if (!Object.hasOwn(patch, provider)) continue;
+    config[provider] = { ...current?.[provider], ...patch[provider] };
+    await runtime({ ...config, provider }, launchDirectory);
+  }
+  const settings = preference(config);
+  await runtime(settings.provider ? config : settings, launchDirectory);
+  return { ...config, ...settings };
+}
+
+function agentPath() {
+  return [process.env.PATH, join(homedir(), '.local/bin'), join(homedir(), '.bun/bin'),
+    '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'].filter(Boolean).join(delimiter);
+}
+
 function runAgent(agent, signal, build) {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
-    const paths = [process.env.PATH, join(homedir(), '.local/bin'), join(homedir(), '.bun/bin'),
-      '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin'];
     const child = spawn(agent.command, agent.args, {
       cwd: agent.cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
-      env: { ...process.env, PATH: paths.filter(Boolean).join(delimiter) },
+      env: { ...process.env, PATH: agentPath() },
     });
     const send = value => child.stdin.write(JSON.stringify(value) + '\n');
     let stderr = '';
@@ -281,30 +299,80 @@ function dispatch(agent, input, signal) {
   return runJsonAgent(agent, input, signal);
 }
 
-export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(), presentReply, onChange = () => {} }) {
+function validSession(provider, id) {
+  return Object.hasOwn(providers, provider) && typeof id === 'string' &&
+    (nativeResume.has(provider) ? uuidPattern : sessionPattern).test(id);
+}
+
+function rememberSession(sessions, agent, id, boundAt) {
+  const ref = `${agent.key}:${id}`;
+  const record = { ref, provider: agent.provider, cwd: agent.cwd, id, boundAt };
+  sessions.history = [record, ...sessions.history.filter(item => item.ref !== ref)].slice(0, 100);
+}
+
+const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
+
+async function launchTerminal(agent, args) {
+  const folder = await mkdtemp(join(tmpdir(), 'va-agent-session-'));
+  const script = join(folder, `VA ${agent.label}.command`);
+  try {
+    await writeFile(script, [
+      '#!/bin/bash',
+      '/bin/rm -f -- "$0"',
+      '/bin/rmdir -- ' + quote(folder),
+      'cd -- ' + quote(agent.cwd) + ' || exit 1',
+      'export PATH=' + quote(agentPath()),
+      'exec ' + [agent.command, ...args].map(quote).join(' '),
+      '',
+    ].join('\n'), { mode: 0o700 });
+    await exec('/usr/bin/open', ['-a', 'Terminal', script], { timeout: 10_000 });
+  } catch {
+    await rm(folder, { recursive: true, force: true });
+    throw new ControlError('AGENT_LAUNCH', '无法在「终端」打开 Agent 会话。');
+  }
+}
+
+export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(),
+  presentReply, onChange = () => {}, openTerminal = launchTerminal }) {
   const saveSessions = settingsWriter(sessionPath);
   const history = new Map();
   let active;
 
-  const getSessions = async () => {
+  const getSessions = async agent => {
     const value = await readConfig(sessionPath, {}, 'AGENT_SESSIONS', 'local-agent-sessions.json');
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new ControlError('AGENT_SESSIONS', '会话文件需要是一个 JSON 对象。');
     }
-    return value;
+    const bindings = Object.fromEntries(Object.entries(value.bindings ?? value)
+      .filter(([key, id]) => /^[a-f0-9]{64}$/.test(key) && typeof id === 'string'));
+    const records = Array.isArray(value.history) ? value.history : [];
+    const sessions = { bindings, history: records.filter(entry => entry && validSession(entry.provider, entry.id) &&
+      typeof entry.cwd === 'string' && isAbsolute(entry.cwd) && typeof entry.ref === 'string') };
+    const id = agent && sessions.bindings[agent.key];
+    if (id && validSession(agent.provider, id) && !sessions.history.some(entry => entry.ref === `${agent.key}:${id}`)) {
+      rememberSession(sessions, agent, id, null);
+    }
+    return sessions;
   };
 
   async function snapshot(agent, sessions) {
     const config = agent ?? await runtime(await getConfig(), launchDirectory);
-    const saved = sessions ?? await getSessions();
-    const { provider, label, cwd, prompt, speakReplies, models, key } = config;
-    return { provider, label, cwd, workingDirectory: config.cwdSetting, launchDirectory, prompt, speakReplies, models, sessionId: saved[key] ?? null,
+    const saved = sessions ?? await getSessions(config);
+    const { provider, label, cwd, speakReplies, models, key } = config;
+    return { provider, label, cwd, workingDirectory: config.cwdSetting, launchDirectory, speakReplies, models,
+      sessionId: saved.bindings[key] ?? null,
+      sessionHistory: saved.history.map(entry => ({ ...entry, label: providers[entry.provider], canOpen: nativeResume.has(entry.provider),
+        active: entry.ref === `${key}:${saved.bindings[key]}` })),
       history: history.get(key) ?? [], busy: Boolean(active) };
   }
 
-  function validateSession(agent, id) {
-    const pattern = ['codex', 'claude'].includes(agent.provider) ? uuidPattern : sessionPattern;
-    return typeof id === 'string' && pattern.test(id);
+  async function recordFor(ref, config) {
+    const current = await runtime(config, launchDirectory).catch(() => undefined);
+    const sessions = await getSessions(current);
+    const record = sessions.history.find(entry => entry.ref === ref);
+    if (!record) throw new ControlError('AGENT_SESSION', '找不到这条会话绑定记录。');
+    const next = { ...config, provider: record.provider, cwd: record.cwd };
+    return { record, sessions, next, agent: await runtime(next, launchDirectory) };
   }
 
   function exclusive(job) {
@@ -322,7 +390,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
 
   async function screenAgent() {
     const agent = await runtime(await getConfig(), launchDirectory);
-    if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请在「智能体与模型」选择接收截图的本地 Agent。');
+    if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请在「智能体接入」选择接收截图的本地 Agent。');
     if (agent.provider === 'deepseekharness') {
       throw new ControlError('AGENT_IMAGE_UNSUPPORTED', 'DeepSeek Harness 的 headless CLI 不接收图片，请选择支持图片输入的 Agent。');
     }
@@ -351,6 +419,8 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     configure(value) {
       return exclusive(async signal => {
         await updateConfig(async previous => {
+          const prior = await runtime(previous, launchDirectory).catch(() => undefined);
+          if (prior?.provider) await saveSessions(await getSessions(prior));
           const next = preference({ ...previous, ...value });
           const config = { ...previous, ...next };
           if (['codex', 'claude', 'omp'].includes(next.provider) && typeof value?.model === 'string') {
@@ -369,16 +439,47 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         const agent = await runtime(await getConfig(), launchDirectory);
         if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请先选择 Agent。');
         const id = value === null ? null : field(value, 160, '会话 ID');
-        if (id !== null && !validateSession(agent, id)) throw new ControlError('AGENT_SESSION', '会话 ID 格式无效。');
-        const sessions = await getSessions();
+        if (id !== null && !validSession(agent.provider, id)) throw new ControlError('AGENT_SESSION', '会话 ID 格式无效。');
+        const sessions = await getSessions(agent);
         signal.throwIfAborted();
-        if (id) sessions[agent.key] = ['codex', 'claude'].includes(agent.provider) ? id.toLowerCase() : id;
-        else delete sessions[agent.key];
+        if (id) {
+          const normalized = nativeResume.has(agent.provider) ? id.toLowerCase() : id;
+          sessions.bindings[agent.key] = normalized;
+          rememberSession(sessions, agent, normalized, new Date().toISOString());
+        } else delete sessions.bindings[agent.key];
         await saveSessions(sessions);
         history.delete(agent.key);
         const result = await snapshot(agent, sessions);
         return { ...result, busy: false };
       });
+    },
+    restoreSession(ref) {
+      return exclusive(async signal => {
+        let restored;
+        await updateConfig(async config => {
+          const { sessions, record, agent, next } = await recordFor(ref, config);
+          signal.throwIfAborted();
+          sessions.bindings[agent.key] = record.id;
+          rememberSession(sessions, agent, record.id, new Date().toISOString());
+          await saveSessions(sessions);
+          history.delete(agent.key);
+          restored = await snapshot(agent, sessions);
+          return next;
+        });
+        return { ...restored, busy: false };
+      });
+    },
+    async openSession(ref) {
+      const { record, agent } = await recordFor(ref, await getConfig());
+      if (!nativeResume.has(record.provider)) {
+        throw new ControlError('AGENT_SESSION', '当前支持在终端打开 Codex 和 Claude Code 会话。');
+      }
+      const prompt = await getPrompt();
+      const model = agent.model ? ['--model', agent.model] : [];
+      const args = record.provider === 'codex'
+        ? ['resume', '--config', 'developer_instructions=' + JSON.stringify(prompt), ...model, record.id]
+        : ['--resume', record.id, '--append-system-prompt', prompt, ...model];
+      await openTerminal(agent, args);
     },
     send(value, options = {}) {
       const message = field(value, 2200, '消息');
@@ -387,12 +488,12 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         const agent = await runtime(await getConfig(), launchDirectory);
         if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请先选择 Agent。');
         if (!agent.command) throw new ControlError('AGENT_CONFIG', '请在 agent.json 的 localAgent.custom.command 填写可执行文件的绝对路径。');
-        const sessions = await getSessions();
-        const sessionId = sessions[agent.key] ?? null;
-        if (sessionId !== null && !validateSession(agent, sessionId)) {
-          throw new ControlError('AGENT_SESSION', '已保存的会话 ID 无效，请新建会话。');
+        const sessions = await getSessions(agent);
+        const sessionId = sessions.bindings[agent.key] ?? null;
+        if ((sessionId !== null && !validSession(agent.provider, sessionId)) || (!sessionId && nativeResume.has(agent.provider))) {
+          throw new ControlError('AGENT_SESSION', '请先绑定一个有效的 Agent 会话。');
         }
-        const prompt = await getPrompt(agent.prompt);
+        const prompt = await getPrompt();
         if (prompt.length > 45000) throw new ControlError('AGENT_INPUT', '角色与 Agent 的 Prompt 合计太长。');
         const input = { message, prompt, sessionId };
         const result = await dispatch(agent, input, signal);
@@ -401,11 +502,12 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         const effect = parseReply(raw);
         const reply = effect.speech;
         if (!reply && !effect.action && !effect.expression) throw failure('Agent 没有返回可显示的回复。');
-        if (!validateSession(agent, result?.sessionId) || (sessionId && sessionId !== result.sessionId)) {
+        if (!validSession(agent.provider, result?.sessionId) || (sessionId && sessionId !== result.sessionId)) {
           throw failure('Agent 返回了无效或不一致的会话 ID。');
         }
         if (sessionId !== result.sessionId) {
-          sessions[agent.key] = result.sessionId;
+          sessions.bindings[agent.key] = result.sessionId;
+          rememberSession(sessions, agent, result.sessionId, new Date().toISOString());
           await saveSessions(sessions);
         }
         signal.throwIfAborted();

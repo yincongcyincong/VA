@@ -51,14 +51,14 @@ export function characterPerformancePrompt(character, catalog, { style = 'text',
   ].filter(Boolean).join('\n\n');
 }
 
-export function chatPerformancePrompt(character, catalog, extra = '') {
-  return [fillName(extra, character.name), characterPerformancePrompt(character, catalog)].filter(Boolean).join('\n\n');
+export function chatPerformancePrompt(character, catalog, extra = '', style = 'text') {
+  return [fillName(extra, character.name), characterPerformancePrompt(character, catalog, { style })].filter(Boolean).join('\n\n');
 }
 
 function findPerformance(text, catalog, expressionOnly = false) {
   if (!expressionOnly) {
     const action = Object.entries(catalog.actions).find(([id, entry]) => entry.supported &&
-      [id, entry.label, ...(actionWords[id] ?? [])].some(word => normalize(word) === text));
+      [id, entry.label, ...(Object.hasOwn(actionWords, id) ? actionWords[id] : [])].some(word => normalize(word) === text));
     if (action) return { action: action[0] };
   }
   const expression = catalog.supportedExpressions.find(id =>

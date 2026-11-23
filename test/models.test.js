@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
+import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { readCharacter, readSettings, settingsWriter } from '../desktop/config.js';
 import { bindModel, modelResource } from '../desktop/model-files.js';
@@ -113,4 +114,75 @@ test('settings normalize old intervals and legacy character names', async t => {
   }));
   assert.deepEqual(await readCharacter(character, defaults),
     { name: 'Gemini', prompt: '我是Gemini', dialogue: { wave: ['你好，我是Gemini'] } });
+});
+
+test('the bundled cover is a rigged VRM and wins the default model selection', async t => {
+  const folder = await temporary(t);
+  const coverModel = new URL('../assets/models/VA Cover.vrm', import.meta.url);
+  const bytes = await readFile(coverModel);
+  const json = JSON.parse(bytes.toString('utf8', 20, 20 + bytes.readUInt32LE(12)));
+  assert.equal(bytes.toString('ascii', 0, 4), 'glTF');
+  const vrm = json.extensions.VRMC_vrm;
+  assert.equal(vrm.specVersion, '1.0');
+  const bones = vrm.humanoid.humanBones;
+  const joints = new Set(json.skins[0].joints);
+  for (const bone of ['head', 'hips', 'leftHand', 'rightHand']) {
+    assert.ok(joints.has(bones[bone]?.node), bone);
+  }
+  for (const side of ['left', 'right']) {
+    for (const digit of ['Thumb', 'Index', 'Middle', 'Ring', 'Little']) {
+      const segments = digit === 'Thumb' ? ['Metacarpal', 'Proximal', 'Distal'] : ['Proximal', 'Intermediate', 'Distal'];
+      let parent = bones[side + 'Hand'].node;
+      for (const segment of segments) {
+        const name = side + digit + segment;
+        const node = bones[name]?.node;
+        assert.ok(joints.has(node), name);
+        assert.ok(json.nodes[parent].children.includes(node), name);
+        parent = node;
+      }
+    }
+  }
+  assert.ok(vrm.expressions.preset.aa.morphTargetBinds.length);
+  for (const [name, expression] of Object.entries(vrm.expressions.preset)) {
+    for (const { node, index } of expression.morphTargetBinds ?? []) {
+      const mesh = json.meshes[json.nodes[node]?.mesh];
+      assert.ok(mesh?.primitives.some(primitive => primitive.targets?.[index]), name);
+    }
+  }
+  const trousers = json.nodes.filter(node => typeof node.mesh === 'number' &&
+    node.name === 'One-piece fitted navy trousers');
+  assert.equal(trousers.length, 1);
+  assert.equal(trousers[0].skin, 0);
+  for (const side of ['Left', 'Right']) {
+    for (const part of ['stacked heel', 'forefoot sole']) {
+      const footwear = json.nodes.find(node => node.name === side + ' boot · ' + part);
+      assert.equal(footwear?.skin, 0, side + ' ' + part);
+    }
+  }
+  for (const vowel of ['aa', 'oh']) {
+    assert.ok(vrm.expressions.preset[vowel].morphTargetBinds.every(({ weight }) => weight > 0 && weight < 0.65),
+      vowel);
+  }
+  const binding = vrm.expressions.preset.aa.morphTargetBinds
+    .find(({ node }) => json.nodes[node]?.name === 'Mouth interior · elliptical speech');
+  assert.ok(binding);
+  const lips = json.meshes[json.nodes[binding.node].mesh].primitives[0];
+  const binaryStart = 28 + bytes.readUInt32LE(12);
+  const readPosition = (index, vertex, axis) => {
+    const accessor = json.accessors[index];
+    const view = json.bufferViews[accessor.bufferView];
+    return bytes.readFloatLE(binaryStart + (view.byteOffset ?? 0) + (accessor.byteOffset ?? 0) +
+      vertex * (view.byteStride ?? 12) + axis * 4);
+  };
+  const count = json.accessors[lips.attributes.POSITION].count;
+  const extent = [0, 1].map(axis => {
+    const values = Array.from({ length: count }, (_, vertex) => readPosition(lips.attributes.POSITION, vertex, axis) +
+      binding.weight * readPosition(lips.targets[binding.index].POSITION, vertex, axis));
+    return Math.max(...values) - Math.min(...values);
+  });
+  assert.ok(extent[1] > .004 && extent[0] > extent[1] * 2.3, 'the open lip contour is a horizontal oval');
+  const library = createModelLibrary(join(folder, 'library.json'), {
+    bundledModel: join(folder, 'Gemini.glb'), coverModel: fileURLToPath(coverModel),
+  });
+  assert.ok((await library.list()).some(model => model.id === 'va-cover' && model.isDefault));
 });
