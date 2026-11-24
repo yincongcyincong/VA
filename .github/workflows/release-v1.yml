@@ -34,11 +34,7 @@ jobs:
         run: |
           test "v$(node -p 'require("./package.json").version')" = "$RELEASE_TAG"
           test "$(uname -m)" = arm64
-          make dmg
-          codesign --verify --deep --strict dist/VA-darwin-arm64/VA.app
-          hdiutil verify dist/VA-1.0.0-mac-arm64.dmg
-          cd dist
-          shasum -a 256 VA-1.0.0-mac-arm64.dmg > SHA256SUMS.txt
+          bash scripts/package.sh dmg
       - uses: actions/upload-artifact@v4
         with:
           name: va-release
