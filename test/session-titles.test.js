@@ -64,7 +64,15 @@ test('Codex sessions without an index title use the local SQLite title', async t
   if (!await access('/usr/bin/sqlite3').then(() => true, () => false)) return t.skip('macOS sqlite3 is unavailable');
   const { root, lookup, record } = await fixtures(t);
   execFileSync('/usr/bin/sqlite3', [join(root, 'state_5.sqlite'),
-    `CREATE TABLE threads (id TEXT, title TEXT); INSERT INTO threads VALUES ('${id}', '数据库的会话名');`]);
+    `CREATE TABLE threads (id TEXT, title TEXT); INSERT INTO threads VALUES ('${id.toUpperCase()}', '数据库的会话名');`]);
   const codex = record('codex');
   assert.equal((await lookup([codex])).get(codex.ref), '数据库的会话名');
+});
+
+test('Codex titles match session ids stored with uppercase letters', async t => {
+  const { root, lookup } = await fixtures(t);
+  const upper = id.toUpperCase();
+  await writeFile(join(root, 'session_index.jsonl'), line({ id: upper, thread_name: '大写会话的名字' }));
+  const codex = { provider: 'codex', id: upper, ref: `codex:${upper}` };
+  assert.equal((await lookup([codex])).get(codex.ref), '大写会话的名字');
 });

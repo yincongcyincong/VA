@@ -5,7 +5,8 @@ import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { actionSupported, compilePerformance, describePerformance, performanceDefaults } from './performance-config.js';
-import { chatPerformancePrompt, createRolePrompt, replyPerformance, requestedPerformance, requestsSelfie } from './character-performance.js';
+import { chatPerformancePrompt, createRolePrompt, danceRequestProblem, replyPerformance, requestedPerformance, requestsSelfie } from './character-performance.js';
+import { createReplyPresenter } from './reply-presenter.js';
 import { ControlError, startControl } from '../lib/control.js';
 import { createLogger, errorCode } from '../lib/logger.js';
 import { mergeConfigEntries, parseConfigCommand } from '../lib/configuration.js';
@@ -182,10 +183,7 @@ async function getCharacter() {
       window.setTitle(characterName + ' · VA');
       window.webContents.send('va:character-name-changed', characterName);
     }
-    if (tray) {
-      tray.setToolTip('VA · ' + characterName);
-      updateTray();
-    }
+    updateTray();
     if (selectedModel) {
       const settings = settingsSnapshot();
       settingsWindow?.webContents.send('va:settings-changed', settings);
@@ -995,14 +993,18 @@ function nextDance() {
   return choices.length ? choices[danceIndex++ % choices.length] : undefined;
 }
 
+function currentDanceProblem(intent) {
+  return danceRequestProblem(intent, performanceSnapshot(), inputDances.length);
+}
+
+function ensureDanceRequest(effect) {
+  const problem = effect?.dance && currentDanceProblem(effect.dance);
+  if (problem) throw problem;
+}
+
 function queueInputDance(intent, introduction = {}) {
-  const supported = intent.action ? actionSupported(performanceCatalog.actions[intent.action], state.media) : supportedDances().length;
-  if (!supported) {
-    throw new ControlError('MODEL_ACTION', '当前模型不支持这个舞步，可在「动作」查看可用动作。');
-  }
-  if (inputDances.length + intent.count > 4) {
-    throw new ControlError('BUSY', '舞步已经排满，等这几段跳完再试。');
-  }
+  const problem = currentDanceProblem(intent);
+  if (problem) throw problem;
   inputDances.push({ action: intent.action, ...introduction },
     ...Array.from({ length: intent.count - 1 }, () => ({ action: intent.action })));
   lastInputDanceAt = Date.now();
@@ -1278,7 +1280,9 @@ function createAgentSession(message) {
   requireMode('local');
   stopAgentVoice();
   if (message === undefined) return localAgent.openNewSession();
-  return localAgent.send(message, { newSession: true, requestedEffect: requestedPerformance(message, characterName, performanceSnapshot()) });
+  const requestedEffect = requestedPerformance(message, characterName, performanceSnapshot());
+  ensureDanceRequest(requestedEffect);
+  return localAgent.send(message, { newSession: true, requestedEffect });
 }
 
 async function startDoubaoCaptions(value) {
@@ -1349,6 +1353,7 @@ async function dispatchChat(message, speak, voiceTarget) {
   requireChatInput();
   if (currentMode === 'local') {
     const requestedEffect = requestedPerformance(message, characterName, performanceSnapshot());
+    ensureDanceRequest(requestedEffect);
     try {
       return await localAgent.send(message, { speak, requestedEffect, voiceTarget });
     } catch (error) {
@@ -1386,18 +1391,13 @@ async function deepSeekContext(sessionId) {
   return { prompt: role + '\n\n本会话已绑定 VA。挥手、跳舞等可用桌面动作由 VA 读取回复末行后执行。需要表演时，直接写台词和末行动作标记即可。' };
 }
 
-function showReply(text, source, readAloud, effect) {
-  const selection = effect ?? replyPerformance(text, performanceSnapshot());
-  const speech = selection.speech ?? text;
-  if (selection.dance) {
-    const [first, ...rest] = splitReplySpeech(speech);
-    if (rest.length && channelSpeech.length >= 5) return false;
-    queueInputDance(selection.dance, { speech: first, expression: selection.expression, readAloud, source });
-    if (rest.length) channelSpeech.push({ lines: rest, source, readAloud, effect: {} });
-    return true;
-  }
-  return queueSpeech(speech, source, readAloud, selection);
-}
+const showReply = createReplyPresenter({
+  parseReply: text => replyPerformance(text, performanceSnapshot()),
+  queueDance: queueInputDance,
+  queueSpeech,
+  queueLines: (lines, source, readAloud) => channelSpeech.push({ lines, source, readAloud, effect: {} }),
+  speechCapacity: () => channelSpeech.length < 5,
+});
 
 function canAnimateFromCaption() {
   return currentMode === 'doubao-client' && captionAutoActions && !active && !petting && !changingModel && !voiceDanceTimer && state.state === 'ready'
@@ -1497,9 +1497,9 @@ async function handleConfiguration(command) {
       settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
       return performanceSnapshot();
     case 'chat-bind': {
-      const { client, sessionId } = await bindChat(value.id);
+      const status = await bindChat(value.id);
       settingsWindow?.webContents.send('va:chat-refresh');
-      return { client, sessionId };
+      return { client: status.client ?? null, sessionId: status.sessionId ?? null };
     }
     case 'doubao-unbind':
       requireMode('doubao-client');
@@ -1583,7 +1583,8 @@ async function handle(command) {
     case 'observe': return await senses.observe();
     case 'character': {
       const character = await getCharacter();
-      return { path: characterPath, ...character, prompt: character.prompt.replaceAll('{{name}}', () => character.name) };
+      return { path: characterPath, ...character, prompt: character.prompt
+        .replaceAll('{{actionCommands}}', '').replaceAll('{{name}}', () => character.name) };
     }
     case 'prompt': return { prompt: await conversationPrompt(command.style) };
     case 'deepseek-context': return deepSeekContext(command.sessionId);
@@ -2320,8 +2321,6 @@ if (!app.requestSingleInstanceLock()) {
       });
     }
     tray = new Tray(icon);
-    tray.setTitle('VA');
-    tray.setToolTip('VA · ' + characterName);
     shortcutRegistered = globalShortcut.register('Control+Alt+V', openSettings);
     updateTray();
     server = await startControl(async command => {

@@ -23,7 +23,7 @@ const usage = `VA · 桌面角色
   va config list | get <配置组>           查询配置组、操作或当前配置
   va config <set|run> <目标> [JSON|--file <文件>|--stdin]
   va prompt [--voice]                   输出当前角色和可用动作的完整 Prompt
-  va chat [消息] [--speak]                打开接入设置，或通过命令行向已接入的 Agent 发送消息
+  va chat [消息] [--speak]                打开接入设置，或向已接入的 Agent 发送消息；本地 Agent 需先绑定会话（va chat-bind）
   va chat-status | chat-new | chat-cancel
   va chat-context                        向已绑定的豆包对话同步 VA 角色能力
   va chat-bind <会话ID|current>           绑定 Agent 会话，或绑定豆包当前对话

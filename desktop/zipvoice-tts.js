@@ -85,6 +85,7 @@ export function createZipVoice(script) {
     }
     const { child, close, pending } = worker;
     const id = ++nextId;
+    const probe = payload.text === undefined;
     return new Promise((resolve, reject) => {
       const settle = callback => value => {
         clearTimeout(timer);
@@ -93,8 +94,10 @@ export function createZipVoice(script) {
         callback(value);
       };
       const abort = () => pending.get(id)?.reject(signal.reason);
-      const timer = setTimeout(() => close(failure('ZipVoice 语音合成超时。')), 15_000);
-      pending.set(id, { probe: payload.text === undefined, resolve: settle(resolve), reject: settle(reject) });
+      // 预热请求要等 sherpa-onnx 首次加载模型，用更长的超时，避免把慢盘加载误报成超时。
+      const timer = setTimeout(() => close(failure(probe ? 'ZipVoice 语音服务启动超时。' : 'ZipVoice 语音合成超时。')),
+        probe ? 120_000 : 15_000);
+      pending.set(id, { probe, resolve: settle(resolve), reject: settle(reject) });
       signal?.addEventListener('abort', abort, { once: true });
       child.stdin.write(JSON.stringify({ id, ...payload }) + '\n');
     });

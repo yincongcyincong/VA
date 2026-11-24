@@ -121,3 +121,33 @@ test('ZipVoice handles warmup, synthesis, cancellation, and worker recovery', as
   assert.deepEqual(await speak('重新启动'), wave);
   await assert.rejects(worker.warm({ ...config, modelDirectory: 'missing' }, reference), /模型文件不完整/);
 });
+
+test('ZipVoice warm-up outlasts the first model load while synthesis stays time-boxed', async t => {
+  const dir = await mkdtemp(join(tmpdir(), 'va-zipvoice-timeout-'));
+  const python = join(dir, 'silent-python');
+  const worker = createZipVoice('fixture-worker');
+  t.after(async () => {
+    worker.stop();
+    await rm(dir, { recursive: true, force: true });
+  });
+  await writeFile(python, `#!${process.execPath}\n` +
+    "require('node:readline').createInterface({ input: process.stdin });\n" +
+    'setInterval(() => {}, 60_000);\n', { mode: 0o700 });
+  const config = { python, modelDirectory: 'slow-disk' };
+  const reference = { path: 'voice.wav', text: '原文' };
+  const settle = promise => promise.then(() => 'fulfilled', error => `rejected:${error.message}`);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+
+  let warmState = 'pending';
+  void settle(worker.warm(config, reference)).then(state => { warmState = state; });
+  t.mock.timers.tick(15_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(warmState, 'pending');
+  t.mock.timers.tick(105_000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(warmState, 'rejected:ZipVoice 语音服务启动超时。');
+
+  const speaking = settle(worker.speak('一段文字', config, reference, undefined, { rate: 0, volume: 0 }));
+  t.mock.timers.tick(15_000);
+  assert.equal(await speaking, 'rejected:ZipVoice 语音合成超时。');
+});
