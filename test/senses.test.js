@@ -67,6 +67,43 @@ test('an unavailable vision provider reports its error before capturing', async 
   assert.equal(sensor.status().screen.code, 'MODEL_UNCONFIGURED');
 });
 
+test('screen permission denial is reported before Claude sees an image and recovers on re-enable', async t => {
+  const denied = new ControlError('SCREEN_PERMISSION', '系统录屏权限关闭');
+  const observation = Promise.withResolvers();
+  let granted = false;
+  let requests = 0;
+  const sensor = createSenses({
+    getCharacter: async () => ({ prompt: '测试角色' }),
+    captureScreen: async () => {
+      if (!granted) throw denied;
+      return { data: 'mock-frame', capturedAt: 'fixture' };
+    },
+    prepareObservation: async () => ({ frame, prompt }) => {
+      requests++;
+      assert.equal(frame.data, 'mock-frame');
+      assert.match(prompt, /只返回 JSON 对象/);
+      return '\x60\x60\x60json\n{"activity":"阅读文档","speech":"正在读文档吧？"}\n\x60\x60\x60';
+    },
+    onScreen: observation.resolve,
+    onStatus: () => {},
+    onMusic: () => {},
+  });
+  const configure = screenWatch => sensor.update({ screenWatch, musicDance: false, shown: true, interval: 60, target: 'local' });
+  t.after(() => configure(false));
+  configure(true);
+  await setImmediate();
+  assert.equal(sensor.status().screen.state, 'error');
+  assert.equal(sensor.status().screen.code, 'SCREEN_PERMISSION');
+  assert.equal(requests, 0);
+  configure(false);
+  granted = true;
+  configure(true);
+  assert.equal(await observation.promise, '正在读文档吧？');
+  assert.equal(sensor.status().screen.lastActivity, '阅读文档');
+  assert.equal(sensor.status().screen.code, undefined);
+  assert.equal(requests, 1);
+});
+
 test('music detection is independent of the screen route', {
   timeout: 10000,
 }, async t => {

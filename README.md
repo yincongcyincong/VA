@@ -62,6 +62,8 @@ ln -s "$PWD/bin/va.js" ~/.local/bin/va
 
 在仓库运行 `npm test` 或 `make test`。测试使用临时配置、模拟截图和模拟 Agent，对外部服务和系统录制权限均无依赖。
 
+在 Node.js 26 下运行 `npm run test:coverage`，统计 `bin/`、`desktop/`、`lib/` 和 `integrations/` 下的 JavaScript 覆盖率，包含测试从未加载的文件。
+
 VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启动时，以执行命令时所在的目录为准。直接打开打包应用且系统提供的工作目录是磁盘根目录时，以 `.app` 的所在目录为准。可运行 `tail -f logs/va.log` 跟踪日志。
 
 日志每行一条 JSON，记录启动、模型检查、接入切换、对话结果、豆包绑定、动作和传感器状态。错误按错误码记录，聊天正文、截图、录音和 API 密钥仅用于各自的功能。日志达到约 2 MiB 时轮换，上一份保存在 `logs/va.log.1`。
@@ -267,6 +269,14 @@ va chat "我们刚才聊到哪里了？" --speak
 用 `va config set character '{"prompt":"…"}'` 或 MCP 的 `va_config_set` 更新同一个输入框。运行 `va prompt` 可查看发送给本地 Agent 的完整版，`va prompt --voice` 输出豆包和机器人频道的版本。已绑定豆包客户端时，可点「同步角色能力」更新当前会话。OpenClaw 的同步仍通过插件选项 `workspacePrompt` 开启。[Prompt 与动作配置](docs/agent-custom-actions.md#对话如何触发动作)
 
 接入配置保存在 `~/Library/Application Support/VA Desktop/agent.json`。命令行可用 `va integration [off|local|doubao-client|astrbot|openclaw]` 切换。自定义 Agent 在 `localAgent.custom.command` 填可执行文件的绝对路径，`args` 填参数。VA 通过 stdin 传入一行 JSON，其中包含 `message`、`prompt` 和 `sessionId`。适配器通过 stdout 返回带 `reply` 和 `sessionId` 的 JSON。屏幕观察请求的 `sessionId` 为 `null`，图片作为 `image.mime` 和 Base64 格式的 `image.data` 传入。
+
+### 向本地 Agent 说话
+
+在「设置 → 智能体接入 → 本地 Agent」选择 Agent 并绑定会话，然后在「向 Agent 说话」点「开始监听」。首次使用需要给 VA 开启 macOS 的麦克风权限。需要 macOS 26 和本机中文语音识别资源。[Apple Speech](https://developer.apple.com/documentation/speech)
+
+VA 在本机转写麦克风声音，将识别完成的文字自动发到绑定的会话。回复仍显示在角色旁，开启「自动朗读回复」即可听到回复。发送和朗读期间会暂停监听，结束后自动恢复。
+
+监听默认关闭，退出 VA 或变更 Agent、会话绑定时会停止。也可以在设置页点「停止监听」，或从 VA 菜单栏点「停止 Agent 语音输入」。
 
 ### 本机豆包客户端
 

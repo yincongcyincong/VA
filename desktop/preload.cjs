@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld('va', {
   openChat: () => ipcRenderer.send('va:open-chat'),
   localChat: (operation, value) => ipcRenderer.invoke('va:local-chat', operation, value),
   onChatRefresh: callback => ipcRenderer.on('va:chat-refresh', () => callback()),
+  onAgentVoice: callback => ipcRenderer.on('va:agent-voice', (_event, state) => callback(state)),
   onDoubaoOutput: callback => ipcRenderer.on('va:doubao-output', (_event, output) => callback(output)),
   onDoubaoCaptions: callback => ipcRenderer.on('va:doubao-captions', (_event, state) => callback(state)),
   previewScale: value => ipcRenderer.send('va:preview-scale', value),

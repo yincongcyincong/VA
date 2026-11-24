@@ -200,6 +200,7 @@ test('DeepSeek Harness binds a recorded session after desktop navigation succeed
   assert.equal(archived.sessionId, null);
   assert.deepEqual(archived.sessionHistory.map(record => record.id), [previous]);
   assert.equal(await agent.matchesDeepSeekSession(target), false);
+  await assert.rejects(agent.voiceTarget(), { code: 'AGENT_SESSION' });
   await assert.rejects(agent.bind(target), { code: 'AGENT_SESSION_ARCHIVED' });
   await assert.rejects(agent.openSession(record.ref, { bind: true }), { code: 'AGENT_SESSION_ARCHIVED' });
   await assert.rejects(agent.restoreSession(record.ref), { code: 'AGENT_SESSION_ARCHIVED' });
@@ -244,6 +245,77 @@ test('OMP resumes the recorded transcript and removing VA records leaves native 
   assert.equal(after.sessionId, null);
   assert.deepEqual(after.sessionHistory.map(entry => entry.provider), ['custom']);
   assert.equal(await readFile(path, 'utf8'), transcript);
+});
+
+test('Claude receives an image through stream JSON without writing to the bound chat', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'va-claude-observation-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const command = join(root, 'claude');
+  const sessionId = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  await writeFile(command, `#!${process.execPath}
+    const assert = require('node:assert/strict');
+    const args = process.argv.slice(2);
+    assert.ok(args.includes('--no-session-persistence'));
+    assert.ok(!args.includes('--resume'));
+    assert.equal(args[args.indexOf('--input-format') + 1], 'stream-json');
+    assert.equal(args[args.indexOf('--output-format') + 1], 'stream-json');
+    assert.equal(args[args.indexOf('--append-system-prompt') + 1], '观察角色');
+    const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+    assert.deepEqual(input.message.content, [
+      { type: 'text', text: '概括主屏幕' },
+      { type: 'image', source: { type: 'base64', media_type: 'image/jpeg', data: 'Zml4dHVyZQ==' } },
+    ]);
+    console.log(JSON.stringify({ type: 'stream_event', event: 'fixture' }));
+    console.log(JSON.stringify({ type: 'result', result: '{"activity":"阅读","speech":""}' }));
+  `, { mode: 0o700 });
+  const agent = createLocalAgent({
+    getConfig: async () => ({ provider: 'claude', claude: { command } }),
+    sessionPath: join(root, 'bindings.json'),
+    launchDirectory: root,
+  });
+  await agent.bind(sessionId);
+  const before = await readFile(join(root, 'bindings.json'), 'utf8');
+  const observe = await agent.prepareObservation();
+  const reply = await observe({
+    message: '概括主屏幕', prompt: '观察角色', frame: { mime: 'image/jpeg', data: 'Zml4dHVyZQ==' },
+    signal: new AbortController().signal,
+  });
+  assert.deepEqual(JSON.parse(reply), { activity: '阅读', speech: '' });
+  assert.equal(await readFile(join(root, 'bindings.json'), 'utf8'), before);
+});
+
+test('voice input uses the original local Agent binding and refuses to send to a replacement session', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'va-voice-binding-'));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const command = join(root, 'claude');
+  const first = 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa';
+  const second = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  await writeFile(command, `#!${process.execPath}
+    const assert = require('node:assert/strict');
+    const input = require('node:fs').readFileSync(0, 'utf8');
+    assert.equal(input, '语音输入');
+    const id = process.argv[process.argv.indexOf('--resume') + 1];
+    console.log(JSON.stringify({ result: input, session_id: id }));
+  `, { mode: 0o700 });
+  const displayed = [];
+  const agent = createLocalAgent({
+    getConfig: async () => ({ provider: 'claude', claude: { command }, speakReplies: true }),
+    getPrompt: async () => '角色',
+    parseReply: speech => ({ speech }),
+    presentReply: (text, spoken) => displayed.push([text, spoken]) > 0,
+    sessionPath: join(root, 'bindings.json'),
+    launchDirectory: root,
+  });
+  await assert.rejects(agent.voiceTarget(), { code: 'AGENT_SESSION' });
+  await agent.bind(first);
+  const voiceTarget = await agent.voiceTarget();
+  const reply = await agent.send('语音输入', { voiceTarget });
+  assert.equal(reply.sessionId, first);
+  assert.deepEqual(displayed, [['语音输入', true]]);
+  await agent.bind(second);
+  await assert.rejects(agent.send('语音输入', { voiceTarget }), { code: 'AGENT_SESSION_CHANGED' });
+  assert.deepEqual(displayed, [['语音输入', true]]);
+  assert.equal((await agent.status()).sessionId, second);
 });
 
 test('a fresh session opens the selected native Agent without sending a first message', async t => {

@@ -18,6 +18,7 @@ import { defaultScreenInterval, isScreenInterval, screenIntervalLabel, themes } 
 import { createSenses } from './senses.js';
 import { botRoute, checkBotRoute, configureIntegration, externalModes, integrationMode, integrationSnapshot, screenMode } from './integration.js';
 import { createLocalAgent } from './local-agent.js';
+import { createAgentVoice } from './agent-voice.js';
 import { installDeepSeekRole } from './deepseek-profile.js';
 import { deepSeekNavigation } from './deepseek-navigation.js';
 import { createSystemVoiceCatalog, splitReplySpeech, systemSpeech } from './speech.js';
@@ -118,6 +119,8 @@ let localAgent;
 let doubaoClient;
 let doubaoCaptions;
 let captionStartRevision = 0;
+let agentVoice;
+let agentVoiceRevision = 0;
 let captionAutoActions = false;
 let getAgentConfig;
 let editAgentConfig;
@@ -457,6 +460,8 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
       const { removed } = await clearAgentSessions(value);
       return { ...await chatStatus(), removed };
     }
+    case 'agent-voice-start': return startAgentVoice();
+    case 'agent-voice-stop': return stopAgentVoice();
     case 'create-session': {
       const openedSession = await createAgentSession();
       return { ...await chatStatus(), openedSession };
@@ -818,6 +823,7 @@ function menu() {
   const run = command => handle(command).catch(error => console.error(error.message));
   return Menu.buildFromTemplate([
     { label: '智能体接入…', click: () => openChat() },
+    ...(agentVoice?.state().enabled ? [{ label: '停止 Agent 语音输入', click: () => stopAgentVoice() }] : []),
     { label: '动作…', click: () => openSettings('performance') },
     { label: '模型库…', click: () => openSettings('models') },
     { label: '设置…', click: () => openSettings() },
@@ -908,6 +914,7 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
   const style = speechActionStyles[plan.motion] ?? speakingStyle;
   const job = { id: ++nextId, action, speech: speech.trim(), source, style };
   active = job;
+  let voicePlayback = false;
   const startedAt = Date.now();
   const context = { id: job.id, action, source };
   logger.write('info', 'performance.started', context);
@@ -921,6 +928,10 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
     const actionDialogue = !speech.trim() || source === 'input-action';
     const speak = readAloud && Boolean(line) && (!actionDialogue || await actionSoundEnabled());
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
+    if (speak) {
+      voicePlayback = true;
+      agentVoice?.setPlayback(true);
+    }
     job.started = true;
     const automatedReply = ['local-agent', 'bot-chat'].includes(source);
     const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud: speak, speakingStyle: style },
@@ -941,6 +952,7 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
     throw new ControlError(error.code, message);
   }).finally(() => {
     if (active === job) active = undefined;
+    if (voicePlayback) agentVoice?.setPlayback(false);
     updateTray();
     if (!job.canceled) drainAutomatic();
   });
@@ -1124,7 +1136,7 @@ async function chatStatus() {
   const config = await getAgentConfig();
   const integration = integrationSnapshot(config, currentMode);
   const prompt = rolePrompt;
-  if (integration.mode === 'local') return { integration, prompt, ...await localAgent.status() };
+  if (integration.mode === 'local') return { integration, prompt, ...await localAgent.status(), voiceInput: agentVoice?.state() };
   if (integration.mode === 'doubao-client') return { integration, prompt, ...doubaoClient.state(),
     captions: doubaoCaptions.state(), autoActions: (config.doubaoClient?.autoActions ?? config.doubaoClient?.autoDance) !== false,
     listenForActions: (config.doubaoClient?.listenForActions ?? config.doubaoClient?.listenForDance) === true };
@@ -1139,6 +1151,7 @@ async function changeIntegration(value) {
 
 async function activateIntegration(mode) {
   if (currentMode !== mode) {
+    stopAgentVoice();
     logger.write('info', 'integration.changed', { previous: currentMode, mode });
     currentMode = mode;
     captionStartRevision++;
@@ -1174,6 +1187,7 @@ async function activateIntegration(mode) {
 async function configureAgent(change) {
   const { prompt, ...settings } = change;
   if (prompt !== undefined && typeof prompt !== 'string') throw new ControlError('CHARACTER_CONFIG', '角色 Prompt 无效。');
+  if (change.localAgent) stopAgentVoice();
   const next = Object.keys(settings).length
     ? await editAgentConfig(config => patchAgentConfig(config, settings, launchDirectory)) : await getAgentConfig();
   if (prompt !== undefined) await setRolePrompt(prompt.trim() || createRolePrompt());
@@ -1191,6 +1205,7 @@ async function configureAgent(change) {
 
 async function localConfig(value) {
   requireMode('local');
+  if (value?.provider !== undefined || value?.cwd !== undefined) stopAgentVoice();
   await localAgent.configure(value);
   queuedSpeech = undefined;
   screenRevision++;
@@ -1216,6 +1231,7 @@ async function bindChat(id) {
     await bindDoubao(() => currentMode === 'doubao-client');
   } else {
     requireMode('local');
+    stopAgentVoice();
     await localAgent.bind(id);
   }
   return chatStatus();
@@ -1223,6 +1239,7 @@ async function bindChat(id) {
 
 async function openAgentSession(ref, options) {
   requireMode('local');
+  if (options?.bind) stopAgentVoice();
   const application = await localAgent.openSession(ref, options);
   if (options?.bind) {
     screenRevision++;
@@ -1233,6 +1250,7 @@ async function openAgentSession(ref, options) {
 
 async function restoreAgentSession(ref) {
   requireMode('local');
+  stopAgentVoice();
   await localAgent.restoreSession(ref);
   screenRevision++;
   syncSenses();
@@ -1241,6 +1259,7 @@ async function restoreAgentSession(ref) {
 
 async function unbindAgentSession(ref) {
   requireMode('local');
+  stopAgentVoice();
   await localAgent.unbindSession(ref);
   return chatStatus();
 }
@@ -1248,6 +1267,7 @@ async function unbindAgentSession(ref) {
 async function clearAgentSessions(value) {
   requireMode('local');
   const { value: selection } = parseConfigCommand({ operation: 'run', target: 'chat-clear-sessions', value });
+  stopAgentVoice();
   const result = await localAgent.clearSessions(selection);
   screenRevision++;
   syncSenses();
@@ -1256,6 +1276,7 @@ async function clearAgentSessions(value) {
 
 function createAgentSession(message) {
   requireMode('local');
+  stopAgentVoice();
   if (message === undefined) return localAgent.openNewSession();
   return localAgent.send(message, { newSession: true, requestedEffect: requestedPerformance(message, characterName, performanceSnapshot()) });
 }
@@ -1290,11 +1311,31 @@ function stopDoubaoCaptions() {
   return doubaoCaptions.state();
 }
 
-async function sendChat(message, speak) {
+function stopAgentVoice() {
+  agentVoiceRevision++;
+  return agentVoice?.stop();
+}
+
+async function startAgentVoice() {
+  requireMode('local');
+  if (agentVoice.state().enabled) return agentVoice.state();
+  if (Number(process.getSystemVersion().split('.')[0]) < 26) {
+    throw new ControlError('VOICE_INPUT_UNAVAILABLE', '本机语音输入需要 macOS 26 或更新版本。');
+  }
+  const revision = ++agentVoiceRevision;
+  const target = await localAgent.voiceTarget();
+  if (!await systemPreferences.askForMediaAccess('microphone')) {
+    throw new ControlError('MICROPHONE_PERMISSION', '请在 macOS「隐私与安全性 → 麦克风」允许 VA 使用麦克风。');
+  }
+  if (revision !== agentVoiceRevision || currentMode !== 'local') return agentVoice.state();
+  return agentVoice.start(target);
+}
+
+async function sendChat(message, speak, voiceTarget) {
   const mode = currentMode;
   const startedAt = Date.now();
   try {
-    const result = await dispatchChat(message, speak);
+    const result = await dispatchChat(message, speak, voiceTarget);
     logger.write('info', 'chat.completed', { mode, durationMs: Date.now() - startedAt });
     return result;
   } catch (error) {
@@ -1303,12 +1344,13 @@ async function sendChat(message, speak) {
   }
 }
 
-async function dispatchChat(message, speak) {
+async function dispatchChat(message, speak, voiceTarget) {
+  if (voiceTarget) requireMode('local');
   requireChatInput();
   if (currentMode === 'local') {
     const requestedEffect = requestedPerformance(message, characterName, performanceSnapshot());
     try {
-      return await localAgent.send(message, { speak, requestedEffect });
+      return await localAgent.send(message, { speak, requestedEffect, voiceTarget });
     } catch (error) {
       if (error.code !== 'AGENT_SESSION' || !requestedEffect || currentMode !== 'local') throw error;
       return queueInputPerformance(message);
@@ -2097,6 +2139,7 @@ if (!app.requestSingleInstanceLock()) {
     stopControlsHover();
     doubaoClient?.unbind();
     if (doubaoCaptions?.running()) doubaoCaptions.stop();
+    stopAgentVoice();
     localAgent?.cancel();
     void localAgent?.monitorReplies(false);
     senses?.update({ screenWatch: false, musicDance: false, shown: false });
@@ -2222,6 +2265,14 @@ if (!app.requestSingleInstanceLock()) {
       onChange: () => settingsWindow?.webContents.send('va:chat-refresh'),
     });
     await localAgent.monitorReplies(currentMode === 'local');
+    agentVoice = createAgentVoice({
+      binary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-captions'),
+      send: (text, target) => sendChat(text, undefined, target),
+      onState: value => {
+        settingsWindow?.webContents.send('va:agent-voice', value);
+        updateTray();
+      },
+    });
     const sensorStates = new Map();
     senses = createSenses({
       audioHelper: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-audio-monitor'),

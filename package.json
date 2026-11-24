@@ -10,6 +10,7 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/*.test.js\"",
+    "test:coverage": "node --test --experimental-test-coverage --test-coverage-include-all \"--test-coverage-include={bin,desktop,lib,integrations}/**/*.{js,mjs,cjs}\" \"test/*.test.js\"",
     "build:mac": "node scripts/build.js darwin",
     "build:dmg": "node scripts/build.js darwin --dmg"
   },

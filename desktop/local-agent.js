@@ -533,6 +533,15 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
 
   return {
     status: () => snapshot(),
+    async voiceTarget() {
+      const agent = await runtime(await getConfig(), launchDirectory);
+      const sessions = await getSessions(agent);
+      const sessionId = sessions.bindings[agent.key];
+      if (!validSession(agent.provider, sessionId) || archivedSession(sessions, agent.provider, sessionId)) {
+        throw new ControlError('AGENT_SESSION', '请先绑定一个可用的本地 Agent 会话。');
+      }
+      return { key: agent.key, sessionId };
+    },
     monitorReplies(enabled) {
       replyMonitorEnabled = enabled;
       return refreshReplyMonitor();
@@ -726,6 +735,10 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (!agent.command) throw new ControlError('AGENT_CONFIG', '请在 agent.json 的 localAgent.custom.command 填写可执行文件的绝对路径。');
         const sessions = await getSessions(agent);
         const sessionId = options.newSession ? null : (sessions.bindings[agent.key] ?? null);
+        if (options.voiceTarget && (options.voiceTarget.key !== agent.key ||
+            options.voiceTarget.sessionId !== sessionId)) {
+          throw new ControlError('AGENT_SESSION_CHANGED', '本地 Agent 会话已变更，请重新开启语音输入。');
+        }
         if (archivedSession(sessions, agent.provider, sessionId)) {
           throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档，请绑定另一条会话。');
         }
