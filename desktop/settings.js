@@ -174,6 +174,7 @@ function render(settings) {
   musicDance.checked = settings.musicDance;
   document.getElementById('privacy').hidden = !settings.nativeSenses;
   if (settings.platform === 'win32') {
+    document.getElementById('settings-shortcut').textContent = 'Ctrl+Alt+V';
     document.getElementById('music-description').textContent = 'Windows 暂不支持系统音乐识别。可以在「动作」页手动播放舞步。';
   }
   scale.disabled = clickThrough.disabled = false;
