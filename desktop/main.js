@@ -20,7 +20,7 @@ import { botRoute, checkBotRoute, configureIntegration, externalModes, integrati
 import { createLocalAgent } from './local-agent.js';
 import { installDeepSeekRole } from './deepseek-profile.js';
 import { deepSeekNavigation } from './deepseek-navigation.js';
-import { createSystemVoiceCatalog, splitReplySpeech, systemSpeech } from './speech.js';
+import { createSystemVoiceCatalog, defaultSystemVoice, splitReplySpeech, systemSpeech } from './speech.js';
 import { createSpeechCache } from './speech-cache.js';
 import { createZipVoice, zipVoiceReference } from './zipvoice-tts.js';
 import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
@@ -31,11 +31,15 @@ import { bindModel, modelFormats, modelMime, modelResource } from './model-files
 import { aiGirlName, coverName, createModelLibrary, localAhaName, modelPage, modelSources } from './model-library.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
-if (process.platform !== 'darwin') throw new ControlError('UNSUPPORTED_PLATFORM', 'VA 桌面版目前支持 macOS。');
+const mac = process.platform === 'darwin';
+const windows = process.platform === 'win32';
+if (!mac && !windows) {
+  throw new ControlError('UNSUPPORTED_PLATFORM', 'VA 桌面版目前支持 macOS 和 Windows。');
+}
 const appIconPath = join(root, 'assets', 'app-icon.png');
 const cwd = process.cwd();
 const launchDirectory = resolve(process.env.VA_START_CWD || (app.isPackaged && cwd === dirname(cwd)
-  ? resolve(process.execPath, '../../../..') : cwd));
+  ? (mac ? resolve(process.execPath, '../../../..') : dirname(process.execPath)) : cwd));
 const logger = createLogger(launchDirectory);
 const pageURL = 'va-app://desktop/index.html';
 const bubbleURL = 'va-app://desktop/bubble.html';
@@ -72,7 +76,7 @@ const agentPath = resolve(process.env.VA_AGENT_CONFIG || join(app.getPath('userD
 const voicePath = resolve(process.env.VA_VOICE_CONFIG || join(app.getPath('userData'), 'voice.json'));
 const zipVoiceDirectory = join(app.getPath('userData'), 'zipvoice-tts');
 const zipVoiceDefaults = {
-  python: join(zipVoiceDirectory, '.venv', 'bin', 'python'),
+  python: join(zipVoiceDirectory, '.venv', ...(mac ? ['bin', 'python'] : ['Scripts', 'python.exe'])),
   modelDirectory: join(zipVoiceDirectory, 'sherpa-onnx-zipvoice-distill-int8-zh-en-emilia'),
   referenceAudio: '',
 };
@@ -273,7 +277,7 @@ async function getVoiceConfig() {
   const { provider, actionSound, volc, systemVoice, zipvoice } = stored ?? {};
   return {
     provider: ['volc', 'zipvoice'].includes(provider) ? provider : 'system',
-    systemVoice: typeof systemVoice === 'string' ? systemVoice : 'Tingting',
+    systemVoice: typeof systemVoice === 'string' ? systemVoice : defaultSystemVoice,
     actionSound: actionSound === true,
     volc: { ...volcDefaults, ...volc },
     zipvoice: Object.fromEntries([...Object.keys(zipVoiceDefaults), 'referenceText']
@@ -381,7 +385,7 @@ async function synthesize(text, job) {
       if (preview) throw error;
       warning = error.message + ' 本次改用系统声音。';
     }
-    const voice = config?.systemVoice ?? 'Tingting';
+    const voice = config?.systemVoice ?? defaultSystemVoice;
     const { audio, cached } = await speechCache.get(text, ['system', voice, rate, volume],
       signal, () => systemSpeech(text, signal, { voice, ...prosody }));
     logger.write('info', 'speech.ready', { provider: 'system', cached });
@@ -462,6 +466,7 @@ ipcMain.handle('va:local-chat', async (event, operation, value) => {
       return { ...await chatStatus(), openedSession };
     }
     case 'deepseek-install-role': {
+      if (windows) throw new ControlError('UNSUPPORTED_PLATFORM', 'DeepSeek Harness 桌面角色插件暂不支持 Windows。');
       requireMode('local');
       const status = await localAgent.status();
       if (status.provider !== 'deepseekharness' || !await localAgent.matchesDeepSeekSession(status.sessionId)) {
@@ -659,6 +664,7 @@ function configureCharacter(change) {
 }
 ipcMain.handle('va:open-capture-privacy', event => {
   if (!settingsAuthorized(event)) throw new Error('无效的设置请求。');
+  if (windows) return;
   return shell.openExternal('x-apple.systempreferences:com.apple.preference.security?Privacy_ScreenCapture');
 });
 ipcMain.handle('va:voice-config', async (event, change) => {
@@ -804,7 +810,7 @@ function status() {
     senses: senses?.status(),
     speech: speechText || captionText || null,
     doubaoCaptions: currentMode === 'doubao-client' ? doubaoCaptions?.state() : undefined,
-    settingsShortcut: shortcutRegistered ? 'Control+Option+V' : null,
+    settingsShortcut: shortcutRegistered ? (mac ? 'Control+Option+V' : 'Ctrl+Alt+V') : null,
     view,
     model: modelSnapshot(),
     character: characterName,
@@ -828,7 +834,7 @@ function menu() {
     { label: `看屏幕 · ${screenIntervalLabel(screenInterval)}`, type: 'checkbox', checked: screenWatch,
       enabled: Boolean(screenMode(currentMode)) || screenWatch,
       click: item => run({ type: 'sense', channel: 'screen', enabled: item.checked }) },
-    { label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance, enabled: currentMode !== 'off',
+    { label: '检测音乐并自动跳舞', type: 'checkbox', checked: musicDance, enabled: !windows && currentMode !== 'off',
       click: item => run({ type: 'sense', channel: 'music', enabled: item.checked }) },
     { label: view === 'full' ? '半身视角' : '全身视角',
       click: () => run({ type: 'view', mode: view === 'full' ? 'portrait' : 'full' }) },
@@ -1124,14 +1130,21 @@ async function chatStatus() {
   const config = await getAgentConfig();
   const integration = integrationSnapshot(config, currentMode);
   const prompt = rolePrompt;
-  if (integration.mode === 'local') return { integration, prompt, ...await localAgent.status() };
+  if (integration.mode === 'local') return { integration, prompt, platform: process.platform, ...await localAgent.status() };
   if (integration.mode === 'doubao-client') return { integration, prompt, ...doubaoClient.state(),
     captions: doubaoCaptions.state(), autoActions: (config.doubaoClient?.autoActions ?? config.doubaoClient?.autoDance) !== false,
     listenForActions: (config.doubaoClient?.listenForActions ?? config.doubaoClient?.listenForDance) === true };
-  return { integration, prompt, history: externalHistory, busy: false };
+  return { integration, prompt, platform: process.platform, history: externalHistory, busy: false };
+}
+
+function requireSupportedIntegration(mode) {
+  if (windows && mode === 'doubao-client') {
+    throw new ControlError('UNSUPPORTED_PLATFORM', '豆包客户端联动和通话字幕暂不支持 Windows。');
+  }
 }
 
 async function changeIntegration(value) {
+  requireSupportedIntegration(value?.mode);
   const next = await editAgentConfig(config => configureIntegration(config, value));
   await activateIntegration(next.mode);
   return chatStatus();
@@ -1174,10 +1187,14 @@ async function activateIntegration(mode) {
 async function configureAgent(change) {
   const { prompt, ...settings } = change;
   if (prompt !== undefined && typeof prompt !== 'string') throw new ControlError('CHARACTER_CONFIG', '角色 Prompt 无效。');
-  const next = Object.keys(settings).length
-    ? await editAgentConfig(config => patchAgentConfig(config, settings, launchDirectory)) : await getAgentConfig();
+  const next = Object.keys(settings).length ? await editAgentConfig(async config => {
+    const updated = await patchAgentConfig(config, settings, launchDirectory);
+    requireSupportedIntegration(settings.mode);
+    return updated;
+  }) : await getAgentConfig();
   if (prompt !== undefined) await setRolePrompt(prompt.trim() || createRolePrompt());
-  const mode = integrationMode(next);
+  const configuredMode = integrationMode(next);
+  const mode = windows && configuredMode === 'doubao-client' ? 'off' : configuredMode;
   if (mode === currentMode && mode === 'local' && change.localAgent) {
     localAgent.cancel();
     await localAgent.monitorReplies(true);
@@ -1270,7 +1287,8 @@ async function startDoubaoCaptions(value) {
     throw new ControlError('INVALID_REQUEST', '请选择通话字幕选项。');
   }
   if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
-  const microphoneAllowed = !listen || await systemPreferences.askForMediaAccess('microphone');
+  const microphoneAllowed = !listen || (mac ? await systemPreferences.askForMediaAccess('microphone')
+    : !['denied', 'restricted'].includes(systemPreferences.getMediaAccessStatus('microphone')));
   if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
   requireMode('doubao-client');
   await editAgentConfig(config => ({ ...config, doubaoClient: {
@@ -1280,7 +1298,8 @@ async function startDoubaoCaptions(value) {
   requireMode('doubao-client');
   captionAutoActions = autoActions;
   return doubaoCaptions.start({ autoActions, listen: listen && microphoneAllowed,
-    micStatus: microphoneAllowed ? '' : '请在 macOS 系统设置允许 VA 使用麦克风。' });
+    micStatus: microphoneAllowed ? '' : (mac ? '请在 macOS 系统设置允许 VA 使用麦克风。'
+      : '请在 Windows 隐私设置中允许桌面应用使用麦克风。') });
 }
 
 function stopDoubaoCaptions() {
@@ -1705,12 +1724,15 @@ async function changeModel(path, checkOnly = false) {
 function settingsSnapshot() {
   return { theme, speakingStyle, scale, view, model: modelSnapshot(), characterName, rolePrompt, clickThrough, minScale, maxScale,
     screenWatch, screenInterval, screenTarget: screenMode(currentMode), integrationMode: currentMode,
-    nativeSenses: true, musicDance, senses: senses?.status(),
+    nativeSenses: !windows, platform: process.platform, musicDance, senses: senses?.status(),
     performance: performanceSnapshot() };
 }
 
 async function applySettings(change) {
   if (!change) return settingsSnapshot();
+  if (windows && change.musicDance === true) {
+    throw new ControlError('UNSUPPORTED_PLATFORM', 'Windows 暂不支持系统音乐识别。仍可手动播放舞步。');
+  }
   if (change.screenWatch === true) {
     const revision = screenRevision;
     await prepareObservation();
@@ -1813,7 +1835,7 @@ function openChat() {
 
 async function captureScreen() {
   const message = '读取屏幕需要 macOS「屏幕与系统音频录制」权限。授权后退出并重新启动 VA。';
-  const permission = systemPreferences.getMediaAccessStatus('screen');
+  const permission = mac ? systemPreferences.getMediaAccessStatus('screen') : 'granted';
   if (['denied', 'restricted'].includes(permission)) throw new ControlError('SCREEN_PERMISSION', message);
   const display = screen.getPrimaryDisplay();
   const { width, height } = display.size;
@@ -1825,7 +1847,7 @@ async function captureScreen() {
   const source = sources.find(item => item.display_id === String(display.id))
     ?? (screen.getAllDisplays().length === 1 ? sources[0] : undefined);
   if (!source || source.thumbnail.isEmpty()) {
-    if (systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
+    if (mac && systemPreferences.getMediaAccessStatus('screen') !== 'granted') {
       throw new ControlError('SCREEN_PERMISSION', message);
     }
     throw new ControlError('SCREEN_UNAVAILABLE', '暂时无法读取主显示器画面。');
@@ -1956,7 +1978,7 @@ function createBubble() {
       contextIsolation: true, backgroundThrottling: false },
   });
   bubbleWindow.setIgnoreMouseEvents(true);
-  bubbleWindow.setVisibleOnAllWorkspaces(true);
+  if (mac) bubbleWindow.setVisibleOnAllWorkspaces(true);
   localWindow(bubbleWindow.webContents);
   bubbleWindow.webContents.once('did-finish-load', () => {
     bubbleReady = true;
@@ -1982,7 +2004,7 @@ function createControls() {
   });
   // The toolbar needs to stay clickable above other desktop overlays.
   controlsWindow.setAlwaysOnTop(true, 'status', 1);
-  controlsWindow.setVisibleOnAllWorkspaces(true);
+  if (mac) controlsWindow.setVisibleOnAllWorkspaces(true);
   localWindow(controlsWindow.webContents);
   positionControls();
   controlsWindow.on('move', () => {
@@ -2036,7 +2058,7 @@ function createWindow() {
       autoplayPolicy: 'no-user-gesture-required',
     },
   });
-  window.setVisibleOnAllWorkspaces(true);
+  if (mac) window.setVisibleOnAllWorkspaces(true);
   syncMousePassthrough();
   localWindow(window.webContents);
   window.on('page-title-updated', event => event.preventDefault());
@@ -2195,11 +2217,16 @@ if (!app.requestSingleInstanceLock()) {
     try {
       storedAgent = await getAgentConfig();
       currentMode = integrationMode(storedAgent);
+      if (windows && currentMode === 'doubao-client') currentMode = 'off';
     } catch (error) {
       console.error(error.message);
     }
     await initializeRolePrompt(savedSettings.rolePrompt, storedAgent).catch(error => console.error(error.message));
     await getCharacter().catch(error => console.error(error.message));
+    if (windows && musicDance) {
+      musicDance = false;
+      await persistSettings();
+    }
     if (currentMode === 'off' && (screenWatch || musicDance)) {
       screenWatch = musicDance = false;
       await persistSettings();
@@ -2269,7 +2296,7 @@ if (!app.requestSingleInstanceLock()) {
       });
     }
     tray = new Tray(icon);
-    tray.setTitle('VA');
+    if (mac) tray.setTitle('VA');
     tray.setToolTip('VA · ' + characterName);
     shortcutRegistered = globalShortcut.register('Control+Alt+V', openSettings);
     updateTray();

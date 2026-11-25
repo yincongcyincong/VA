@@ -54,6 +54,16 @@ async function codexNames(root, ids) {
     .sort((a, b) => Number(b.match(/\d+/u)[0]) - Number(a.match(/\d+/u)[0]))[0];
   if (!latest) return names;
   const query = async columns => {
+    if (process.platform === 'win32') {
+      const { DatabaseSync } = await import('node:sqlite');
+      const database = new DatabaseSync(join(root, latest), { readOnly: true, timeout: 500 });
+      try {
+        const placeholders = missing.map(() => '?').join(', ');
+        return database.prepare(`SELECT id, ${columns} FROM threads WHERE id IN (${placeholders})`).all(...missing);
+      } finally {
+        database.close();
+      }
+    }
     const sql = `SELECT id, ${columns} FROM threads WHERE id IN (${missing.map(id => `'${id}'`).join(',')})`;
     const { stdout } = await exec('/usr/bin/sqlite3', ['-readonly', '-json', join(root, latest), sql], { timeout: 2000 });
     return JSON.parse(stdout || '[]');

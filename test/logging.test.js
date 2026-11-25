@@ -25,7 +25,7 @@ test('logs are JSON lines under the VA launch directory', async t => {
   assert.ok(Number.isFinite(Date.parse(records[0].time)));
   assert.equal(records[1].code, 'CLIENT_ROUTE');
   assert.doesNotMatch(raw, /hidden message/);
-  assert.equal((await stat(path)).mode & 0o077, 0);
+  if (process.platform !== 'win32') assert.equal((await stat(path)).mode & 0o077, 0);
   assert.equal(errorCode({ code: 'potentially private data' }), 'INTERNAL_ERROR');
 });
 

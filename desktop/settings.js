@@ -172,8 +172,10 @@ function render(settings) {
   screenWatch.checked = settings.screenWatch;
   markChoice(screenInterval, settings.screenInterval);
   musicDance.checked = settings.musicDance;
-  document.getElementById('music-settings').hidden = !settings.nativeSenses;
   document.getElementById('privacy').hidden = !settings.nativeSenses;
+  if (settings.platform === 'win32') {
+    document.getElementById('music-description').textContent = 'Windows 暂不支持系统音乐识别。可以在「动作」页手动播放舞步。';
+  }
   scale.disabled = clickThrough.disabled = false;
   musicDance.disabled = !settings.nativeSenses || settings.integrationMode === 'off';
   screenWatch.disabled = !settings.screenTarget && !settings.screenWatch;

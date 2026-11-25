@@ -1,7 +1,7 @@
 <p align="center"><img src="assets/app-icon.png" width="96" alt="VA 软件图标"></p>
 <h1 align="center">VA · 桌面 3D 角色</h1>
 
-VA 在 macOS 桌面上显示透明悬浮的 3D 角色。鼠标靠近时会显示顶部角色名和底部控制条，拖动名字或底部把手可移动角色。拖动模型可以旋转视角，用滚轮可以缩放。菜单栏可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
+VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。鼠标靠近时会显示顶部角色名和底部控制条，拖动名字或底部把手可移动角色。拖动模型可以旋转视角，用滚轮可以缩放。菜单栏或系统托盘可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
 
 [默认形象](#默认形象) · [角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体接入](#智能体接入) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型) · [代码结构](docs/architecture.md) · [许可证](#许可证)
 
@@ -39,8 +39,11 @@ npm ci
 | macOS 从源码启动 | `make dev` | 编译 Swift 助手后打开 VA |
 | 打包 macOS | `npm run build:mac` | 双击 `dist/VA-darwin-arm64/VA.app` 或 `dist/VA-darwin-x64/VA.app`，取决于构建用的 Mac |
 | 打包 macOS 安装盘 | `make dmg` | `dist/VA-<版本>-mac-<架构>.dmg` |
+| 打包 Windows | `npm run build:win` | 打开 `dist/VA-win32-x64/VA.exe` 或 `dist/VA-win32-arm64/VA.exe`，保留同目录下的运行文件 |
 
 Swift 助手需要在目标架构的 Mac 上编译，为豆包客户端联动、通话字幕和系统音乐检测提供支持。
+
+Windows 版可用 `npm run build:win -- --arch=x64` 或 `--arch=arm64` 指定目标架构。本机朗读使用 Windows 已安装的 SAPI 音色。原生功能限制及本机测试记录见 [WIN.md](WIN.md)。
 
 在设置页右上角点击「退出 VA」，或运行 `make stop`，即可结束当前 VA 进程。
 
@@ -136,7 +139,7 @@ va stop
 - **MCP 客户端**可添加名为 `va-desktop` 的本机 stdio 服务，命令填 `va`，参数填 `["mcp"]`。若客户端有独立 PATH，用 `va` 的绝对路径，或用 Node.js 绝对路径作为命令并传入 `bin/va.js` 的绝对路径与 `mcp`。可调用 `va_start`、`va_status`、`va_actions`、`va_perform`、`va_stop` 和 `va_photo`，其中照片直接返回 PNG。
 - **机器人**可以在同一台 Mac 用子进程调用 `va ... --json`。成功会输出 `{"ok":true,...}`，失败会输出 `{"ok":false,"error":{"code":"...","message":"..."}}` 并返回非零退出码。拿到照片的 `path` 后，用自己的渠道上传附件。远端机器人需要在运行 VA 的这台 Mac 上部署一个能调用 `va` 的桥接进程。
 
-桌面控制使用当前用户独占的 Unix socket。Agent 的受限环境需要允许本机 IPC。
+桌面控制在 macOS 使用当前用户独占的 Unix socket，在 Windows 使用命名管道。Agent 的受限环境需要允许本机 IPC。
 
 ## 配置与互动
 

@@ -10,12 +10,14 @@
   "scripts": {
     "start": "electron .",
     "test": "node --test \"test/*.test.js\"",
+    "build:win": "node scripts/build.js win32",
     "build:mac": "node scripts/build.js darwin",
     "build:dmg": "node scripts/build.js darwin --dmg"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
     "@pixiv/three-vrm": "2.0.10",
+    "cross-spawn": "7.0.6",
     "three": "0.160.1",
     "zod": "3.25.76"
   },

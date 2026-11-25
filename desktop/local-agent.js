@@ -5,12 +5,14 @@ import { access, mkdtemp, realpath, rm, stat, writeFile } from 'node:fs/promises
 import { homedir, tmpdir } from 'node:os';
 import { delimiter, isAbsolute, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
+import crossSpawn from 'cross-spawn';
 import { ControlError } from '../lib/control.js';
 import { readConfig, settingsWriter } from './config.js';
 import { createSessionReplies, findSessionFile } from './session-replies.js';
 import { createSessionTitles, sessionPreview } from './session-titles.js';
 import { navigateDeepSeek } from './deepseek-navigation.js';
 import { deepSeekArchives, deepSeekSessionId } from './deepseek-sessions.js';
+import { launchWindowsTerminal } from './windows-agent.js';
 
 const providers = { codex: 'Codex', claude: 'Claude Code', deepseekharness: 'DeepSeek Harness', omp: 'OMP', custom: '自定义 Agent' };
 const defaultCommands = { deepseekharness: 'dsh', custom: '' };
@@ -23,6 +25,7 @@ const nativeResume = new Set(['codex', 'claude']);
 const exec = promisify(execFile);
 const deepSeekApps = ['/Applications/DeepSeek Harness.app', join(homedir(), 'Applications/DeepSeek Harness.app')];
 const deepSeekCliDirectory = 'Contents/Resources/runtime/cli/bin';
+const windows = process.platform === 'win32';
 
 function field(value, max, label) {
   if (typeof value !== 'string' || value.length > max || value.includes('\0')) {
@@ -80,6 +83,8 @@ export async function patchLocalAgentConfig(current, patch, launchDirectory) {
 }
 
 function agentPath() {
+  if (windows) return [process.env.PATH, join(homedir(), '.local', 'bin'), join(homedir(), '.bun', 'bin'),
+    process.env.APPDATA && join(process.env.APPDATA, 'npm')].filter(Boolean).join(delimiter);
   return [process.env.PATH, join(homedir(), '.local/bin'), join(homedir(), '.bun/bin'),
     '/opt/homebrew/bin', '/usr/local/bin', '/usr/bin', '/bin',
     ...deepSeekApps.map(app => join(app, deepSeekCliDirectory))].filter(Boolean).join(delimiter);
@@ -88,8 +93,9 @@ function agentPath() {
 function runAgent(agent, signal, build) {
   return new Promise((resolve, reject) => {
     signal.throwIfAborted();
-    const child = spawn(agent.command, agent.args, {
-      cwd: agent.cwd, detached: true, stdio: ['pipe', 'pipe', 'pipe'],
+    const launch = windows ? crossSpawn : spawn;
+    const child = launch(agent.command, agent.args, {
+      cwd: agent.cwd, detached: !windows, windowsHide: windows, stdio: ['pipe', 'pipe', 'pipe'],
       env: { ...process.env, PATH: agentPath() },
     });
     const send = value => child.stdin.write(JSON.stringify(value) + '\n');
@@ -100,15 +106,25 @@ function runAgent(agent, signal, build) {
       if (stopped) return;
       stopped = true;
       signal.removeEventListener('abort', abort);
+      const settle = () => error ? reject(error) : resolve(result);
       if (child.pid && child.exitCode === null && child.signalCode === null) {
-        const kill = sig => {
-          try { process.kill(-child.pid, sig); } catch {}
-        };
-        kill('SIGTERM');
-        setTimeout(() => kill('SIGKILL'), 1000).unref();
+        if (windows) {
+          // Windows holds the child's working directory open until its process exits.
+          child.once('close', settle);
+          const taskkill = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
+          execFile(taskkill, ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, timeout: 5000 }, error => {
+            if (error && child.exitCode === null && child.signalCode === null) child.kill();
+          });
+          return;
+        } else {
+          const kill = sig => {
+            try { process.kill(-child.pid, sig); } catch {}
+          };
+          kill('SIGTERM');
+          setTimeout(() => kill('SIGKILL'), 1000).unref();
+        }
       }
-      if (error) reject(error);
-      else resolve(result);
+      settle();
     }
 
     function abort() { finish(signal.reason); }
@@ -338,6 +354,8 @@ const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 
 async function launchTerminal(agent, args, { freshOmp = false } = {}) {
   const path = agentPath();
+  if (windows && !freshOmp) return launchWindowsTerminal(agent, args, path);
+  if (windows) throw new ControlError('UNSUPPORTED_PLATFORM', 'Windows 请先在终端新建 OMP 会话，再回到 VA 绑定。');
   const candidates = isAbsolute(agent.command) ? [agent.command]
     : path.split(delimiter).map(directory => resolve(agent.cwd, directory, agent.command));
   let executable;
@@ -374,6 +392,7 @@ async function launchTerminal(agent, args, { freshOmp = false } = {}) {
 }
 
 async function openCodexDesktop(id, cwd) {
+  if (windows) return false;
   const url = new URL(`codex://threads/${id ?? 'new'}`);
   if (cwd) url.searchParams.set('path', cwd);
   const result = await exec('/usr/bin/open', [url.href], { timeout: 10_000 }).catch(() => null);
@@ -381,6 +400,7 @@ async function openCodexDesktop(id, cwd) {
 }
 
 async function openDeepSeekDesktop(command) {
+  if (windows) return false;
   const embedded = command.match(/^(.+\.app)\/Contents\/Resources\/runtime\/cli\/bin\/dsh$/u)?.[1];
   for (const app of new Set([embedded, ...deepSeekApps].filter(Boolean))) {
     if (!(await stat(app).catch(() => undefined))?.isDirectory()) continue;
@@ -467,7 +487,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
       sessionHistory: visible.map(({ titlePreview, ...entry }) => ({ ...entry, title: titles.get(entry.ref) ?? null,
         label: providers[entry.provider], canOpen: nativeResume.has(entry.provider) ||
           (entry.provider === 'omp' && uuidPattern.test(entry.id)) ||
-          (entry.provider === 'deepseekharness' && deepSeekSessionId(entry.id)),
+          (!windows && entry.provider === 'deepseekharness' && deepSeekSessionId(entry.id)),
         bound: Boolean(boundKey(entry, saved.bindings)), active: entry.ref === `${key}:${sessionId}` })),
       history: archivedSession(saved, provider, id) ? [] : history.get(key) ?? [], busy: Boolean(active) };
   }
@@ -651,6 +671,9 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
       const config = await getConfig();
       const { record, sessions, current } = await recordFor(ref, config);
       if (record.provider === 'deepseekharness' || record.provider === 'omp') {
+        if (windows && record.provider === 'deepseekharness') {
+          throw new ControlError('UNSUPPORTED_PLATFORM', 'Windows 请在 DeepSeek Harness 内打开会话，再回到 VA 绑定。');
+        }
         return exclusive(async signal => {
           if (archivedSession(sessions, record.provider, record.id)) {
             throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档。');

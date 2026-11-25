@@ -61,10 +61,18 @@ test('DeepSeek Harness titles come from the native title projection or the final
 });
 
 test('Codex sessions without an index title use the local SQLite title', async t => {
-  if (!await access('/usr/bin/sqlite3').then(() => true, () => false)) return t.skip('macOS sqlite3 is unavailable');
+  const windows = process.platform === 'win32';
+  if (!windows && !await access('/usr/bin/sqlite3').then(() => true, () => false)) return t.skip('macOS sqlite3 is unavailable');
   const { root, lookup, record } = await fixtures(t);
-  execFileSync('/usr/bin/sqlite3', [join(root, 'state_5.sqlite'),
-    `CREATE TABLE threads (id TEXT, title TEXT); INSERT INTO threads VALUES ('${id}', '数据库的会话名');`]);
+  const path = join(root, 'state_5.sqlite');
+  const statement = `CREATE TABLE threads (id TEXT, title TEXT); INSERT INTO threads VALUES ('${id}', '数据库的会话名');`;
+  if (windows) {
+    const { DatabaseSync } = await import('node:sqlite');
+    const database = new DatabaseSync(path);
+    try { database.exec(statement); } finally { database.close(); }
+  } else {
+    execFileSync('/usr/bin/sqlite3', [path, statement]);
+  }
   const codex = record('codex');
   assert.equal((await lookup([codex])).get(codex.ref), '数据库的会话名');
 });

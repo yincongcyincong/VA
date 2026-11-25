@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -80,6 +81,11 @@ test('music detection is independent of the screen route', {
   const detected = Promise.withResolvers();
   const sensor = createSenses({
     audioHelper, onStatus: () => {},
+    ...(process.platform === 'win32' && { launchAudio: (_helper, _args, options) => spawn(process.execPath, ['-e',
+      `for (const event of [{type:'ready'},{type:'score',music:0.8},{type:'score',music:0.9}]) {
+        console.log(JSON.stringify(event));
+      }
+      setInterval(() => {}, 1000);`], options) }),
     onMusic: active => { if (active) detected.resolve(); },
   });
   t.after(async () => {

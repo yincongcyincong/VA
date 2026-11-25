@@ -45,6 +45,11 @@ function controls() {
   for (const group of [modes, providers, configuration, routeConfiguration]) {
     for (const control of group.querySelectorAll('button, input')) control.disabled = Boolean(busy);
   }
+  if (current?.platform === 'win32') {
+    const doubao = modes.querySelector('[data-choice="doubao-client"]');
+    doubao.disabled = true;
+    doubao.textContent = '豆包客户端（仅 macOS）';
+  }
   for (const control of binding.elements) control.disabled = Boolean(busy || !current?.provider);
   createSession.disabled = Boolean(busy || !current?.provider);
   clearSessions.disabled = Boolean(busy || !current?.hasSessionRecords);
@@ -116,7 +121,7 @@ function render(state, syncFields = false) {
 
   markChoice(modes, mode);
   byId('local-panel').hidden = byId('session-panel').hidden = !local;
-  deepSeekRole.hidden = !local || state.provider !== 'deepseekharness';
+  deepSeekRole.hidden = state.platform === 'win32' || !local || state.provider !== 'deepseekharness';
   byId('doubao-client-panel').hidden = byId('doubao-captions-panel').hidden = !client;
   routeConfiguration.hidden = !route;
   byId('openclaw-fields').hidden = mode !== 'openclaw';

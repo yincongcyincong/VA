@@ -6,8 +6,11 @@ import { promisify } from 'node:util';
 import { ControlError } from '../lib/control.js';
 import { settingsWriter } from './config.js';
 import { dialogueCut } from './dialogue-text.js';
+import { windowsSpeech, windowsVoices } from './windows-speech.js';
 
 const exec = promisify(execFile);
+const windows = process.platform === 'win32';
+export const defaultSystemVoice = windows ? '' : 'Tingting';
 
 export function splitReplySpeech(text) {
   const lines = [];
@@ -32,14 +35,15 @@ export function parseMacVoices(list) {
 }
 
 export async function systemVoices() {
-  if (process.platform !== 'darwin') return [];
+  if (!windows && process.platform !== 'darwin') return [];
   try {
+    if (windows) return await windowsVoices();
     const { stdout } = await exec('/usr/bin/say', ['-v', '?'], { timeout: 15_000 });
     return parseMacVoices(stdout);
   } catch (error) {
     throw new ControlError('VOICE_LIST_UNAVAILABLE', error.killed
       ? '读取本机音色超时，请点击「刷新」重试。'
-      : 'macOS 暂时无法读取本机音色，请点击「刷新」重试。');
+      : `${windows ? 'Windows' : 'macOS'} 暂时无法读取本机音色，请点击「刷新」重试。`);
   }
 }
 
@@ -58,7 +62,7 @@ export function createSystemVoiceCatalog(path, { scan = systemVoices, onSaveErro
   function refresh() {
     pending ??= scan().then(async voices => {
       if (!voices.length) {
-        throw new ControlError('VOICE_LIST_EMPTY', 'macOS 未返回朗读音色，请在系统设置中添加音色后刷新。');
+        throw new ControlError('VOICE_LIST_EMPTY', `${windows ? 'Windows' : 'macOS'} 未返回朗读音色，请在系统设置中添加音色后刷新。`);
       }
       latest = Promise.resolve(voices);
       await save(voices).catch(onSaveError);
@@ -89,7 +93,8 @@ export async function systemSpeech(text, signal, { voice = '', rate = 0, volume 
   const folder = await mkdtemp(join(tmpdir(), 'va-speech-'));
   try {
     const output = join(folder, 'voice.wav');
-    await exec('/usr/bin/say', [...(voice ? ['-v', voice] : []), '-r', String(Math.round(175 * (1 + rate / 100))),
+    if (windows) await windowsSpeech(text, signal, { voice, rate, output });
+    else await exec('/usr/bin/say', [...(voice ? ['-v', voice] : []), '-r', String(Math.round(175 * (1 + rate / 100))),
       '--file-format=WAVE', '--data-format=LEI16@22050', '-o', output, '--', text], { timeout: 15_000, signal });
     const audio = await readFile(output);
     if (!waveDuration(audio)) throw new Error('Empty audio');
@@ -97,7 +102,8 @@ export async function systemSpeech(text, signal, { voice = '', rate = 0, volume 
     return audio;
   } catch {
     signal?.throwIfAborted();
-    throw new ControlError('VOICE_SYSTEM', '本机音色暂不可用。请在 macOS「辅助功能」中安装音色，或重新选择朗读音色。');
+    throw new ControlError('VOICE_SYSTEM', windows ? '本机音色暂不可用。请检查 Windows 语音包，或重新选择朗读音色。'
+      : '本机音色暂不可用。请在 macOS「辅助功能」中安装音色，或重新选择朗读音色。');
   } finally {
     await rm(folder, { recursive: true, force: true });
   }

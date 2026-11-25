@@ -7,7 +7,8 @@ import { analyzeScreen } from './vision-agent.js';
 const audioSilence = 3600;
 const emptyObservation = () => ({ activity: '', speech: '' });
 
-export function createSenses({ audioHelper, getCharacter, captureScreen, prepareObservation, onScreen, onMusic, onStatus }) {
+export function createSenses({ audioHelper, getCharacter, captureScreen, prepareObservation, onScreen, onMusic, onStatus,
+  launchAudio = spawn }) {
   let screenStatus = { state: 'off' };
   let musicStatus = { state: 'off', detected: false };
   let screenEnabled = false;
@@ -130,7 +131,7 @@ export function createSenses({ audioHelper, getCharacter, captureScreen, prepare
   function startMusic() {
     high = low = 0;
     setMusic('starting');
-    const proc = spawn(audioHelper, [String(process.pid)], { stdio: ['ignore', 'pipe', 'ignore'] });
+    const proc = launchAudio(audioHelper, [String(process.pid)], { stdio: ['ignore', 'pipe', 'ignore'] });
     musicProcess = proc;
     const lines = createInterface({ input: proc.stdout });
     lines.on('line', line => {
