@@ -11,6 +11,7 @@ const setupErrors = {
   load_failed: 'ZipVoice 模型加载失败。请检查模型、词表和声码器文件。',
 };
 const referenceErrors = {
+  converter_missing: '请把 FFmpeg 加入 Windows 的 PATH，或使用 24 kHz、单声道、16 位 PCM WAV 作为参考录音。',
   invalid_reference: '无法读取参考录音。请选择可播放的 WAV、M4A 或 MP3 文件。',
   long_reference: '参考录音最长支持 30 秒。建议使用约 3 秒的清晰人声。',
 };
@@ -32,20 +33,55 @@ export function createZipVoice(script, { launch = spawn } = {}) {
   let nextId = 0;
 
   function start(python, modelDirectory) {
-    const child = launch(python, ['-I', '-u', script, modelDirectory], {
+    const child = launch(python, ['-I', '-u', '-X', 'utf8', script, modelDirectory], {
       stdio: ['pipe', 'pipe', 'ignore'],
       ...(process.platform === 'win32' && { windowsHide: true }),
     });
     const lines = createInterface({ input: child.stdout, crlfDelay: Infinity });
     const pending = new Map();
-    const running = { python, modelDirectory, child, close, pending };
+    let ready = false;
+    let active;
+    let requestTimer;
+    const running = { python, modelDirectory, enqueue, close };
+    const startupTimer = setTimeout(() => close(failure('ZipVoice 语音服务启动超时。')), 120_000);
+
     function close(error = failure('ZipVoice 语音服务已停止。')) {
       if (worker !== running) return;
       worker = undefined;
+      clearTimeout(startupTimer);
+      clearTimeout(requestTimer);
       lines.close();
       child.stdin.destroy();
       child.kill();
       for (const request of pending.values()) request.reject(error);
+      pending.clear();
+      active = undefined;
+    }
+
+    function sendNext() {
+      if (!ready || active || !pending.size) return;
+      active = pending.values().next().value;
+      const timeoutMessage = active.probe ? 'ZipVoice 参考录音准备超时。' : 'ZipVoice 语音合成超时。';
+      requestTimer = setTimeout(() => close(failure(timeoutMessage)), 15_000);
+      child.stdin.write(JSON.stringify({ id: active.id, ...active.payload }) + '\n');
+    }
+
+    function enqueue(payload, signal) {
+      const id = ++nextId;
+      return new Promise((resolve, reject) => {
+        const settle = callback => value => {
+          signal?.removeEventListener('abort', abort);
+          callback(value);
+        };
+        const request = { id, payload, probe: payload.text === undefined, resolve: settle(resolve), reject: settle(reject) };
+        const abort = () => {
+          if (active !== request) pending.delete(id);
+          request.reject(signal.reason);
+        };
+        signal?.addEventListener('abort', abort, { once: true });
+        pending.set(id, request);
+        sendNext();
+      });
     }
     child.once('error', () => close(failure('无法启动 ZipVoice 所用的 Python。请检查路径或运行 make zipvoice-tts。')));
     child.stdin.on('error', () => close());
@@ -53,12 +89,19 @@ export function createZipVoice(script, { launch = spawn } = {}) {
     lines.on('line', line => {
       try {
         const response = JSON.parse(line);
-        if (response.id === 0 && Object.hasOwn(setupErrors, response.error)) {
-          close(failure(setupErrors[response.error]));
+        if (response.id === 0) {
+          if (response.ok !== true) {
+            const message = Object.hasOwn(setupErrors, response.error) ? setupErrors[response.error] : setupErrors.load_failed;
+            close(failure(message));
+            return;
+          }
+          ready = true;
+          clearTimeout(startupTimer);
+          sendNext();
           return;
         }
-        const request = pending.get(response.id);
-        if (!request) return;
+        if (!active || response.id !== active.id) return;
+        const request = active;
         if (!response.ok) {
           const message = Object.hasOwn(referenceErrors, response.error) ? referenceErrors[response.error] : 'ZipVoice 未能合成这段文字。';
           request.reject(failure(message));
@@ -71,6 +114,10 @@ export function createZipVoice(script, { launch = spawn } = {}) {
           }
           request.resolve(audio);
         }
+        clearTimeout(requestTimer);
+        pending.delete(request.id);
+        active = undefined;
+        sendNext();
       } catch {
         close(failure('ZipVoice 返回的音频无效。'));
       }
@@ -84,24 +131,7 @@ export function createZipVoice(script, { launch = spawn } = {}) {
       worker?.close();
       worker = start(python, modelDirectory);
     }
-    const { child, close, pending } = worker;
-    const id = ++nextId;
-    const probe = payload.text === undefined;
-    return new Promise((resolve, reject) => {
-      const settle = callback => value => {
-        clearTimeout(timer);
-        signal?.removeEventListener('abort', abort);
-        pending.delete(id);
-        callback(value);
-      };
-      const abort = () => pending.get(id)?.reject(signal.reason);
-      // 预热请求要等 sherpa-onnx 首次加载模型，用更长的超时，避免把慢盘加载误报成超时。
-      const timer = setTimeout(() => close(failure(probe ? 'ZipVoice 语音服务启动超时。' : 'ZipVoice 语音合成超时。')),
-        probe ? 120_000 : 15_000);
-      pending.set(id, { probe, resolve: settle(resolve), reject: settle(reject) });
-      signal?.addEventListener('abort', abort, { once: true });
-      child.stdin.write(JSON.stringify({ id, ...payload }) + '\n');
-    });
+    return worker.enqueue(payload, signal);
   }
 
   return {

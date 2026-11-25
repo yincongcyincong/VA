@@ -176,6 +176,7 @@ function render(settings) {
   if (settings.platform === 'win32') {
     document.getElementById('settings-shortcut').textContent = 'Ctrl+Alt+V';
     document.getElementById('music-description').textContent = 'Windows 暂不支持系统音乐识别。可以在「动作」页手动播放舞步。';
+    document.getElementById('zipvoice-setup').textContent = '在 Windows 上请准备 Python、sherpa-onnx 和模型。可直接使用 24 kHz 单声道 16 位 PCM WAV，其他参考音频通过 PATH 中的 FFmpeg 转换。';
   }
   scale.disabled = clickThrough.disabled = false;
   musicDance.disabled = !settings.nativeSenses || settings.integrationMode === 'off';

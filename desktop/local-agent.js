@@ -8,11 +8,11 @@ import { promisify } from 'node:util';
 import crossSpawn from 'cross-spawn';
 import { ControlError } from '../lib/control.js';
 import { readConfig, settingsWriter } from './config.js';
-import { createSessionReplies, findSessionFile } from './session-replies.js';
+import { createSessionReplies, findSessionFile, replySessionKey, supportsSessionReplies } from './session-replies.js';
 import { createSessionTitles, sessionPreview } from './session-titles.js';
 import { navigateDeepSeek } from './deepseek-navigation.js';
 import { deepSeekArchives, deepSeekSessionId } from './deepseek-sessions.js';
-import { launchWindowsTerminal } from './windows-agent.js';
+import { launchWindowsTerminal, stopWindowsAgent } from './windows-agent.js';
 
 const providers = { codex: 'Codex', claude: 'Claude Code', deepseekharness: 'DeepSeek Harness', omp: 'OMP', custom: '自定义 Agent' };
 const defaultCommands = { deepseekharness: 'dsh', custom: '' };
@@ -39,7 +39,7 @@ function preference(value) {
   if (typeof provider !== 'string' || (provider !== '' && !Object.hasOwn(providers, provider)) || typeof speakReplies !== 'boolean') {
     throw new ControlError('AGENT_CONFIG', '请选择受支持的 Agent。');
   }
-  return { provider, cwd: field(cwd, 4096, '工作目录'), speakReplies };
+  return { provider, cwd: field(cwd, 4096, '工作目录'), speakReplies, allowMultipleSessions: value?.allowMultipleSessions === true };
 }
 
 function profileModel(config, provider) {
@@ -109,12 +109,7 @@ function runAgent(agent, signal, build) {
       const settle = () => error ? reject(error) : resolve(result);
       if (child.pid && child.exitCode === null && child.signalCode === null) {
         if (windows) {
-          // Windows holds the child's working directory open until its process exits.
-          child.once('close', settle);
-          const taskkill = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'taskkill.exe');
-          execFile(taskkill, ['/pid', String(child.pid), '/t', '/f'], { windowsHide: true, timeout: 5000 }, error => {
-            if (error && child.exitCode === null && child.signalCode === null) child.kill();
-          });
+          void stopWindowsAgent(child).then(settle);
           return;
         } else {
           const kill = sig => {
@@ -342,7 +337,21 @@ function rememberSession(sessions, agent, id, boundAt, firstMessage) {
   const previous = sessions.history.find(item => item.provider === agent.provider && item.id === id);
   const titlePreview = previous?.titlePreview ?? sessionPreview(firstMessage);
   const record = { ref, provider: agent.provider, cwd: agent.cwd, id, boundAt, titlePreview };
-  sessions.history = [record, ...sessions.history.filter(item => item.ref !== ref)].slice(0, 100);
+  sessions.history = [record, ...sessions.history.filter(item => item.ref !== ref)]
+    .filter((entry, index) => index < 100 || sessions.listening.has(entry.ref));
+}
+
+function addBinding(sessions, agent, id, firstMessage) {
+  if (agent.allowMultipleSessions) {
+    sessions.bindings[agent.key] = id;
+    sessions.listening.add(`${agent.key}:${id}`);
+  } else keepSingleBinding(sessions, agent, id);
+  rememberSession(sessions, agent, id, new Date().toISOString(), firstMessage);
+}
+
+function keepSingleBinding(sessions, agent, id) {
+  sessions.bindings = id ? { [agent.key]: id } : {};
+  sessions.listening = new Set(id ? [`${agent.key}:${id}`] : []);
 }
 
 function boundKey(record, bindings) {
@@ -410,33 +419,36 @@ async function openDeepSeekDesktop(command) {
 }
 
 export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(),
-  presentReply, onChange = () => {}, onReplyError = () => {}, openTerminal = launchTerminal, openCodex = openCodexDesktop,
+  presentReply, onReplySessionsRemoved = () => {}, onChange = () => {}, onReplyError = () => {},
+  openTerminal = launchTerminal, openCodex = openCodexDesktop,
   openDeepSeek = openDeepSeekDesktop, openDeepSeekSession = navigateDeepSeek }) {
   const writeSessions = settingsWriter(sessionPath);
-  const saveSessions = ({ bindings, history }) => writeSessions({ bindings, history });
+  const saveSessions = ({ bindings, history, listening }) => writeSessions({ bindings, history, listening: [...listening] });
   const sessionTitles = createSessionTitles();
   const history = new Map();
   let active;
+  let pendingReply;
   let replyMonitorEnabled = false;
   let replyMonitorRevision = 0;
+  let replyTargets = new Set();
   let forwardedReplies = [];
   const replies = createSessionReplies({
-    paused: () => Boolean(active),
+    paused: session => pendingReply === session.scope,
     onError: onReplyError,
     present(text, session) {
       forwardedReplies = forwardedReplies.filter(reply => reply.until > Date.now());
-      const duplicate = forwardedReplies.findIndex(reply => reply.key === session.key && reply.id === session.id && reply.text === text);
+      const duplicate = forwardedReplies.findIndex(reply => reply.scope === session.scope && reply.text === text);
       if (duplicate >= 0) {
         forwardedReplies.splice(duplicate, 1);
         return true;
       }
       const effect = parseReply(text.slice(0, maxReply));
-      if (!effect.speech && !effect.action && !effect.expression) return true;
-      return presentReply(effect.speech, session.speakReplies, effect);
+      if (!effect.speech && !effect.action && !effect.expression && !effect.dance) return true;
+      return presentReply(effect.speech, session.speakReplies, effect, session.scope);
     },
   });
 
-  const getSessions = async agent => {
+  const getSessions = async (agent, allowMultipleSessions = agent?.allowMultipleSessions === true) => {
     const value = await readConfig(sessionPath, {}, 'AGENT_SESSIONS', 'local-agent-sessions.json');
     if (!value || typeof value !== 'object' || Array.isArray(value)) {
       throw new ControlError('AGENT_SESSIONS', '会话文件需要是一个 JSON 对象。');
@@ -444,31 +456,57 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     const bindings = Object.fromEntries(Object.entries(value.bindings ?? value)
       .filter(([key, id]) => /^[a-f0-9]{64}$/.test(key) && typeof id === 'string'));
     const records = Array.isArray(value.history) ? value.history : [];
-    const sessions = { bindings, history: records.filter(entry => entry && validSession(entry.provider, entry.id) &&
+    const listening = new Set(Array.isArray(value.listening)
+      ? value.listening.filter(ref => typeof ref === 'string' && /^[a-f0-9]{64}:[a-z0-9_.:-]{1,160}$/i.test(ref))
+      : Object.entries(bindings).map(([key, id]) => `${key}:${id}`));
+    const sessions = { bindings, listening, history: records.filter(entry => entry && validSession(entry.provider, entry.id) &&
       typeof entry.cwd === 'string' && isAbsolute(entry.cwd) && typeof entry.ref === 'string') };
     const id = agent && sessions.bindings[agent.key];
     if (id && validSession(agent.provider, id) && !sessions.history.some(entry => entry.ref === `${agent.key}:${id}`)) {
       rememberSession(sessions, agent, id, null);
     }
+    if (!allowMultipleSessions) keepSingleBinding(sessions, agent, id && validSession(agent.provider, id) ? id : undefined);
     sessions.archived = agent?.provider === 'deepseekharness' || sessions.history.some(entry => entry.provider === 'deepseekharness')
       ? await deepSeekArchives().catch(error => { onReplyError(error); return new Set(); }) : new Set();
     return sessions;
   };
 
+  function listeningSessions(sessions) {
+    return sessions.history.filter(({ ref, provider, id }) =>
+      sessions.listening.has(ref) && !archivedSession(sessions, provider, id));
+  }
+
+  function countListening(sessions) {
+    return new Set(listeningSessions(sessions).filter(({ provider, id }) => supportsSessionReplies(provider, id))
+      .map(({ provider, id }) => replySessionKey(provider, id))).size;
+  }
+
+  function selectReplyTargets(targets = []) {
+    const next = new Set(targets.map(({ provider, id }) => replySessionKey(provider, id)));
+    const removed = new Set([...replyTargets].filter(scope => !next.has(scope)));
+    replyTargets = next;
+    const selecting = replies.select(targets);
+    if (removed.size) {
+      forwardedReplies = forwardedReplies.filter(reply => !removed.has(reply.scope));
+      onReplySessionsRemoved(removed);
+    }
+    return selecting;
+  }
+
   async function refreshReplyMonitor() {
     const revision = ++replyMonitorRevision;
-    if (!replyMonitorEnabled) return replies.select();
+    if (!replyMonitorEnabled) return selectReplyTargets();
     try {
-      const agent = await runtime(await getConfig(), launchDirectory);
-      const { provider, key, speakReplies } = agent;
-      const sessions = await getSessions(agent);
-      const id = sessions.bindings[key];
+      const config = await getConfig();
+      const agent = await runtime(config, launchDirectory).catch(() => undefined);
+      const sessions = await getSessions(agent, config?.allowMultipleSessions === true);
       if (revision === replyMonitorRevision) {
-        await replies.select(archivedSession(sessions, provider, id) ? undefined : { provider, key, id, speakReplies });
+        await selectReplyTargets(listeningSessions(sessions).map(({ provider, id }) =>
+          ({ provider, id, speakReplies: config?.speakReplies === true })));
       }
     } catch (error) {
       if (revision === replyMonitorRevision) {
-        await replies.select();
+        await selectReplyTargets();
         onReplyError(error);
       }
     }
@@ -483,21 +521,32 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     const id = saved.bindings[key];
     const sessionId = archivedSession(saved, provider, id) ? null : id ?? null;
     return { provider, label, cwd, workingDirectory: config.cwdSetting, launchDirectory, speakReplies, models,
+      allowMultipleSessions: config.allowMultipleSessions,
+      listeningCount: countListening(saved),
       sessionId, hasSessionRecords: saved.history.some(entry => entry.provider === provider),
       sessionHistory: visible.map(({ titlePreview, ...entry }) => ({ ...entry, title: titles.get(entry.ref) ?? null,
         label: providers[entry.provider], canOpen: nativeResume.has(entry.provider) ||
           (entry.provider === 'omp' && uuidPattern.test(entry.id)) ||
           (!windows && entry.provider === 'deepseekharness' && deepSeekSessionId(entry.id)),
-        bound: Boolean(boundKey(entry, saved.bindings)), active: entry.ref === `${key}:${sessionId}` })),
+        bound: saved.listening.has(entry.ref), active: entry.ref === `${key}:${sessionId}` })),
       history: archivedSession(saved, provider, id) ? [] : history.get(key) ?? [], busy: Boolean(active) };
   }
 
   async function recordFor(ref, config) {
     const current = await runtime(config, launchDirectory).catch(() => undefined);
-    const sessions = await getSessions(current);
+    const sessions = await getSessions(current, config?.allowMultipleSessions === true);
     const record = sessions.history.find(entry => entry.ref === ref);
     if (!record) throw new ControlError('AGENT_SESSION', '找不到这条会话绑定记录。');
     return { record, sessions, current };
+  }
+
+  async function persistBindingPolicy(previous, next, signal) {
+    const wasMultiple = previous?.allowMultipleSessions === true;
+    const staysMultiple = next?.allowMultipleSessions === true;
+    const selected = await runtime(wasMultiple && !staysMultiple ? next : previous, launchDirectory).catch(() => undefined);
+    const sessions = await getSessions(selected, wasMultiple && staysMultiple);
+    signal.throwIfAborted();
+    await saveSessions(sessions);
   }
 
   function exclusive(job) {
@@ -512,6 +561,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (replyMonitorEnabled) await refreshReplyMonitor();
       } finally {
         active = undefined;
+        pendingReply = undefined;
         onChange();
       }
     });
@@ -527,8 +577,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
       const next = { ...config, provider: record.provider, cwd: record.cwd };
       const agent = await runtime(next, launchDirectory);
       signal.throwIfAborted();
-      sessions.bindings[agent.key] = record.id;
-      rememberSession(sessions, agent, record.id, new Date().toISOString());
+      addBinding(sessions, agent, record.id);
       await saveSessions(sessions);
       history.delete(agent.key);
       restored = await snapshot(agent, sessions);
@@ -539,6 +588,32 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
 
   function restoreSession(ref) {
     return exclusive(signal => restoreBinding(ref, signal));
+  }
+
+  async function saveBinding(agent, id, signal) {
+    const sessions = await getSessions(agent);
+    signal.throwIfAborted();
+    if (archivedSession(sessions, agent.provider, id)) {
+      throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档，请绑定另一条会话。');
+    }
+    if (id) {
+      addBinding(sessions, agent, id);
+    } else {
+      sessions.listening.delete(`${agent.key}:${sessions.bindings[agent.key]}`);
+      delete sessions.bindings[agent.key];
+    }
+    await saveSessions(sessions);
+    history.delete(agent.key);
+    return sessions;
+  }
+
+  function removeBinding(sessions, record) {
+    const key = boundKey(record, sessions.bindings);
+    if (key) {
+      delete sessions.bindings[key];
+      history.delete(key);
+    }
+    return sessions.listening.delete(record.ref) || Boolean(key);
   }
 
   async function screenAgent() {
@@ -582,18 +657,19 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
       active?.abort(new ControlError('AGENT_CANCELED', '已停止等待 Agent 回复。'));
       return { canceled: Boolean(active) };
     },
+    configureBindingPolicy(edit) {
+      return exclusive(signal => edit((previous, next) => persistBindingPolicy(previous, next, signal)));
+    },
     configure(value) {
       return exclusive(async signal => {
         await updateConfig(async previous => {
-          const prior = await runtime(previous, launchDirectory).catch(() => undefined);
-          if (prior?.provider) await saveSessions(await getSessions(prior));
           const next = preference({ ...previous, ...value });
           const config = { ...previous, ...next };
           if (['codex', 'claude', 'omp'].includes(next.provider) && typeof value?.model === 'string') {
             config[next.provider] = { ...previous?.[next.provider], model: field(value.model, 200, '模型名') };
           }
           await runtime(config, launchDirectory);
-          signal.throwIfAborted();
+          await persistBindingPolicy(previous, config, signal);
           return config;
         });
         const result = await snapshot();
@@ -606,41 +682,39 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请先选择 Agent。');
         const id = value === null ? null : field(value, 160, '会话 ID');
         if (id !== null && !validSession(agent.provider, id)) throw new ControlError('AGENT_SESSION', '会话 ID 格式无效。');
-        const sessions = await getSessions(agent);
-        signal.throwIfAborted();
-        if (archivedSession(sessions, agent.provider, id)) {
-          throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档。');
-        }
-        if (id) {
-          const normalized = nativeResume.has(agent.provider) ? id.toLowerCase() : id;
-          sessions.bindings[agent.key] = normalized;
-          rememberSession(sessions, agent, normalized, new Date().toISOString());
-        } else delete sessions.bindings[agent.key];
-        await saveSessions(sessions);
-        history.delete(agent.key);
+        const normalized = id && nativeResume.has(agent.provider) ? id.toLowerCase() : id;
+        const sessions = await saveBinding(agent, normalized, signal);
         const result = await snapshot(agent, sessions);
         return { ...result, busy: false };
+      });
+    },
+    bindCodex({ id, cwd }) {
+      return exclusive(async signal => {
+        let binding;
+        await updateConfig(async previous => {
+          const next = { ...previous, provider: 'codex', cwd };
+          const agent = await runtime(next, launchDirectory);
+          const sessions = await saveBinding(agent, id, signal);
+          binding = { provider: agent.provider, sessionId: id, cwd: agent.cwd, listeningCount: countListening(sessions) };
+          return next;
+        }, 'local');
+        return binding;
       });
     },
     restoreSession,
     async matchesDeepSeekSession(id) {
       if (!deepSeekSessionId(id)) return false;
       const config = await getConfig();
-      if (config?.provider !== 'deepseekharness') return false;
-      const agent = await runtime(config, launchDirectory);
-      const sessions = await getSessions(agent);
-      return sessions.bindings[agent.key] === id && !archivedSession(sessions, agent.provider, id);
+      const agent = await runtime(config, launchDirectory).catch(() => undefined);
+      const sessions = await getSessions(agent, config?.allowMultipleSessions === true);
+      return listeningSessions(sessions).some(entry =>
+        entry.provider === 'deepseekharness' && replySessionKey(entry.provider, entry.id) === replySessionKey('deepseekharness', id));
     },
     unbindSession(ref) {
       return exclusive(async signal => {
         const { record, sessions } = await recordFor(ref, await getConfig());
-        const key = boundKey(record, sessions.bindings);
         signal.throwIfAborted();
-        if (key) {
-          delete sessions.bindings[key];
-          await saveSessions(sessions);
-          history.delete(key);
-        }
+        if (removeBinding(sessions, record)) await saveSessions(sessions);
       });
     },
     clearSessions({ ref, provider }) {
@@ -649,14 +723,8 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         const sessions = await getSessions(current);
         const removed = sessions.history.filter(entry => ref ? entry.ref === ref : entry.provider === provider);
         const refs = new Set(removed.map(entry => entry.ref));
-        for (const record of removed) {
-          const key = boundKey(record, sessions.bindings);
-          if (key) {
-            delete sessions.bindings[key];
-            history.delete(key);
-          }
-        }
         signal.throwIfAborted();
+        for (const record of removed) removeBinding(sessions, record);
         if (removed.length) {
           sessions.history = sessions.history.filter(entry => !refs.has(entry.ref));
           await saveSessions(sessions);
@@ -741,8 +809,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         await openTerminal(agent, args, { freshOmp: provider === 'omp' });
         signal.throwIfAborted();
         if (id) {
-          sessions.bindings[agent.key] = id;
-          rememberSession(sessions, agent, id, new Date().toISOString());
+          addBinding(sessions, agent, id);
           await saveSessions(sessions);
           history.delete(agent.key);
         }
@@ -772,6 +839,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         const prompt = await getPrompt() + '\n\n在 VA 内处理的对话通过回复触发动作。需要表演时，请直接写台词并附上末行动作标记。';
         if (prompt.length > 45000) throw new ControlError('AGENT_INPUT', '角色与 Agent 的 Prompt 合计太长。');
         const input = { message, prompt, sessionId };
+        pendingReply = sessionId ? replySessionKey(agent.provider, sessionId) : undefined;
         const result = await dispatch(agent, input, signal);
         signal.throwIfAborted();
         const fullReply = typeof result?.reply === 'string' ? result.reply.trim() : '';
@@ -783,18 +851,17 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
           throw failure('Agent 返回了无效或不一致的会话 ID。');
         }
         if (sessionId !== result.sessionId) {
-          sessions.bindings[agent.key] = result.sessionId;
-          rememberSession(sessions, agent, result.sessionId, new Date().toISOString(), message);
+          addBinding(sessions, agent, result.sessionId, message);
           await saveSessions(sessions);
           history.delete(agent.key);
         }
         signal.throwIfAborted();
         history.set(agent.key, [...(history.get(agent.key) ?? []), { message, reply }].slice(-20));
         const readAloud = options.speak ?? agent.speakReplies;
-        const bubbleQueued = presentReply(reply, readAloud, effect);
+        const scope = replySessionKey(agent.provider, result.sessionId);
+        const bubbleQueued = presentReply(reply, readAloud, effect, scope);
         if (bubbleQueued && raw && replyMonitorEnabled) {
-          forwardedReplies = [...forwardedReplies.slice(-9), { key: agent.key, id: result.sessionId,
-            text: fullReply, until: Date.now() + 15_000 }];
+          forwardedReplies = [...forwardedReplies.slice(-9), { scope, text: fullReply, until: Date.now() + 15_000 }];
         }
         return { provider: agent.provider, reply, sessionId: result.sessionId, bubbleQueued,
           spoken: readAloud && bubbleQueued };

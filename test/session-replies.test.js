@@ -40,7 +40,7 @@ test('bound native sessions deliver new final replies and ignore their prior his
   for (const [provider, path, final, intermediate] of fixtures) {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, line(final('old', '会话之前的内容')));
-    await monitor.select({ provider, key: provider, id: sessionId, speakReplies: true });
+    await monitor.select([{ provider, id: sessionId, speakReplies: true }]);
     const oldCount = delivered.length;
     paused = true;
     await appendFile(path, line(intermediate));
@@ -60,6 +60,46 @@ test('bound native sessions deliver new final replies and ignore their prior his
   await appendFile(ompFile, line(omp('after-unbind', '解除绑定后')));
   await setTimeout(40);
   assert.equal(delivered.length, 3);
+});
+
+test('multiple Codex sessions keep separate cursors and deliver only the still-bound replies', async t => {
+  const root = await mkdtemp(join(tmpdir(), 'va-multiple-replies-'));
+  const otherId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
+  const sessions = join(root, 'sessions');
+  const path = id => join(sessions, id + '.jsonl');
+  const delivered = [];
+  let pausedId;
+  const monitor = createSessionReplies({
+    env: { CODEX_HOME: root }, interval: 15,
+    paused: state => state.id === pausedId,
+    present: (text, state) => delivered.push([state.id, text]) > 0,
+  });
+  t.after(async () => { await monitor.select(); await rm(root, { recursive: true, force: true }); });
+  await mkdir(sessions);
+  await Promise.all([sessionId, otherId].map(id => writeFile(path(id), line(codex('old', '旧回复')))));
+  const first = { provider: 'codex', id: sessionId };
+  const second = { provider: 'codex', id: otherId };
+  await monitor.select([first]);
+  pausedId = sessionId;
+  await appendFile(path(sessionId), line(codex('first', '第一条会话的回复')));
+  await monitor.select([first, second]);
+  await appendFile(path(otherId), line(codex('second', '第二条会话的回复')));
+  const waitFor = async count => {
+    const deadline = Date.now() + 2000;
+    while (delivered.length < count && Date.now() < deadline) await setTimeout(15);
+  };
+  await waitFor(1);
+  assert.deepEqual(delivered, [[otherId, '第二条会话的回复']]);
+  pausedId = undefined;
+  await waitFor(2);
+  assert.deepEqual(delivered, [[otherId, '第二条会话的回复'], [sessionId, '第一条会话的回复']]);
+  await monitor.select([second]);
+  await Promise.all([
+    appendFile(path(sessionId), line(codex('unbound', '已解除绑定的回复'))),
+    appendFile(path(otherId), line(codex('next', '第二条会话的新回复'))),
+  ]);
+  await waitFor(3);
+  assert.deepEqual(delivered.slice(2), [[otherId, '第二条会话的新回复']]);
 });
 
 test('long agent replies split into speakable phrases without losing their ending', () => {
@@ -92,7 +132,7 @@ test('DeepSeek Harness delivers the action and speech from the completed turn of
     await mkdir(dirname(other), { recursive: true });
     await writeFile(file, frame(assistant(1, block('旧字幕')), end(1)));
     await writeFile(other, '');
-    await monitor.select({ provider: 'deepseekharness', key: 'deepseek', id: `session-${sessionId}`, speakReplies: true });
+    await monitor.select([{ provider: 'deepseekharness', id: `session-${sessionId}`, speakReplies: true }]);
     await appendFile(other, frame(assistant(1, block('其他会话')), end(1)));
     await appendFile(file, frame(assistant(2, block('已取消的回复')), end(2, 'canceled')));
     await appendFile(file, frame(assistant(3, [...block('过程消息'), { type: 'tool-call' }])));

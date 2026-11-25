@@ -19,6 +19,8 @@ test('CLI and MCP catalog examples validate with the shared configuration schema
   assert.equal(Object.hasOwn(operations, 'doubao-realtime-open'), false);
   assert.throws(() => parseConfigCommand({ operation: 'set', target: 'agent', value: { mode: 'api' } }),
     { code: 'CONFIG_VALUE' });
+  assert.throws(() => parseConfigCommand({ operation: 'set', target: 'agent',
+    value: { localAgent: { allowMultipleSessions: 'true' } } }), { code: 'CONFIG_VALUE' });
   assert.throws(() => parseConfigCommand({ operation: 'run', target: 'voice-reference' }), { code: 'CONFIG_COMMAND' });
   assert.throws(() => parseConfigCommand({ operation: 'set', target: 'desktop', value: { scale: 39 } }), { code: 'CONFIG_VALUE' });
   assert.throws(() => parseConfigCommand({ operation: 'set', target: 'desktop', value: { modelPath: 'x' } }), { code: 'CONFIG_VALUE' });
@@ -33,6 +35,21 @@ test('actions patches preserve existing options and remove specified overrides',
   assert.equal(result.actions.wave.label, '挥挥手');
   assert.equal(Object.hasOwn(result.actions, 'quick-bow'), false);
   assert.equal(before['quick-bow'].seconds, 2);
+});
+
+test('desktop coordinates support multiple displays and model preview accepts exactly one source', () => {
+  const position = value => parseConfigCommand({ operation: 'set', target: 'desktop', value: { windowPosition: value } });
+  assert.deepEqual(position({ x: -1200, y: 80 }).value.windowPosition, { x: -1200, y: 80 });
+  assert.equal(position(null).value.windowPosition, null);
+  for (const value of [{ x: 0 }, { x: 2.5, y: 0 }, { x: 2 ** 31, y: 0 }]) {
+    assert.throws(() => position(value), { code: 'CONFIG_VALUE' });
+  }
+  const preview = value => parseConfigCommand({ operation: 'run', target: 'model-preview', value });
+  assert.deepEqual(preview({ path: '/tmp/avatar.vrm' }).value, { path: '/tmp/avatar.vrm' });
+  assert.deepEqual(preview({ id: 'va-cover' }).value, { id: 'va-cover' });
+  for (const value of [{}, { id: 'va-cover', path: '/tmp/avatar.vrm' }, { path: ' ' }]) {
+    assert.throws(() => preview(value), { code: 'CONFIG_VALUE' });
+  }
 });
 
 test('CLI and MCP accept ZipVoice reference audio, transcript and runtime paths', () => {
@@ -54,7 +71,7 @@ test('agent updates preserve inactive channels and store the role prompt apart f
     language: { baseUrl: 'https://old.example.invalid/v1', apiKey: 'fixture-secret', model: 'text' },
   };
   const value = {
-    localAgent: { codex: { model: 'new' } },
+    localAgent: { codex: { model: 'new' }, allowMultipleSessions: true },
     channels: { openclaw: { target: 'other', channel: 'telegram' } },
     doubaoClient: { autoActions: false },
   };
@@ -62,6 +79,8 @@ test('agent updates preserve inactive channels and store the role prompt apart f
   assert.equal(next.mode, 'local');
   assert.equal(next.localAgent.codex.command, 'codex');
   assert.equal(next.localAgent.codex.model, 'new');
+  assert.equal(agentConfigSnapshot(before).localAgent.allowMultipleSessions, false);
+  assert.equal(agentConfigSnapshot(next).localAgent.allowMultipleSessions, true);
   assert.equal(next.channels.astrbot.target, 'test');
   assert.equal(next.channels.openclaw.channel, 'telegram');
   assert.equal(legacyAgentPrompt(before), '原来的指令');

@@ -16,6 +16,13 @@ function sessionIdSupported(provider, id) {
   return ['codex', 'claude', 'omp'].includes(provider) && uuid.test(id ?? '');
 }
 
+export const replySessionKey = (provider, id) => `${provider}:${provider === 'custom' ? id : id.toLowerCase()}`;
+
+export function supportsSessionReplies(provider, id) {
+  return sessionIdSupported(provider, id) &&
+    (provider !== 'deepseekharness' || typeof zlib.zstdDecompressSync === 'function');
+}
+
 export async function findSessionFile(provider, id, env = process.env) {
   if (!sessionIdSupported(provider, id)) return;
   id = id.toLowerCase();
@@ -139,17 +146,17 @@ function finishedReply(state, event) {
 }
 
 export function createSessionReplies({ present, paused = () => false, onError = () => {}, env = process.env, interval = 750 }) {
-  let current;
-  let timer;
+  const sessions = new Map();
+  const tracking = state => sessions.get(state.scope) === state;
 
   function next(state, delay = interval) {
-    if (state !== current) return;
-    timer = setTimeout(() => void poll(state), delay);
-    timer.unref();
+    if (!tracking(state)) return;
+    state.timer = setTimeout(() => void poll(state), delay);
+    state.timer.unref();
   }
 
   function deliver(state) {
-    while (state === current && state.deliveries.length && !paused() && present(state.deliveries[0], state)) {
+    while (tracking(state) && state.deliveries.length && !paused(state) && present(state.deliveries[0], state)) {
       state.deliveries.shift();
     }
   }
@@ -157,7 +164,7 @@ export function createSessionReplies({ present, paused = () => false, onError = 
   async function poll(state, baseline = false) {
     let file;
     try {
-      if (!baseline && paused()) return;
+      if (!tracking(state) || (!baseline && paused(state))) return;
       if (state.provider === 'deepseekharness' && (await deepSeekArchives(env)).has(state.id)) {
         state.deliveries.length = 0;
         state.turnReply = undefined;
@@ -169,7 +176,7 @@ export function createSessionReplies({ present, paused = () => false, onError = 
       if (!state.path) return;
       file = await open(state.path, 'r');
       const { size, dev, ino } = await file.stat();
-      if (state !== current || (!baseline && paused())) return;
+      if (!tracking(state) || (!baseline && paused(state))) return;
       const identity = `${dev}:${ino}`;
       if (baseline || (state.fileId && (state.fileId !== identity || size < state.offset))) {
         state.offset = size;
@@ -185,7 +192,7 @@ export function createSessionReplies({ present, paused = () => false, onError = 
       while (state.offset < size && batches-- > 0) {
         const buffer = Buffer.allocUnsafe(Math.min(readSize, size - state.offset));
         const { bytesRead } = await file.read(buffer, 0, buffer.length, state.offset);
-        if (!bytesRead || state !== current) break;
+        if (!bytesRead || !tracking(state)) break;
         state.offset += bytesRead;
         const bytes = buffer.subarray(0, bytesRead);
         const chunks = state.provider === 'deepseekharness' ? readDeepSeekFrames(state, bytes) : [bytes];
@@ -210,7 +217,7 @@ export function createSessionReplies({ present, paused = () => false, onError = 
         }
       }
       for (const [id, text] of replies) {
-        if (state !== current) break;
+        if (!tracking(state)) break;
         state.seen.add(id);
         if (state.seen.size > 100) state.seen.delete(state.seen.values().next().value);
         state.deliveries.push(text);
@@ -218,7 +225,7 @@ export function createSessionReplies({ present, paused = () => false, onError = 
       deliver(state);
     } catch (error) {
       if (error.code === 'ENOENT') state.path = undefined;
-      else if (state === current && state.problem !== error.code) onError(error);
+      else if (tracking(state) && state.problem !== error.code) onError(error);
       state.problem = error.code;
     } finally {
       await file?.close().catch(onError);
@@ -227,17 +234,28 @@ export function createSessionReplies({ present, paused = () => false, onError = 
   }
 
   return {
-    async select(target) {
-      if (!target || !sessionIdSupported(target.provider, target.id) ||
-          (target.provider === 'deepseekharness' && typeof zlib.zstdDecompressSync !== 'function')) target = undefined;
-      if (target?.key === current?.key && target?.id === current?.id) {
-        if (current) current.speakReplies = target.speakReplies;
-        return;
+    async select(targets = []) {
+      const selected = new Map(targets.filter(({ provider, id }) => supportsSessionReplies(provider, id))
+        .map(target => [replySessionKey(target.provider, target.id), target]));
+      for (const [scope, state] of sessions) {
+        if (!selected.has(scope)) {
+          clearTimeout(state.timer);
+          sessions.delete(scope);
+        }
       }
-      clearTimeout(timer);
-      current = target && { ...target, id: target.id.toLowerCase(), seen: new Set(), deliveries: [],
-        offset: 0, pending: '', frames: Buffer.alloc(0), decoder: new StringDecoder('utf8') };
-      if (current) await poll(current, true);
+      const baselines = [];
+      for (const [scope, target] of selected) {
+        const existing = sessions.get(scope);
+        if (existing) {
+          existing.speakReplies = target.speakReplies;
+          continue;
+        }
+        const state = { ...target, scope, id: target.id.toLowerCase(), seen: new Set(), deliveries: [],
+          offset: 0, pending: '', frames: Buffer.alloc(0), decoder: new StringDecoder('utf8') };
+        sessions.set(scope, state);
+        baselines.push(poll(state, true));
+      }
+      await Promise.all(baselines);
     },
   };
 }

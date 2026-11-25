@@ -1,11 +1,39 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
+import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import { checkBotRoute, configureIntegration, integrationMode, modes, screenMode } from '../desktop/integration.js';
 import { createLocalAgent } from '../desktop/local-agent.js';
+import { readCodexSession } from '../lib/current-codex.js';
+import { stopWindowsAgent } from '../desktop/windows-agent.js';
+
+test('Windows Agent cleanup settles when a descendant keeps output pipes open', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const child = Object.assign(new EventEmitter(), {
+    pid: 42, exitCode: null, signalCode: null,
+    stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(),
+    kill() {
+      this.exitCode = 0;
+      this.emit('exit', 0);
+    },
+  });
+  let completed = false;
+  const cleanup = stopWindowsAgent(child, (_file, _args, _options, callback) => callback(new Error('taskkill failure')));
+  void cleanup.then(() => { completed = true; });
+  assert.equal(child.exitCode, 0);
+  t.mock.timers.tick(5499);
+  await Promise.resolve();
+  assert.equal(completed, false);
+  t.mock.timers.tick(1);
+  await cleanup;
+  assert.equal(completed, true);
+  assert.ok([child.stdin, child.stdout, child.stderr].every(stream => stream.destroyed));
+  assert.equal(child.listenerCount('close'), 0);
+});
 
 test('only the selected integration accepts bot traffic or routes screenshot recognition', () => {
   const routes = {
@@ -37,26 +65,93 @@ test('local agent uses the selected executable, injects the prompt and resumes i
     'const { sessionId, prompt, image } = input;',
     'console.log(JSON.stringify({ sessionId: sessionId ?? "session-1", reply: JSON.stringify({ sessionId, prompt, image }) }));',
   ].join('\n'));
-  let config = { provider: 'custom', custom: { command: process.execPath, args: [script] } };
+  let config = { provider: 'custom', allowMultipleSessions: true, custom: { command: process.execPath, args: [script] } };
+  const replyEvents = [];
   const agent = createLocalAgent({
     getConfig: async () => config,
+    updateConfig: async edit => { config = await edit(config); },
     getPrompt: async () => '角色\n附加内容',
     parseReply: speech => ({ speech }),
-    presentReply: () => true,
+    presentReply: speech => { replyEvents.push(JSON.parse(speech).sessionId); return true; },
+    onReplySessionsRemoved: scopes => replyEvents.push([...scopes]),
     sessionPath: join(directory, 'sessions.json'),
     launchDirectory: directory,
   });
+  await agent.monitorReplies(true);
+  assert.deepEqual(replyEvents.splice(0), []);
   const first = await agent.send('你好');
   assert.equal(first.provider, 'custom');
   assert.equal(JSON.parse(first.reply).sessionId, null);
   assert.match(JSON.parse(first.reply).prompt, /^角色\n附加内容\n\n.*末行动作标记/);
   assert.equal(JSON.parse((await agent.send('再说')).reply).sessionId, 'session-1');
+  assert.deepEqual(replyEvents.splice(0), [null, 'session-1']);
+  const [firstSession] = (await agent.status()).sessionHistory;
+  await agent.bind('session-2');
+  await agent.configure({ speakReplies: true });
+  assert.deepEqual(replyEvents.splice(0), []);
+  const [secondSession] = (await agent.status()).sessionHistory;
+  await agent.restoreSession(firstSession.ref);
+  await agent.unbindSession(secondSession.ref);
+  assert.deepEqual(replyEvents.splice(0), [['custom:session-2']]);
+  await agent.unbindSession(firstSession.ref);
+  assert.deepEqual(replyEvents.splice(0), [['custom:session-1']]);
   const observer = await agent.prepareObservation();
   const image = { mime: 'image/jpeg', data: 'fixture' };
   assert.deepEqual(JSON.parse(await observer({ frame: image, message: '看看', prompt: '识别', signal: new AbortController().signal })),
     { sessionId: null, prompt: '识别', image });
   config = { provider: 'deepseekharness' };
   await assert.rejects(agent.prepareObservation(), { code: 'AGENT_IMAGE_UNSUPPORTED' });
+});
+
+test('binding the current Codex session uses its recorded working directory and retains other bindings', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'va-current-codex-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const id = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const otherId = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  const nextId = 'cccccccc-cccc-4ccc-8ccc-cccccccccccc';
+  const project = join(folder, 'codex project');
+  const transcripts = join(folder, 'sessions');
+  await Promise.all([mkdir(project), mkdir(transcripts)]);
+  const file = join(transcripts, id + '.jsonl');
+  await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id, cwd: project } }) + '\nrest of transcript\n');
+  const env = { CODEX_HOME: folder };
+  const session = await readCodexSession(id.toUpperCase(), env);
+  assert.deepEqual(session, { id, cwd: await realpath(project) });
+  await assert.rejects(readCodexSession(otherId, env), { code: 'CODEX_THREAD_UNAVAILABLE' });
+  await writeFile(file, JSON.stringify({ type: 'session_meta', payload: { id: otherId, cwd: project } }) + '\n');
+  await assert.rejects(readCodexSession(id, env), { code: 'CODEX_THREAD_UNAVAILABLE' });
+
+  let config = { provider: 'claude', speakReplies: true, allowMultipleSessions: true };
+  let mode = 'off';
+  const launch = () => createLocalAgent({
+    getConfig: async () => config,
+    updateConfig: async (edit, nextMode) => {
+      config = await edit(config);
+      mode = nextMode;
+    },
+    sessionPath: join(folder, 'bindings.json'),
+    launchDirectory: folder,
+  });
+  const agent = launch();
+  await agent.bind(otherId);
+  assert.deepEqual(await agent.bindCodex(session),
+    { provider: 'codex', sessionId: id, cwd: session.cwd, listeningCount: 2 });
+  assert.equal(mode, 'local');
+  const status = await agent.status();
+  assert.equal(status.speakReplies, true);
+  assert.deepEqual(status.sessionHistory.map(({ provider, id, active }) => [provider, id, active]), [
+    ['codex', id, true], ['claude', otherId, false],
+  ]);
+  assert.equal((await agent.bindCodex({ id: nextId, cwd: session.cwd })).listeningCount, 3);
+  const restarted = launch();
+  const restored = await restarted.status();
+  assert.equal(restored.sessionId, nextId);
+  assert.equal(restored.listeningCount, 3);
+  assert.deepEqual(restored.sessionHistory.filter(record => record.bound).map(record => record.id), [nextId, id, otherId]);
+  await restarted.unbindSession(restored.sessionHistory.find(record => record.id === id).ref);
+  const remaining = await restarted.status();
+  assert.equal(remaining.sessionId, nextId);
+  assert.deepEqual(remaining.sessionHistory.filter(record => record.bound).map(record => record.id), [nextId, otherId]);
 });
 
 test('binding history migrates old records and reopens the correct native session after restart', async t => {
@@ -70,7 +165,7 @@ test('binding history migrates old records and reopens the correct native sessio
   const claudeId = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
   const legacyKey = createHash('sha256').update(JSON.stringify(['codex', codexCwd, 'codex', []])).digest('hex');
   await writeFile(sessionPath, JSON.stringify({ [legacyKey]: codexId }));
-  let config = { provider: 'codex' };
+  let config = { provider: 'codex', allowMultipleSessions: true };
   const opened = [];
   const launch = (openCodex = async () => false) => createLocalAgent({
     getConfig: async () => config,
@@ -121,6 +216,47 @@ test('binding history migrates old records and reopens the correct native sessio
   await assert.rejects(restarted.openSession('missing-record'), { code: 'AGENT_SESSION' });
 });
 
+test('single-session binding is the default and disabling multiple sessions retains only the send target', async t => {
+  const folder = await mkdtemp(join(tmpdir(), 'va-binding-policy-'));
+  t.after(() => rm(folder, { recursive: true, force: true }));
+  const first = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  const second = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+  let config = { provider: 'codex' };
+  const removed = [];
+  const launch = () => createLocalAgent({
+    getConfig: async () => config,
+    updateConfig: async edit => { config = await edit(config); },
+    sessionPath: join(folder, 'bindings.json'),
+    launchDirectory: folder,
+    onReplySessionsRemoved: scopes => removed.push(...scopes),
+  });
+  const agent = launch();
+  t.after(() => agent.monitorReplies(false));
+  await agent.monitorReplies(true);
+  assert.equal((await agent.status()).allowMultipleSessions, false);
+  const bind = id => agent.bindCodex({ id, cwd: folder });
+  await bind(first);
+  const single = await bind(second);
+  assert.equal(single.listeningCount, 1);
+  assert.deepEqual(removed.splice(0), [`codex:${first}`]);
+  assert.equal((await agent.configure({ allowMultipleSessions: true })).listeningCount, 1);
+  assert.equal((await bind(first)).listeningCount, 2);
+  assert.deepEqual(removed.splice(0), []);
+
+  await agent.configureBindingPolicy(async persist => {
+    const next = { ...config, allowMultipleSessions: false };
+    await persist(config, next);
+    config = next;
+  });
+  const restarted = launch();
+  const status = await restarted.status();
+  assert.equal(status.sessionId, first);
+  assert.equal(status.listeningCount, 1);
+  assert.deepEqual(status.sessionHistory.map(record => [record.id, record.bound]), [[first, true], [second, false]]);
+  assert.deepEqual(removed.splice(0), [`codex:${second}`]);
+  assert.equal((await restarted.configure({ allowMultipleSessions: true })).listeningCount, 1);
+});
+
 test('Claude creates a new conversation, keeps generated dialogue with the requested action, and resumes', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'va-claude-test-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
@@ -149,10 +285,10 @@ test('Claude creates a new conversation, keeps generated dialogue with the reque
   const first = await agent.send('挥手', { newSession: true, requestedEffect: { action: 'wave' } });
   assert.equal(first.sessionId, created);
   assert.equal((await agent.status()).sessionHistory.length, 2);
-  assert.deepEqual(performed[0], ['今天也来击个掌吧！', true, { speech: '今天也来击个掌吧！', action: 'wave' }]);
+  assert.deepEqual(performed[0], ['今天也来击个掌吧！', true, { speech: '今天也来击个掌吧！', action: 'wave' }, `claude:${created}`]);
   const second = await agent.send('点头', { requestedEffect: { action: 'nod' } });
   assert.equal(second.sessionId, created);
-  assert.deepEqual(performed[1], ['', true, { speech: '', action: 'nod' }]);
+  assert.deepEqual(performed[1], ['', true, { speech: '', action: 'nod' }, `claude:${created}`]);
 });
 
 test('DeepSeek Harness binds a recorded session after desktop navigation succeeds', async t => {

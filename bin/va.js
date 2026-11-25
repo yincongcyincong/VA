@@ -6,6 +6,7 @@ import { listActions } from '../lib/catalog.js';
 import { ControlError, request } from '../lib/control.js';
 import { startDesktop, takeSelfie } from '../lib/start.js';
 import { configCatalog, maxConfigBytes, parseConfigCommand } from '../lib/configuration.js';
+import { bindCurrentCodex } from '../lib/current-codex.js';
 
 const usage = `VA · 桌面角色
 
@@ -27,6 +28,7 @@ const usage = `VA · 桌面角色
   va chat-status | chat-new | chat-cancel
   va chat-context                        向已绑定的豆包对话同步 VA 角色能力
   va chat-bind <会话ID|current>           绑定 Agent 会话，或绑定豆包当前对话
+  va chat-bind-current                   绑定当前 Codex 会话并设为发送目标
   va chat-use <codex|claude|deepseekharness|omp|custom|none>
   va integration [off|local|doubao-client|astrbot|openclaw]
   va model [文件|default]                查看、选择模型或恢复默认模型
@@ -93,7 +95,9 @@ async function configuration() {
     try { value = JSON.parse(input); } catch { invalid('配置需要有效的 JSON。'); }
   }
   if (value && typeof value.path === 'string') value.path = resolve(value.path);
-  return request({ type: 'configuration', ...parseConfigCommand({ operation, target, value }) });
+  const parsed = parseConfigCommand({ operation, target, value });
+  if (operation === 'run' && target === 'chat-bind-current') return bindCurrentCodex(parsed.value);
+  return request({ type: 'configuration', ...parsed });
 }
 
 function presetId(entries, input, label, labelOf) {
@@ -140,6 +144,10 @@ async function performFromCli() {
 
 async function execute() {
   if (command === 'config') return configuration();
+  if (command === 'chat-bind-current') {
+    count(options().positionals, 0);
+    return bindCurrentCodex();
+  }
   if (command === 'bridge') {
     count(options().positionals, 0);
     const { runBotBridge } = await import('../lib/bot-bridge.js');

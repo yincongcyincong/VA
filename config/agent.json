@@ -4,6 +4,7 @@
     "provider": "",
     "cwd": "",
     "speakReplies": false,
+    "allowMultipleSessions": false,
     "codex": {
       "command": "codex",
       "model": ""

@@ -48,6 +48,8 @@ VA 是 macOS 上的 3D 桌面角色。Agent 可以通过本机 CLI 或 MCP 查�
 
 ## 配置与会话
 
+用户说「绑定VA」或要求绑定当前 Codex 会话时，直接运行 `./bin/va.js chat-bind-current --json`。默认替换原绑定，开启 `agent.localAgent.allowMultipleSessions` 时才保留其他绑定。确认结果返回 Codex 会话 ID 后，回报 `listeningCount` 显示的监听总数。
+
 ```bash
 ./bin/va.js config list --json
 ./bin/va.js config get character --json

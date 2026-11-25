@@ -12,7 +12,7 @@ function presenter(overrides = {}) {
     parseReply: text => ({ speech: text }),
     queueDance: (intent, introduction) => { calls.dances.push([intent, introduction]); return true; },
     queueSpeech: (speech, source, readAloud, effect) => { calls.speeches.push([speech, source, readAloud, effect]); return true; },
-    queueLines: (lines, source, readAloud) => { calls.lines.push([lines, source, readAloud]); },
+    queueLines: (lines, source, readAloud, scope) => { calls.lines.push([lines, source, readAloud, scope]); },
     speechCapacity: () => true,
     ...overrides,
   });
@@ -21,10 +21,11 @@ function presenter(overrides = {}) {
 
 test('a dance reply queues one dance with its opening line and speaks the remainder afterwards', () => {
   const { show, calls } = presenter();
-  assert.equal(show(longSpeech, 'local-agent', true, { dance: { count: 2 }, speech: longSpeech, expression: 'smile' }), true);
+  const scope = 'codex:fixture';
+  assert.equal(show(longSpeech, 'local-agent', true, { dance: { count: 2 }, speech: longSpeech, expression: 'smile', scope }), true);
   assert.deepEqual(calls.dances, [[{ count: 2 },
-    { speech: line, expression: 'smile', readAloud: true, source: 'local-agent' }]]);
-  assert.deepEqual(calls.lines, [[[line, line], 'local-agent', true]]);
+    { speech: line, expression: 'smile', readAloud: true, source: 'local-agent', scope }]]);
+  assert.deepEqual(calls.lines, [[[line, line], 'local-agent', true, scope]]);
   assert.deepEqual(calls.speeches, []);
 });
 

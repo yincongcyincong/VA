@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld('va', {
   onSettingsSection: callback => ipcRenderer.on('va:settings-section', (_event, section) => callback(section)),
   chooseModel: checkOnly => ipcRenderer.invoke('va:choose-model', checkOnly),
   modelLibrary: (operation, value) => ipcRenderer.invoke('va:model-library', operation, value),
+  onModelPreview: callback => ipcRenderer.on('va:model-preview', (_event, model) => callback(model)),
   performance: (operation, value) => ipcRenderer.invoke('va:performance', operation, value),
   openCharacter: () => ipcRenderer.invoke('va:open-character'),
   characterName: () => ipcRenderer.invoke('va:character-name'),
