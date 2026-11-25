@@ -60,6 +60,7 @@ VA 是 macOS 上的 3D 桌面角色。Agent 可以通过本机 CLI 或 MCP 查�
 
 ## 开发与打包
 
+- 所有 Windows 修复必须只走 Windows 的独立逻辑：使用明确的 `process.platform === 'win32'` 分支，或独立的 Windows 模块。不得为修复 Windows 问题修改 macOS 原有实现或行为；共用文件中的改动也必须限定在 Windows 分支内。验证时单独检查 Windows 路径，并确认 macOS 仍走原有逻辑。
 - `desktop/` 维护应用窗口、角色渲染、本地 Agent、会话绑定、语音和动作。CLI 在 `bin/va.js`，MCP 和配置校验在 `lib/`。
 - `integrations/` 存放机器人插件和 Docker 桥接。先运行 `npm test` 检查改动，再使用实际需要的打包目标。
 - `bash scripts/package.sh` 生成 DMG 和校验文件。`bash scripts/package.sh app` 只生成 macOS 应用。`bash scripts/package.sh integrations` 生成两种插件包。产物在本机 `dist/`。

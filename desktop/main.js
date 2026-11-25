@@ -102,6 +102,7 @@ let screenRevision = 0;
 let controlsWindow;
 let controlsReady = false;
 let controlsPosition;
+let windowsPositioningControls = false;
 let controlsHoverTimer;
 let controlsLastNearAt = -Infinity;
 let nameplateBounds;
@@ -1668,6 +1669,16 @@ function syncBounds() {
   const { width, height } = avatarSize(area);
   const anchor = { x: current.x + current.width - width, y: current.y + current.height - height };
   const bounds = { ...clampAvatarPosition(anchor, { width, height: height + controlsHeight }, area), width, height };
+  if (windows) {
+    window.setMinimumSize(0, 0);
+    window.setMaximumSize(0, 0);
+    window.setBounds(bounds);
+    window.setMinimumSize(width, height);
+    window.setMaximumSize(width, height);
+    positionControls();
+    syncBubble();
+    return;
+  }
   if (Object.keys(bounds).some(key => bounds[key] !== current[key])) window.setBounds(bounds);
   positionControls();
   syncBubble();
@@ -1926,6 +1937,21 @@ function positionControls() {
   const centered = Math.round(bounds.x + (bounds.width - controlsWidth) / 2);
   const x = Math.max(area.x, Math.min(centered, area.x + area.width - controlsWidth));
   const y = bounds.y + bounds.height;
+  if (windows) {
+    // Windows may apply native frame minimums when moving a tiny toolbar.
+    // Keep its size explicit and do not interpret this move as a user drag.
+    const current = controlsWindow.getBounds();
+    windowsPositioningControls = true;
+    try {
+      if (current.x !== x || current.y !== y || current.width !== controlsWidth || current.height !== controlsHeight) {
+        controlsWindow.setBounds({ x, y, width: controlsWidth, height: controlsHeight });
+      }
+      controlsPosition = controlsWindow.getPosition();
+    } finally {
+      windowsPositioningControls = false;
+    }
+    return;
+  }
   controlsPosition = [x, y];
   const [currentX, currentY] = controlsWindow.getPosition();
   if (x !== currentX || y !== currentY) controlsWindow.setPosition(x, y);
@@ -2044,6 +2070,14 @@ function createControls() {
     skipTaskbar: true,
     acceptFirstMouse: true,
     show: false,
+    ...(windows ? {
+      // Explicit equal limits avoid Windows rounding a non-resizable window's
+      // cached size up again every time it moves at fractional display scaling.
+      resizable: true, thickFrame: false,
+      minWidth: controlsWidth, maxWidth: controlsWidth,
+      minHeight: controlsHeight, maxHeight: controlsHeight,
+      minimizable: false, maximizable: false,
+    } : {}),
     webPreferences: { preload: join(root, 'desktop/preload.cjs'), sandbox: true, contextIsolation: true },
   });
   // The toolbar needs to stay clickable above other desktop overlays.
@@ -2052,6 +2086,7 @@ function createControls() {
   localWindow(controlsWindow.webContents);
   positionControls();
   controlsWindow.on('move', () => {
+    if (windows && windowsPositioningControls) return;
     if (window.isDestroyed()) return;
     const [x, y] = controlsWindow.getPosition();
     const [oldX, oldY] = controlsPosition;
@@ -2093,6 +2128,11 @@ function createWindow() {
     skipTaskbar: true,
     acceptFirstMouse: true,
     show: false,
+    ...(windows ? {
+      resizable: true, thickFrame: false,
+      minWidth: width, maxWidth: width, minHeight: height, maxHeight: height,
+      minimizable: false, maximizable: false,
+    } : {}),
     webPreferences: {
       preload: join(root, 'desktop/preload.cjs'),
       sandbox: true,
