@@ -24,7 +24,7 @@ flowchart LR
 | [`desktop/main.js`](../desktop/main.js)、[`desktop/preload.cjs`](../desktop/preload.cjs) | Electron 启动与退出，窗口生命周期，IPC 校验，各接入方式的切换，以及动作、语音和传感器调度。 |
 | [`desktop/renderer.js`](../desktop/renderer.js)、[`desktop/avatar.js`](../desktop/avatar.js) | 渲染端命令，角色姿势、动画和表情，口型、拍照与鼠标互动。设置、气泡和桌面控制条分别使用独立窗口。 |
 | [`desktop/model-files.js`](../desktop/model-files.js)、[`desktop/model-loaders.js`](../desktop/model-loaders.js)、[`desktop/model-library.js`](../desktop/model-library.js) | 模型路径与贴图资源解析，格式加载与预览，AI 娘模型包导入，以及模型库记录。 |
-| [`desktop/actions.js`](../desktop/actions.js)、[`desktop/performance-config.js`](../desktop/performance-config.js)、[`desktop/character-performance.js`](../desktop/character-performance.js) | 默认动作和表情，用户配置合并与校验，模型兼容性清单，以及把对话输入和输出映射为动作。 |
+| [`desktop/actions.js`](../desktop/actions.js)、[`desktop/performance-config.js`](../desktop/performance-config.js)、[`desktop/character-performance.js`](../desktop/character-performance.js)、[`desktop/reply-presenter.js`](../desktop/reply-presenter.js) | 默认动作和表情，用户配置合并与校验，模型兼容性清单，把对话输入和输出映射为动作，以及把回复排入舞步或台词队列。 |
 | [`desktop/integration.js`](../desktop/integration.js)、[`desktop/local-agent.js`](../desktop/local-agent.js)、[`desktop/vision-agent.js`](../desktop/vision-agent.js) | 接入方式、频道路由、本地 Agent 子进程、会话绑定记录、续接和 Agent 协议适配。 |
 | [`desktop/senses.js`](../desktop/senses.js)、[`desktop/speech.js`](../desktop/speech.js)、[`desktop/volc-tts.js`](../desktop/volc-tts.js) | 屏幕观察与音乐检测调度、系统音色和火山 TTS。豆包客户端的联动、字幕和播放由 `doubao-client.js`、`doubao-captions.js` 与 `doubao-playback.js` 协作处理。 |
 | [`bin/va.js`](../bin/va.js)、[`lib/`](../lib) | 参数解析、MCP 工具注册、`va bridge`、桌面进程启动及本机控制协议。 |

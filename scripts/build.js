@@ -49,7 +49,7 @@ function macOptions() {
     appBundleId: 'local.va.desktop',
     usageDescription: {
       AudioCapture: 'VA locally detects music or transcribes Doubao playback when you enable these features.',
-      Microphone: 'VA uses the microphone for Doubao voice chat and optional on-device dance request recognition.',
+      Microphone: 'VA uses the microphone when you enable Agent voice input or Doubao action recognition.',
       ScreenCapture: 'VA can send a screenshot of your primary display to the vision model you configure.',
     },
     osxSign: {
@@ -73,8 +73,9 @@ function createDmg(bundle) {
     mkdirSync(contents);
     execFileSync('/usr/bin/ditto', [join(bundle, 'VA.app'), join(contents, 'VA.app')], { stdio: 'inherit' });
     symlinkSync('/Applications', join(contents, 'Applications'));
+    // ULMO is supported on every macOS version VA targets.
     execFileSync('/usr/bin/hdiutil', ['create', '-volname', `VA ${version}`, '-srcfolder', contents,
-      '-format', 'UDZO', image], { stdio: 'inherit' });
+      '-format', 'ULMO', image], { stdio: 'inherit' });
     renameSync(image, output);
     return output;
   } finally {

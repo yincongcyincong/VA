@@ -19,9 +19,13 @@ const captionStop = byId('doubao-caption-stop');
 const captionActions = byId('doubao-caption-actions');
 const listenActions = byId('doubao-listen-actions');
 const captionStatus = byId('doubao-caption-status');
+const voiceStart = byId('agent-voice-start');
+const voiceStop = byId('agent-voice-stop');
 
 let current;
 let working = false;
+let changingVoice = false;
+let voiceInput = {};
 let sessionListKey;
 let revision = 0;
 
@@ -54,12 +58,38 @@ function controls() {
   createSession.disabled = Boolean(busy || !current?.provider);
   clearSessions.disabled = Boolean(busy || !current?.hasSessionRecords);
   installDeepSeekRole.disabled = Boolean(busy || !current?.sessionId);
+  voiceStart.disabled = Boolean(current?.platform === 'win32' || busy || changingVoice || !current?.sessionId || voiceInput.enabled);
+  voiceStop.disabled = changingVoice || !voiceInput.enabled;
   for (const control of sessions.querySelectorAll('button')) control.disabled = Boolean(busy || control.dataset.unavailable);
   const bound = Boolean(current?.client?.title);
   byId('doubao-client-bind').disabled = Boolean(busy);
   byId('doubao-client-unbind').disabled = Boolean(busy || !bound);
   for (const id of ['doubao-client-context', 'doubao-client-read']) {
     byId(id).disabled = Boolean(busy || !bound || current.client.problem);
+  }
+}
+
+function renderAgentVoice(state) {
+  voiceInput = state ?? {};
+  byId('agent-voice-status').textContent = current?.platform === 'win32'
+    ? 'Agent 本机语音输入暂不支持 Windows，请使用文字输入。'
+    : [voiceInput.message, voiceInput.problem].filter(Boolean).join(' ');
+  const text = byId('agent-voice-text');
+  text.textContent = voiceInput.text ?? '';
+  text.hidden = !voiceInput.text;
+  controls();
+}
+
+async function changeVoice(operation) {
+  changingVoice = true;
+  controls();
+  try {
+    renderAgentVoice(await call(operation));
+  } catch (error) {
+    renderAgentVoice({ ...voiceInput, problem: errorText(error) });
+  } finally {
+    changingVoice = false;
+    controls();
   }
 }
 
@@ -121,6 +151,7 @@ function render(state, syncFields = false) {
 
   markChoice(modes, mode);
   byId('local-panel').hidden = byId('session-panel').hidden = !local;
+  byId('agent-voice-panel').hidden = !local;
   deepSeekRole.hidden = state.platform === 'win32' || !local || state.provider !== 'deepseekharness';
   byId('doubao-client-panel').hidden = byId('doubao-captions-panel').hidden = !client;
   routeConfiguration.hidden = !route;
@@ -132,6 +163,7 @@ function render(state, syncFields = false) {
       : client ? (state.client?.title || '未绑定本机对话') : '智能体接入已关闭';
 
   if (local) {
+    renderAgentVoice(state.voiceInput);
     markChoice(providers, state.provider);
     renderSessions(state.provider, state.sessionHistory ?? []);
     if (syncFields) {
@@ -251,6 +283,9 @@ captionStop.addEventListener('click', async () => {
   catch (error) { captionStatus.textContent = errorText(error); }
 });
 window.va.onDoubaoCaptions(renderCaptions);
+window.va.onAgentVoice(renderAgentVoice);
+voiceStart.addEventListener('click', () => void changeVoice('agent-voice-start'));
+voiceStop.addEventListener('click', () => void changeVoice('agent-voice-stop'));
 byId('doubao-caption-privacy').addEventListener('click', async () => {
   try { await window.va.openCapturePrivacy(); }
   catch (error) { captionStatus.textContent = errorText(error); }

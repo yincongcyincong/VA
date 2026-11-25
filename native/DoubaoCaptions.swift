@@ -309,17 +309,23 @@ final class CaptionAudio {
 }
 
 @available(macOS 26.0, *)
-func listenForUserInput(locale: Locale) async {
+func listenForUserInput(locale: Locale, agentMode: Bool = false) async {
+    func unavailable(_ message: String) {
+        emit(["type": agentMode ? "error" : "mic-status", "message": message])
+    }
     let engine = AVAudioEngine()
     let node = engine.inputNode
     let format = node.outputFormat(forBus: 0)
     guard format.sampleRate > 0, format.channelCount > 0 else {
-        emit(["type": "mic-status", "message": "无法读取麦克风。"])
+        unavailable("无法读取麦克风。")
         return
     }
     let transcriber = SpeechTranscriber(locale: locale, preset: .progressiveTranscription)
     let modules = [transcriber]
-    guard let outputFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: modules) else { return }
+    guard let outputFormat = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: modules) else {
+        unavailable("无法初始化麦克风语音识别。")
+        return
+    }
     let (input, continuation) = AsyncStream<AnalyzerInput>.makeStream(bufferingPolicy: .bufferingNewest(100))
     let capture = CaptionAudio(continuation, outputFormat: outputFormat, publishLevels: false)
     let analyzer = SpeechAnalyzer(modules: modules)
@@ -335,13 +341,14 @@ func listenForUserInput(locale: Locale) async {
     do {
         try await analyzer.start(inputSequence: input)
         try engine.start()
-        emit(["type": "mic-status", "message": "正在本机识别你说的动作请求。"])
+        emit(["type": agentMode ? "ready" : "mic-status",
+              "message": agentMode ? "正在监听麦克风，说完后会自动发送。" : "正在本机识别你说的动作请求。"])
         for try await result in transcriber.results where result.isFinal {
             let text = String(result.text.characters).trimmingCharacters(in: .whitespacesAndNewlines)
             if !text.isEmpty { emit(["type": "user-input", "text": String(text.prefix(2000))]) }
         }
     } catch {
-        if !Task.isCancelled { emit(["type": "mic-status", "message": "麦克风识别无法启动，请检查 VA 的麦克风权限。"]) }
+        if !Task.isCancelled { unavailable("麦克风识别无法启动，请检查 VA 的麦克风权限。") }
     }
 }
 
@@ -352,6 +359,14 @@ struct Main {
             fail("本机通话字幕需要 macOS 26 或更新版本。")
         }
         let arguments = CommandLine.arguments
+        let agentMode = arguments.contains("--agent-microphone")
+        if agentMode {
+            // The parent keeps this pipe open only while it owns the microphone listener.
+            Task.detached {
+                _ = readLine()
+                exit(0)
+            }
+        }
         let wantsActions = arguments.contains("--actions")
         let actionModel = ActionClassifier().model
         let canDecideActions = actionModel != "unavailable"
@@ -373,6 +388,10 @@ struct Main {
                let installation = try await AssetInventory.assetInstallationRequest(supporting: modules) {
                 emit(["type": "loading", "message": "正在准备 macOS 中文语音识别模型…"])
                 try await installation.downloadAndInstall()
+            }
+            if agentMode {
+                await listenForUserInput(locale: locale, agentMode: true)
+                return
             }
             guard let format = await SpeechAnalyzer.bestAvailableAudioFormat(compatibleWith: modules)
             else { fail("无法初始化本机中文语音识别。") }
@@ -428,7 +447,8 @@ struct Main {
         } catch is CancellationError {
             return
         } catch {
-            fail("本机中文转写无法启动。请检查语音资源和系统音频录制权限。")
+            fail(agentMode ? "本机中文转写无法启动。请检查语音资源和麦克风权限。"
+                           : "本机中文转写无法启动。请检查语音资源和系统音频录制权限。")
         }
     }
 }

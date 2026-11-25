@@ -44,7 +44,8 @@ async function scan(path, match, visit) {
 async function codexNames(root, ids) {
   const names = new Map();
   await scan(join(root, 'session_index.jsonl'), line => line.includes('"thread_name"'), row => {
-    if (ids.has(row.id)) names.set(row.id, displayName(row.thread_name));
+    const id = typeof row.id === 'string' ? row.id.toLowerCase() : undefined;
+    if (ids.has(id)) names.set(id, displayName(row.thread_name));
   }).catch(() => {});
   const missing = [...ids].filter(id => !names.get(id));
   if (!missing.length) return names;
@@ -59,17 +60,17 @@ async function codexNames(root, ids) {
       const database = new DatabaseSync(join(root, latest), { readOnly: true, timeout: 500 });
       try {
         const placeholders = missing.map(() => '?').join(', ');
-        return database.prepare(`SELECT id, ${columns} FROM threads WHERE id IN (${placeholders})`).all(...missing);
+        return database.prepare(`SELECT id, ${columns} FROM threads WHERE lower(id) IN (${placeholders})`).all(...missing);
       } finally {
         database.close();
       }
     }
-    const sql = `SELECT id, ${columns} FROM threads WHERE id IN (${missing.map(id => `'${id}'`).join(',')})`;
+    const sql = `SELECT id, ${columns} FROM threads WHERE lower(id) IN (${missing.map(id => `'${id}'`).join(',')})`;
     const { stdout } = await exec('/usr/bin/sqlite3', ['-readonly', '-json', join(root, latest), sql], { timeout: 2000 });
     return JSON.parse(stdout || '[]');
   };
   const entries = await query('name, title').catch(() => query('title')).catch(() => []);
-  for (const { id, name, title } of entries) names.set(id, displayName(name) ?? displayName(title));
+  for (const { id, name, title } of entries) names.set(String(id).toLowerCase(), displayName(name) ?? displayName(title));
   return names;
 }
 

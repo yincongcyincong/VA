@@ -2,14 +2,14 @@
 
 [VA 使用手册](../README.md#openclaw-和-astrbot)汇总了频道、自拍、动作和语音的用法。
 
-在 VA 打开「设置 → 智能体与模型」，接入方式选择 **AstrBot** 或 **OpenClaw**，每次只启用一种。机器人按正常流程调用自己配置的模型并发送频道回复。VA 插件监听已发送的文字，只把选定频道的回复显示在桌面角色旁。是否朗读可在 VA 的频道设置里选择。机器人模型密钥在各自的配置里管理。选用机器人接入时，屏幕观察暂停。macOS 上可在「屏幕与音乐」开启本机音乐检测。
+在 VA 打开「设置 → 智能体接入」，选择 **AstrBot** 或 **OpenClaw**。机器人按正常流程调用自己配置的模型并发送频道回复。VA 插件监听已发送的文字，只把选定频道的回复显示在桌面角色旁。是否朗读可在 VA 的频道设置里选择。机器人模型密钥在各自的配置里管理。选用机器人接入时，屏幕观察暂停。macOS 上可在「屏幕与音乐」开启本机音乐检测。
 
 ## 安装与配对
 
-在 VA 仓库运行 `make integrations` 生成插件。需要把机器人里已安装的旧版 VA 插件更新到 **0.2.0**。
+仓库包含两个插件的源码，安装包由本机生成。在仓库根目录运行 `bash scripts/package.sh integrations`，需要 Node.js、npm、Make 和 `zip`。输出在 `dist/integrations/`。
 
-- **AstrBot** 在管理面板导入 `dist/integrations/astrbot_plugin_va.zip`。设置 `command` 为 Bot 运行环境可执行的 VA 命令，例如 `va`，远端可设置 `ssh_host`。在目标频道用授权账号运行 `/va route`，把返回的 UMO 填入 VA 的「目标频道」。插件监听 AstrBot 的 `after_message_sent`。部分 AstrBot 版本对流式发送不触发该钩子，这类频道需要更新 AstrBot 或关闭流式发送。
-- **OpenClaw** 在 Gateway 机器用 `openclaw plugins install --link /绝对路径/VA/integrations/openclaw` 安装，或安装打包的 `openclaw-va-desktop-0.2.0.tgz`。在插件配置的 `command` 指定本机 VA 命令数组，可选填 `sshHost`。启用插件后在目标频道运行 `/va route`，将返回的 `channel`、`target`、`accountId` 和 `sessionKey` 填入 VA。插件监听 Gateway 的 `message_sent`，成功送出的消息才镜像。
+- **AstrBot** 在管理面板的「插件 → 安装插件 → 从文件安装」上传 `dist/integrations/astrbot_plugin_va.zip`。设置 `command` 为 Bot 运行环境可执行的 VA 命令，例如 `va`，远端可设置 `ssh_host`。在目标频道用授权账号运行 `/va route`，把返回的 UMO 填入 VA 的「目标频道」。插件监听 AstrBot 的 `after_message_sent`。部分 AstrBot 版本对流式发送不触发该钩子，这类频道需要更新 AstrBot 或关闭流式发送。[AstrBot 插件安装](https://docs.astrbot.app/use/plugin.html)
+- **OpenClaw** 在 Gateway 所在环境进入 VA 仓库，运行 `openclaw plugins install --link "$PWD/integrations/openclaw"`。也可以用 `openclaw plugins install` 安装生成的 `dist/integrations/openclaw-va-desktop-<版本>.tgz`。把插件的 `command` 配置成命令数组，可按部署选择 `sshHost`。在目标频道运行 `/va route`，将返回的 `channel`、`target`、`accountId` 和 `sessionKey` 填入 VA。插件监听 Gateway 的 `message_sent`，成功送出的消息才镜像。[OpenClaw 插件安装](https://docs.openclaw.ai/cli/plugins/install)
 
 同一台 Mac 上，Bot 和 VA 需以同一登录用户运行。远端机器可通过已验证主机密钥的 SSH 主机别名运行同一个 VA 命令。例如插件命令可以指定 `/opt/homebrew/bin/node /Users/你的用户名/VA/bin/va.js`。连接测试可在 Bot 的运行环境执行：
 

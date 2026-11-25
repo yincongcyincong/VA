@@ -1,3 +1,4 @@
+import { ControlError } from '../lib/control.js';
 import { actionCategories, danceActions, performanceId } from './actions.js';
 import { defaultRoleBackground } from './config.js';
 import { danceIntent } from './dance-intent.js';
@@ -87,6 +88,15 @@ function findPerformance(text, catalog, expressionOnly = false) {
   const expression = catalog.supportedExpressions.find(id =>
     [id, catalog.expressions[id], ...(expressionWords[id] ?? [])].some(word => normalize(word) === text));
   if (expression) return { expression };
+}
+
+export function danceRequestProblem(intent, catalog, queued = 0, limit = 4) {
+  if (!intent) return undefined;
+  const supported = intent.action
+    ? Boolean(catalog.actions[intent.action]?.supported)
+    : Object.entries(catalog.actions).some(([id, action]) => id !== 'dance' && action.category === 'dance' && action.supported);
+  if (!supported) return new ControlError('MODEL_ACTION', '当前模型不支持这个舞步，可在「动作」查看可用动作。');
+  if (queued + intent.count > limit) return new ControlError('BUSY', '舞步已经排满，等这几段跳完再试。');
 }
 
 export function requestedPerformance(input, name, catalog) {

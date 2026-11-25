@@ -3,7 +3,7 @@
 
 VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。鼠标靠近时会显示顶部角色名和底部控制条，拖动名字或底部把手可移动角色。拖动模型可以旋转视角，用滚轮可以缩放。菜单栏或系统托盘可以切换半身视角、隐藏角色、打开鼠标穿透、播放动作和复制角色照片。
 
-[默认形象](#默认形象) · [角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体接入](#智能体接入) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型) · [代码结构](docs/architecture.md) · [许可证](#许可证)
+[默认形象](#默认形象) · [角色展示](#3d-角色展示) · [启动](#启动) · [命令行](#命令行) · [桌面互动](#配置与互动) · [智能体接入](#智能体接入) · [OpenClaw 和 AstrBot](#openclaw-和-astrbot) · [屏幕与音乐](#视觉-agent-与系统音乐) · [语音和口型](#语音和口型) · [Agent 使用指南](AGENTS.md) · [代码结构](docs/architecture.md) · [许可证](#许可证)
 
 ## 默认形象
 
@@ -28,7 +28,7 @@ VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。鼠标靠近
 
 macOS 13 或更新版本的 Apple 芯片 Mac 可下载 DMG，把 `VA.app` 拖到「应用程序」后打开。豆包实时通话字幕需要 macOS 26 和可用的本机中文语音识别。[GitHub Releases](https://github.com/yincongcyincong/VA/releases/latest)
 
-在仓库里安装依赖需要 Node.js 22.12 或更新版本。macOS 打包还需要 Xcode Command Line Tools。
+在仓库里安装依赖需要 Node.js 22.12 或更新版本。编译 Swift 助手和制作 DMG 需要目标架构的 Mac、Xcode Command Line Tools 和 macOS 26 SDK。
 
 ```bash
 npm ci
@@ -37,8 +37,9 @@ npm ci
 | 操作 | 命令 | 产物或启动入口 |
 | --- | --- | --- |
 | macOS 从源码启动 | `make dev` | 编译 Swift 助手后打开 VA |
-| 打包 macOS | `npm run build:mac` | 双击 `dist/VA-darwin-arm64/VA.app` 或 `dist/VA-darwin-x64/VA.app`，取决于构建用的 Mac |
-| 打包 macOS 安装盘 | `make dmg` | `dist/VA-<版本>-mac-<架构>.dmg` |
+| 打包 macOS 应用 | `bash scripts/package.sh app` | `dist/VA-darwin-<架构>/VA.app` |
+| 打包 macOS 安装盘 | `bash scripts/package.sh dmg` | `dist/VA-<版本>-mac-<架构>.dmg` 和 `dist/SHA256SUMS.txt` |
+| 打包机器人插件 | `bash scripts/package.sh integrations` | `dist/integrations/` 中的 AstrBot ZIP 和 OpenClaw TGZ |
 | 打包 Windows | `npm run build:win` | 打开 `dist/VA-win32-x64/VA.exe` 或 `dist/VA-win32-arm64/VA.exe`，保留同目录下的运行文件 |
 
 Swift 助手需要在目标架构的 Mac 上编译，为豆包客户端联动、通话字幕和系统音乐检测提供支持。
@@ -47,7 +48,7 @@ Windows 版可用 `npm run build:win -- --arch=x64` 或 `--arch=arm64` 指定目
 
 在设置页右上角点击「退出 VA」，或运行 `make stop`，即可结束当前 VA 进程。
 
-如果已经下载了项目所用版本的 Electron ZIP，可用 `make build ELECTRON_ZIP_DIR=/路径/到/ZIP目录` 从本地归档打包。
+直接运行 `bash scripts/package.sh` 会生成 DMG，缺少项目依赖时会先运行 `npm ci`。如果已缓存对应的 Electron ZIP，可运行 `ELECTRON_ZIP_DIR=/路径/到/ZIP目录 bash scripts/package.sh dmg`。
 
 如需使用星神，把阿哈模型包解压到系统的「文稿」或「下载」目录，保留原文件夹名和贴图。VA 启动时会将找到的 `星穹铁道-阿哈2.pmx` 加入模型库，也可以用 `AVATAR_DIR` 指定模型目录。原包使用规则禁止二次配布，阿哈文件从本机读取。[阿哈下载页](https://www.aplaybox.com/details/model/vODgdw8vDdb3)
 
@@ -63,6 +64,8 @@ ln -s "$PWD/bin/va.js" ~/.local/bin/va
 ### 测试与日志
 
 在仓库运行 `npm test` 或 `make test`。测试使用临时配置、模拟截图和模拟 Agent，对外部服务和系统录制权限均无依赖。
+
+在 Node.js 26 下运行 `npm run test:coverage`，统计 `bin/`、`desktop/`、`lib/` 和 `integrations/` 下的 JavaScript 覆盖率，包含测试从未加载的文件。
 
 VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启动时，以执行命令时所在的目录为准。直接打开打包应用且系统提供的工作目录是磁盘根目录时，以 `.app` 的所在目录为准。可运行 `tail -f logs/va.log` 跟踪日志。
 
@@ -270,6 +273,14 @@ va chat "我们刚才聊到哪里了？" --speak
 
 接入配置保存在 `~/Library/Application Support/VA Desktop/agent.json`。命令行可用 `va integration [off|local|doubao-client|astrbot|openclaw]` 切换。自定义 Agent 在 `localAgent.custom.command` 填可执行文件的绝对路径，`args` 填参数。VA 通过 stdin 传入一行 JSON，其中包含 `message`、`prompt` 和 `sessionId`。适配器通过 stdout 返回带 `reply` 和 `sessionId` 的 JSON。屏幕观察请求的 `sessionId` 为 `null`，图片作为 `image.mime` 和 Base64 格式的 `image.data` 传入。
 
+### 向本地 Agent 说话
+
+在「设置 → 智能体接入 → 本地 Agent」选择 Agent 并绑定会话，然后在「向 Agent 说话」点「开始监听」。首次使用需要给 VA 开启 macOS 的麦克风权限。需要 macOS 26 和本机中文语音识别资源。[Apple Speech](https://developer.apple.com/documentation/speech)
+
+VA 在本机转写麦克风声音，将识别完成的文字自动发到绑定的会话。回复仍显示在角色旁，开启「自动朗读回复」即可听到回复。发送和朗读期间会暂停监听，结束后自动恢复。
+
+监听默认关闭，退出 VA 或变更 Agent、会话绑定时会停止。也可以在设置页点「停止监听」，或从 VA 菜单栏点「停止 Agent 语音输入」。
+
 ### 本机豆包客户端
 
 ![豆包客户端的对话绑定、角色能力同步和通话字幕选项](docs/screenshots/doubao-client.png)
@@ -309,12 +320,27 @@ VA 通过 Core Audio 采集豆包及其音频助手的输出，中文转写在 M
 
 ## OpenClaw 和 AstrBot
 
-在仓库运行 `make integrations` 生成两个插件。在 VA 打开「智能体接入」，选择一个机器人接入。两个机器人沿用各自的语言模型和人设。VA 把绑定频道中机器人发出的文字显示在阿哈身边，打开「朗读机器人回复」后同时播放语音和口型。
+启动 VA，在「设置 → 智能体接入」选择 OpenClaw 或 AstrBot。机器人沿用自己配置的语言模型，VA 显示绑定频道的回复。开启「朗读机器人回复」后，角色会发声并同步口型。
 
-| 接入方式 | 安装与频道绑定 |
-| --- | --- |
-| OpenClaw | 执行 `openclaw plugins install --link /VA仓库绝对路径/integrations/openclaw`，也可安装 `dist/integrations/openclaw-va-desktop-0.2.0.tgz`。在插件设置中让 `command` 数组指向 VA 命令。在 Telegram 等目标频道用授权账号发送 `/va route`，把返回的 `channel`、`target`、`accountId`、`sessionKey` 填到 VA。 |
-| AstrBot | 在管理面板导入 `dist/integrations/astrbot_plugin_va.zip`，设置 `command` 为 Bot 能执行的 VA 命令。用授权账号在目标频道发送 `/va route`，将返回的 UMO 填到 VA 的「目标频道」。 |
+插件源码随仓库提供。`dist/` 是本机生成的目录，从 GitHub 克隆或下载源码后，在仓库根目录执行以下命令即可生成安装包。
+
+```bash
+bash scripts/package.sh integrations
+```
+
+### 安装 OpenClaw 插件
+
+在 OpenClaw Gateway 所在的运行环境进入 VA 仓库，执行以下命令直接使用插件源码。也可以把打包命令生成的 `dist/integrations/openclaw-va-desktop-<版本>.tgz` 放到 Gateway 所在的环境，用 `openclaw plugins install` 安装该文件。[OpenClaw 插件安装](https://docs.openclaw.ai/cli/plugins/install)
+
+```bash
+openclaw plugins install --link "$PWD/integrations/openclaw"
+```
+
+插件 ID 是 `va-desktop`。在配置里把 `command` 数组指向 Gateway 能调用的 VA 命令，例如同机运行时用 `["va"]`。在目标频道以授权账号发送 `/va route`，将返回的 `channel`、`target`、`accountId` 和 `sessionKey` 填入 VA。
+
+### 安装 AstrBot 插件
+
+运行上述打包命令后，在 AstrBot 管理面板的「插件 → 安装插件 → 从文件安装」上传 `dist/integrations/astrbot_plugin_va.zip`。设置插件的 `command` 为 Bot 能执行的 VA 命令，例如同机运行时用 `va`。在目标频道以授权账号发送 `/va route`，将返回的 UMO 填入 VA 的「目标频道」。[AstrBot 插件安装](https://docs.astrbot.app/use/plugin.html)
 
 | OpenClaw 频道设置 | AstrBot 频道设置 |
 | --- | --- |
@@ -328,10 +354,10 @@ OpenClaw 按频道的配对或访问策略授权，AstrBot 允许管理员或插
 | --- | --- |
 | `/va selfie` | VA 摆拍，机器人只发回一张 780 × 1040 的透明 PNG。桌面角色隐藏时也能拍。 |
 | `/va act dance` | 桌面角色跳经典律动并播放默认对白。动作名也可用 `dance-side`、`dance-spin` 或 `dance-bounce`。 |
-| `/va act wave` | 桌面上的阿哈挥手并播放默认对白。 |
-| `/va say 你好，我是阿哈` | 阿哈在桌面显示这句台词并朗读。 |
+| `/va act wave` | 桌面角色挥手并播放默认对白。 |
+| `/va say 你好，很高兴见到你` | 桌面角色显示这句台词并朗读。 |
 
-在 VA 配置的 OpenClaw 或 AstrBot 频道里，授权用户发「让阿哈跳舞」即可让 VA 表演。插件在机器人调用模型前处理这条请求。AstrBot 注册了 `va_desktop_selfie`，Agent 调用后会把照片发到当前频道。也可以用表中的命令直接自拍或选舞步。
+在 VA 配置的 OpenClaw 或 AstrBot 频道里，授权用户发「跳个舞吧」即可让 VA 表演。插件在机器人调用模型前处理这条请求。AstrBot 注册了 `va_desktop_selfie`，Agent 调用后会把照片发到当前频道。也可以用表中的命令直接自拍或选舞步。
 
 绑定 Telegram 后，可以直接发「给我发张自拍」。AstrBot 和 OpenClaw 都会在调用模型前让 VA 拍照，把 PNG 作为唯一回复发回绑定的聊天。更新 Docker 中的机器人插件后，重启对应的容器让修改生效。
 

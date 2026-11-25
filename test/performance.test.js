@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { actions } from '../desktop/actions.js';
-import { chatPerformancePrompt, createRolePrompt, replyPerformance, requestedPerformance, requestsSelfie } from '../desktop/character-performance.js';
+import { chatPerformancePrompt, createRolePrompt, danceRequestProblem, replyPerformance, requestedPerformance, requestsSelfie } from '../desktop/character-performance.js';
 import { danceMotion } from '../desktop/dance-motion.js';
 import { compilePerformance, describePerformance } from '../desktop/performance-config.js';
 import { createSpeechMotion, smoothMouthWeight, textSpeechDuration } from '../desktop/speech-motion.js';
@@ -47,6 +47,22 @@ test('the current character and supported catalog drive input and reply actions'
   assert.match(prompt, /请用 星神 自称/);
   assert.match(prompt, /dance-spin（转身亮相）/);
   assert.match(prompt, /自拍成功后只交付图片/);
+});
+
+test('dance requests are validated against the catalog and the dance queue before spending an agent round-trip', () => {
+  const catalog = describePerformance(compilePerformance({}), model);
+  const withoutDances = describePerformance(compilePerformance({}), { ...model, motions: ['wave'] });
+  const clipped = describePerformance(compilePerformance({ actions: {
+    'spin-dance': { label: '旋转舞', clip: 'SpinDance', seconds: 2, category: 'dance' },
+  } }), model);
+  assert.equal(danceRequestProblem({ action: undefined, count: 4 }, catalog, 0), undefined);
+  assert.equal(danceRequestProblem({ action: 'dance-spin', count: 2 }, catalog, 2), undefined);
+  assert.equal(danceRequestProblem({ action: undefined, count: 1 }, withoutDances, 0)?.code, 'MODEL_ACTION');
+  assert.equal(danceRequestProblem({ action: 'dance-spin', count: 1 }, withoutDances, 0)?.code, 'MODEL_ACTION');
+  assert.equal(danceRequestProblem({ action: 'spin-dance', count: 1 }, clipped, 0)?.code, 'MODEL_ACTION');
+  assert.equal(danceRequestProblem({ action: 'dance-spin', count: 1 }, catalog, 4)?.code, 'BUSY');
+  assert.equal(danceRequestProblem({ action: undefined, count: 1 }, catalog, 4)?.code, 'BUSY');
+  assert.equal(danceRequestProblem(undefined, catalog, 0), undefined);
 });
 
 test('the role editor includes CLI examples and expands custom commands for the active model', () => {

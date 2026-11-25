@@ -284,6 +284,16 @@
           <p>首次同步后重启 DeepSeek Harness。之后会话会自动读取 VA 的角色设定和当前模型支持的动作。</p>
         </div>
       </div>
+      <section id="agent-voice-panel" class="card settings-grid" hidden>
+        <h2>向 Agent 说话</h2>
+        <p>开启后，VA 会监听麦克风，将识别完成的文字发给当前绑定的会话。</p>
+        <div class="row">
+          <button id="agent-voice-start" type="button" disabled>开始监听</button>
+          <button id="agent-voice-stop" type="button" disabled>停止监听</button>
+        </div>
+        <p id="agent-voice-status" role="status"></p>
+        <p id="agent-voice-text" hidden></p>
+      </section>
       <section id="session-panel" class="card settings-grid" hidden>
         <div class="row">
           <h2>会话绑定记录</h2>
