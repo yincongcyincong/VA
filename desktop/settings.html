@@ -217,7 +217,7 @@
           <label class="wide">录音原文 <textarea name="referenceText" rows="2" required maxlength="1000" placeholder="逐字填写录音里的台词"></textarea></label>
           <details class="wide">
             <summary>运行路径</summary>
-            <p>缺少运行环境或模型时，可在项目目录运行 <code>make zipvoice-tts</code>。</p>
+            <p id="zipvoice-setup">缺少运行环境或模型时，可在项目目录运行 <code>make zipvoice-tts</code>。</p>
             <div class="form-grid">
               <label class="wide">模型目录 <input name="modelDirectory" type="text" maxlength="4096" spellcheck="false"></label>
               <label class="wide">Python 路径 <input name="python" type="text" maxlength="4096" spellcheck="false"></label>
@@ -272,13 +272,14 @@
         <form id="configuration" class="form-grid">
           <label class="wide">工作目录 <input name="cwd" type="text" maxlength="4096" placeholder="留空使用 VA 启动目录"></label>
           <label class="toggle"><input name="speak" type="checkbox"> 自动朗读回复</label>
+          <label class="toggle"><input name="multiple" type="checkbox"> 允许多会话绑定</label>
           <div class="end"><button type="submit">保存 Agent</button></div>
         </form>
         <form id="binding" class="row binding">
           <label>会话 ID <input name="session" type="text" maxlength="160" required spellcheck="false" autocomplete="off"></label>
           <button type="submit">绑定会话</button>
         </form>
-        <p>绑定 Codex、Claude Code、DeepSeek Harness 或 OMP 的会话后，在原客户端聊天也会显示新回复。开启「自动朗读回复」可同时发声。</p>
+        <p>默认只绑定当前会话。开启多会话后，绑定新会话会保留之前的监听。VA 发出的消息只进入当前发送目标。</p>
         <div id="deepseek-role" class="row" hidden>
           <button id="deepseek-install-role" type="button" disabled>同步角色能力</button>
           <p>首次同步后重启 DeepSeek Harness。之后会话会自动读取 VA 的角色设定和当前模型支持的动作。</p>

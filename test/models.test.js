@@ -101,7 +101,7 @@ test('3D model gallery searches built-in and imported names', async () => {
   ];
   runInNewContext(await readFile(new URL('../desktop/model-gallery.js', import.meta.url), 'utf8'), {
     document, MutationObserver: class { observe() {} },
-    window: { va: { modelLibrary: async () => models } },
+    window: { va: { modelLibrary: async () => models, onModelPreview: () => {} } },
   });
   await setImmediate();
   const input = elements.get('gallery-search');

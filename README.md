@@ -79,10 +79,10 @@ VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启
 
 | 配置组 | 可操作内容 |
 | --- | --- |
-| `desktop` | 主题、说话风格、缩放、视角、鼠标穿透、屏幕观察、间隔和音乐 |
+| `desktop` | 主题、说话风格、缩放、视角、窗口位置、鼠标穿透、屏幕观察、间隔和音乐 |
 | `character` | 显示名、角色 Prompt 和默认台词 |
 | `actions` | 按编号合并动作和表情，`null` 删除单个覆盖 |
-| `voice` | 系统或火山 TTS 音色、火山资源和动作朗读开关 |
+| `voice` | 系统音色、ZipVoice、火山 TTS 和动作朗读开关 |
 | `agent` | 接入方式、本地 Agent 的命令、机器人路由和豆包通话字幕选项 |
 | `model` | 使用模型文件或模型库编号，路径设为 `null` 恢复默认 |
 
@@ -97,6 +97,22 @@ va config set model '{"id":"va-cover"}' --json
 ```
 
 带密钥的 JSON 可用 `--file <文件>` 或 `--stdin` 传入。MCP 对应工具为 `va_config_list`、`va_config_get`、`va_config_set` 和 `va_config_run`。将 [VA Desktop Skill](skills/va-desktop/SKILL.md) 提供给智能体，即可按相同配置组操作。
+
+```bash
+va config set desktop '{"windowPosition":{"x":100,"y":200}}' --json
+va config set desktop '{"windowPosition":null}' --json
+va config run model-preview '{"id":"va-cover"}' --json
+va config run agent-voice-status --json
+va config run agent-voice-start --json
+va config run agent-voice-stop --json
+va config run deepseek-install-role --json
+va config run permissions-status --json
+va config run permissions-open '{"kind":"microphone"}' --json
+```
+
+窗口坐标使用 macOS 的全局桌面坐标，允许副屏使用负坐标，`null` 恢复主屏幕默认位置。模型预览在设置窗口中打开，可旋转和缩放，也可传 `{"path":"/绝对路径/角色.vrm"}`。麦克风监听需要 macOS 26 或更新版本和已绑定的本地 Agent 会话。DeepSeek 能力安装需要选中并绑定 DeepSeek Harness。豆包客户端可用 `doubao-client-open` 打开，用 `doubao-client-read` 读取当前绑定对话的最新回复。
+
+`permissions-open` 接受 `screen`、`microphone` 或 `accessibility`，由用户在 macOS 系统设置中授权。OpenClaw 和 AstrBot 的 VA 端频道可通过 `agent.channels` 设置，机器人凭据、插件权限和部署参数在对应服务的配置中管理。
 
 ### 操作桌面角色
 
@@ -236,6 +252,15 @@ MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角�
 
 ### 绑定并打开本地会话
 
+在加载了 [va-desktop Skill](skills/va-desktop/SKILL.md) 的任一本机 Codex 会话里说「绑定VA」，Codex 会调用 `va chat-bind-current --json`。VA 自动找到当前会话的 ID 和工作目录，必要时启动应用。MCP 客户端可用 `va_config_run` 的 `chat-bind-current` 并传入 `parameters.id`。
+
+默认每次绑定都会替换上一个会话。在「设置 → 智能体接入 → 本地 Agent」勾选「允许多会话绑定」并保存后，绑定新会话会保留其他监听。关闭开关时只保留当前发送目标，其他会话留在历史里，之后可以重新绑定。CLI 也可以切换此设置，MCP 对应 `va_config_set` 的 `agent` 配置组。
+
+```bash
+va config set agent '{"localAgent":{"allowMultipleSessions":true}}' --json
+va config set agent '{"localAgent":{"allowMultipleSessions":false}}' --json
+```
+
 点「创建会话」会在已保存的工作目录打开所选 Agent，首条消息在 Agent 里输入。Codex 优先打开 ChatGPT 桌面端的新聊天，桌面端不可用时使用终端。Claude Code 在终端打开，并用预先生成的会话 ID 自动绑定。新开的 Codex、OMP 等会话可在发出首条消息后用完整会话 ID 绑定。Codex CLI 可从 `/status` 查看会话信息。Claude Code 已有会话的 ID 与 `claude --resume <会话ID>` 使用的相同。[Codex CLI 会话信息](https://developers.openai.com/blog/mastering-codex-remote-for-engineering) · [Claude Code 会话命令](https://code.claude.com/docs/zh-CN/commands)
 
 安装了 DeepSeek Harness 桌面端时，VA 可以使用其中的 `dsh` 命令。「创建会话」会打开 DeepSeek Harness，工作区和新会话在其侧栏中选择。[DeepSeek Harness 桌面端](https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/desktop/README.md)
@@ -246,9 +271,9 @@ MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角�
 
 OMP 的「打开并绑定」会在终端恢复该会话。VA 会同步 DeepSeek Harness 的会话标题，并跳过已归档会话。每条记录都可以移除，也可以清空当前 Agent 的记录。清理只影响 VA 的绑定，Agent 中的原会话仍可使用。
 
-「会话绑定记录」只显示当前选中的 Agent。记录中的「解除绑定」会取消关联并保留记录，之后可点击「重新绑定」。「打开并绑定」会恢复记录的工作目录和会话绑定，再启动对应客户端。Codex 优先跳到 ChatGPT 桌面端的原会话，桌面端不可用时尝试用终端续接。Claude Code 在终端打开。同一条 Codex 会话正在原客户端使用时，可在原窗口继续，或关闭那里打开的会话后用 `va chat` 发送消息。[桌面端会话链接](https://learn.chatgpt.com/docs/app/commands)
+「会话绑定记录」按当前选中的 Agent 展示。新绑定的会话成为 VA 的当前发送目标；对已绑定的记录也可以点「设为发送目标」。VA 的主动发信和麦克风输入只发往这个目标，已绑定的其他会话仍会显示后续回复。「解除绑定」会停止监听指定会话并保留记录，重启 VA 会恢复仍绑定的会话。「打开并绑定」会恢复记录的工作目录，绑定并打开对应客户端。Codex 优先在桌面端打开原会话，Claude Code 在终端打开。Codex 原会话有写入锁时，可以在原窗口继续聊天。[桌面端会话链接](https://learn.chatgpt.com/docs/app/commands)
 
-绑定 Codex、Claude Code 或 OMP 的完整会话 ID 后，也可以在原客户端直接聊天。VA 读取这条会话的新完成回复，把正文显示在角色旁边。开启「自动朗读回复」并保存 Agent，角色也会按当前音色念出来。用 `va chat` 发出的消息继续使用同一个字幕和朗读流程。动作回复有台词时同步播放，只有动作时使用对应的默认台词。
+在已绑定的 Codex、Claude Code、DeepSeek Harness 或 OMP 原客户端聊天时，VA 会把各会话新完成的回复依次显示在角色旁。开启「自动朗读回复」后，这些回复也会用当前音色朗读。用 `va chat` 发送的消息继续使用同一字幕和朗读流程。动作回复有台词时同步播放，只有动作时使用默认台词。
 
 ![本地 Agent 的会话绑定记录](docs/screenshots/local-agent.png)
 
@@ -389,7 +414,7 @@ macOS 上已选用一种交互接入时，可独立开启音乐跟随。音频�
 
 VA 使用 **Sherpa-ONNX + ZipVoice-Distill INT8** 从参考录音复刻音色，支持中文和英文。VA 启动时会后台加载已启用的模型。用 Apple M4 的 4 个 CPU 线程和一段 3.3 秒参考音测试，预热后的三条 15–25 字中文台词约 0.61–0.99 秒生成完整音频。[ZipVoice 模型和示例](https://k2-fsa.github.io/sherpa/onnx/tts/zipvoice.html)
 
-1. 首次在项目目录运行 `make zipvoice-tts`。安装器在 `~/Library/Application Support/VA Desktop/zipvoice-tts` 创建 Python 虚拟环境并下载模型，也可以在「运行路径」中指定已有的模型目录和 Python。
+1. macOS 可在项目目录运行 `make zipvoice-tts`，安装器会在 `~/Library/Application Support/VA Desktop/zipvoice-tts` 创建 Python 虚拟环境并下载模型。Windows 用户在「运行路径」中填写已安装 sherpa-onnx 的 Python 和模型目录。参考录音要使用 24 kHz 单声道 16 位 PCM WAV，也可安装 FFmpeg 并将其加入 PATH，由 VA 处理其他 WAV、M4A 和 MP3。详情见 [Windows 适配说明](WIN.md)。
 2. 打开「设置 → 语音 → 本地音色复刻」，选择约 3 秒的清晰人声录音，支持 WAV、M4A、MP3。填写这段录音的准确原文，点「保存并使用 ZipVoice」，再点「试听当前音色」。VA 会按原路径读取录音。
 3. 对话沿用各接入的朗读开关。要朗读动作台词，打开「做动作时发出声音」。口型会跟随合成音频。日常合成失败时会回退到系统音色，试听会显示错误。
 

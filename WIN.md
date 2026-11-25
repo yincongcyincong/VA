@@ -61,7 +61,7 @@ node bin/va.js settings
 - Windows 使用命名管道替代 Unix socket，在当前用户应用数据目录发布随机管道端点。
 - Agent 后台进程使用 Windows 兼容的启动与进程树清理方式；交互式终端要求原生 EXE/COM，失败时提供操作提示。
 - Codex 会话标题在 Windows 使用 Node SQLite 读取，保留远程新增的大小写兼容修复；macOS 仍使用原来的 sqlite3 路径。
-- Windows 的 ZipVoice 默认 Python 路径改为虚拟环境的 `Scripts/python.exe`；测试中的模拟解释器改为显式由 Node 启动，避免 Windows 不执行 shebang 文件。
+- Windows 的 ZipVoice 默认 Python 路径是虚拟环境的 `Scripts/python.exe`。参考录音可使用 24 kHz 单声道 16 位 PCM WAV。其他 WAV、M4A 和 MP3 需要将 `ffmpeg.exe` 加入 PATH。
 - macOS 专用功能在 Windows 禁用或返回 `UNSUPPORTED_PLATFORM`，避免继续调用缺失的原生组件。设置页使用 Windows 快捷键文案。
 
 ## 暂不支持的功能
@@ -79,7 +79,7 @@ node bin/va.js settings
 - 本地 Agent 的进程调用、绑定、续聊、回复处理由测试夹具验证通过；没有向真实模型发送对话。本机检测到 Codex，但未验证其账号、模型服务及完整交互。Claude、OMP、DeepSeek Harness 需要先安装相应程序。
 - 屏幕观察的采集代码已按平台分支处理，路由逻辑有自动化测试；本轮未将真实桌面截图交给视觉模型，因此不将整个屏幕识别链路列为实测通过。
 - 火山 TTS 的响应解析及错误处理测试通过，未调用真实服务；需配置密钥及音色。
-- ZipVoice 的预热、合成、取消、异常恢复及超时测试通过；本机未安装模型并完成真实克隆语音合成。Windows 需自行准备 Python、sherpa-onnx、模型和参考音频，原有 `make zipvoice-tts` 安装流程未验证。
+- ZipVoice 的预热、合成、取消、异常恢复及超时已通过模拟测试。Windows 需要自行准备 Python、sherpa-onnx、模型和参考音频，真实克隆语音合成仍需验证。
 - 托盘对象和全局快捷键已成功注册；未逐项点击托盘菜单或实际按键验证。
 - macOS 没有在本机重新构建或运行，保留平台分支不等于完成 macOS 回归实测。
 

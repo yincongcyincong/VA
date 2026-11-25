@@ -6,6 +6,7 @@ from functools import lru_cache
 from io import BytesIO
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 from tempfile import TemporaryDirectory
@@ -56,27 +57,47 @@ class ReferenceTooLong(ValueError):
     pass
 
 
-@lru_cache(maxsize=1)
-def read_reference(path, _revision):
-    # The revision invalidates the cache when a file is replaced at the same path.
-    with TemporaryDirectory(prefix="va-zipvoice-") as folder:
-        output = str(Path(folder) / "reference.wav")
-        subprocess.run(
-            ["/usr/bin/afconvert", "-f", "WAVE", "-d", "LEI16@24000", "-c", "1", path, output],
-            check=True, timeout=5, capture_output=True,
-        )
-        with wave.open(output, "rb") as wav:
-            sample_rate = wav.getframerate()
-            frames = wav.getnframes()
-            if frames > sample_rate * 30:
-                raise ReferenceTooLong()
-            if not frames or wav.getnchannels() != 1 or wav.getsampwidth() != 2:
-                raise ValueError("Invalid reference audio")
-            samples = array("h")
-            samples.frombytes(wav.readframes(frames))
+class ReferenceConverterUnavailable(Exception):
+    pass
+
+
+def read_reference_wave(path):
+    with wave.open(path, "rb") as wav:
+        sample_rate = wav.getframerate()
+        frames = wav.getnframes()
+        if frames > sample_rate * 30:
+            raise ReferenceTooLong()
+        if not frames or sample_rate != 24000 or wav.getnchannels() != 1 or wav.getsampwidth() != 2:
+            raise wave.Error("Expected 24 kHz mono PCM with 16-bit samples")
+        samples = array("h")
+        samples.frombytes(wav.readframes(frames))
     if sys.byteorder != "little":
         samples.byteswap()
     return [sample / 32768 for sample in samples], sample_rate
+
+
+@lru_cache(maxsize=1)
+def read_reference(path, _revision):
+    # The revision invalidates the cache when a file is replaced at the same path.
+    windows = sys.platform == "win32"
+    if windows and Path(path).suffix.lower() == ".wav":
+        try:
+            return read_reference_wave(path)
+        except (EOFError, wave.Error):
+            pass
+    with TemporaryDirectory(prefix="va-zipvoice-") as folder:
+        output = str(Path(folder) / "reference.wav")
+        if windows:
+            converter = shutil.which("ffmpeg.exe")
+            if not converter:
+                raise ReferenceConverterUnavailable()
+            command = [converter, "-nostdin", "-loglevel", "error", "-i", path, "-map", "0:a:0",
+                       "-t", "31", "-ac", "1", "-ar", "24000", "-c:a", "pcm_s16le", output]
+        else:
+            command = ["/usr/bin/afconvert", "-f", "WAVE", "-d", "LEI16@24000", "-c", "1", path, output]
+        subprocess.run(command, check=True, timeout=5, capture_output=True,
+                       creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0) if windows else 0)
+        return read_reference_wave(output)
 
 
 def synthesize(engine, request, samples, sample_rate):
@@ -104,6 +125,7 @@ def main():
     model = load_model(Path(sys.argv[1]))
     if model is None:
         return
+    reply(id=0, ok=True)
     for line in sys.stdin:
         request = json.loads(line)
         request_id = request["id"]
@@ -113,6 +135,9 @@ def main():
                 samples, sample_rate = read_reference(reference["path"], reference["revision"])
             except ReferenceTooLong:
                 reply(id=request_id, error="long_reference")
+                continue
+            except ReferenceConverterUnavailable:
+                reply(id=request_id, error="converter_missing")
                 continue
             except (OSError, EOFError, wave.Error, ValueError, subprocess.SubprocessError):
                 reply(id=request_id, error="invalid_reference")

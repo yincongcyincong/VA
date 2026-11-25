@@ -1,7 +1,8 @@
+import { listPackage } from '@electron/asar';
 import { packager } from '@electron/packager';
 import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 
@@ -18,6 +19,17 @@ if (mac && (process.platform !== 'darwin' || arch !== process.arch)) {
   throw new Error('请在目标架构的 Mac 上打包 macOS 版，以编译对应的 Swift 助手。');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
+// Only runtime sources, shipped assets and npm dependencies belong in the archive.
+const releasePaths = [
+  'LICENSE',
+  'package\\.json',
+  'assets(?:/app-icon\\.png|/models(?:/VA Cover\\.vrm|/Gemini 娘\\.glb|/ATTRIBUTION\\.md)?)?',
+  'config(?:/(?:agent|character|voice)\\.json)?',
+  'desktop/deepseek-client-package\\.json',
+  '(?:bin|desktop|lib)(?:/[^./][^/]*\\.(?:[cm]?js|css|html))?',
+  'node_modules(?:/.*)?',
+];
+const excludedReleasePath = new RegExp(`^/(?!(?:${releasePaths.join('|')})$)`, 'u');
 const extraResource = [join(root, 'native', 'zipvoice-tts.py')];
 if (mac) {
   execFileSync('make', ['audio-helper', 'doubao-helper', `MACOS_ARCH=${arch === 'x64' ? 'x86_64' : arch}`],
@@ -34,7 +46,17 @@ const bundles = await packager({
   asar: true,
   icon: join(root, 'assets', mac ? 'app-icon.icns' : 'app-icon.ico'),
   electronZipDir: values['electron-zip-dir'],
-  ignore: /^\/(dist|build|logs|test|native|skills|scripts|integrations|model-samples|docs|\.github|\.env.*|README\.md|WIN\.md|assets\/app-icon\.(?:icns|ico))(\/|$)/,
+  ignore: excludedReleasePath,
+  afterAsar: [async ({ buildPath }) => {
+    const paths = new Set(listPackage(`${buildPath}.asar`).map(path => path.replaceAll(sep, '/')));
+    for (const path of paths) {
+      if (excludedReleasePath.test(path)) throw new Error(`Unexpected release file: ${path}`);
+    }
+    for (const path of ['/package.json', '/desktop/main.js', '/bin/va.js', '/assets/models/VA Cover.vrm',
+      '/assets/models/Gemini 娘.glb', '/config/agent.json', '/config/character.json', '/config/voice.json']) {
+      if (!paths.has(path)) throw new Error(`Missing release file: ${path}`);
+    }
+  }],
   extraResource,
   ...macOptions(),
 });

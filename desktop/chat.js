@@ -125,10 +125,15 @@ function renderSessions(provider, history) {
       time.textContent = new Date(record.boundAt).toLocaleString();
       info.append(time);
     }
+    if (record.bound) {
+      const badge = document.createElement('p');
+      badge.textContent = record.active ? '已绑定 · 当前发送目标' : '已绑定';
+      info.append(badge);
+    }
     const actions = document.createElement('div');
     actions.className = 'row';
-    const restore = sessionButton(record.active ? '当前绑定' : '重新绑定',
-      () => void edit('restore-session', record.ref, '已恢复会话绑定。'));
+    const restore = sessionButton(record.active ? '当前发送目标' : record.bound ? '设为发送目标' : '重新绑定',
+      () => void edit('restore-session', record.ref, '已绑定会话并设为发送目标。'));
     if (record.active) restore.dataset.unavailable = 'true';
     actions.append(restore);
     if (record.canOpen) actions.append(sessionButton('打开并绑定',
@@ -146,7 +151,8 @@ function render(state, syncFields = false) {
   const { mode, route } = state.integration;
   const local = mode === 'local';
   const client = mode === 'doubao-client';
-  syncFields ||= mode !== current?.integration.mode || state.provider !== current?.provider;
+  syncFields ||= mode !== current?.integration.mode || state.provider !== current?.provider ||
+    state.workingDirectory !== current?.workingDirectory || state.allowMultipleSessions !== current?.allowMultipleSessions;
   current = state;
 
   markChoice(modes, mode);
@@ -157,8 +163,10 @@ function render(state, syncFields = false) {
   routeConfiguration.hidden = !route;
   byId('openclaw-fields').hidden = mode !== 'openclaw';
   const activeTitle = state.sessionHistory?.find(record => record.active)?.title;
-  byId('connection').textContent = local ? (state.provider
-    ? state.label + (state.sessionId ? ' · ' + (activeTitle || state.sessionId) : ' · 未绑定会话') : '请选择 Agent')
+  byId('connection').textContent = local ? [
+    state.provider ? state.label + (state.sessionId ? ' · 发送到 ' + (activeTitle || state.sessionId) : ' · 未选择发送会话') : '请选择 Agent',
+    '监听 ' + state.listeningCount + ' 条会话',
+  ].join(' · ')
     : route ? (route.target ? '接收频道回复 · ' + route.target : '请配置目标频道')
       : client ? (state.client?.title || '未绑定本机对话') : '智能体接入已关闭';
 
@@ -170,6 +178,7 @@ function render(state, syncFields = false) {
       configuration.elements.cwd.value = state.workingDirectory;
       configuration.elements.cwd.placeholder = state.launchDirectory;
       configuration.elements.speak.checked = state.speakReplies;
+      configuration.elements.multiple.checked = state.allowMultipleSessions;
     }
   }
   if (client) {
@@ -228,12 +237,12 @@ onChoice(providers, provider => {
 });
 configuration.addEventListener('submit', event => {
   event.preventDefault();
-  const { cwd, speak } = configuration.elements;
-  void edit('configure', { cwd: cwd.value, speakReplies: speak.checked }, '已保存 Agent。');
+  const { cwd, speak, multiple } = configuration.elements;
+  void edit('configure', { cwd: cwd.value, speakReplies: speak.checked, allowMultipleSessions: multiple.checked }, '已保存 Agent。');
 });
 binding.addEventListener('submit', async event => {
   event.preventDefault();
-  if (await edit('bind', binding.elements.session.value, '已绑定会话。')) binding.reset();
+  if (await edit('bind', binding.elements.session.value, '已绑定并设为发送目标。')) binding.reset();
 });
 createSession.addEventListener('click', () => {
   void edit('create-session', undefined, ({ label, openedSession }) => {

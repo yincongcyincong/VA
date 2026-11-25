@@ -70,7 +70,7 @@ function renderList() {
     const features = model.rigged ? '带骨骼' : '静态模型';
     info.textContent = [model.format, size, features, model.isDefault && '默认角色',
       model.mouthSync && '支持口型'].filter(Boolean).join(' · ');
-    const preview = button('预览', () => void showPreview('preview-pack', model.id, '正在加载 ' + model.label + '…'));
+    const preview = button('预览', () => void showPreview(() => call('preview-pack', model.id), '正在加载 ' + model.label + '…'));
     preview.dataset.preview = '';
     item.append(title, info, preview);
     list.append(item);
@@ -85,14 +85,14 @@ async function refreshList() {
 
 search.addEventListener('input', renderList);
 
-async function showPreview(operation, id, note) {
-  if (busy) return;
+async function showPreview(load, note, replace = false) {
+  if (busy && !replace) return;
   const current = ++revision;
   busy = true;
   syncButtons();
   status.textContent = note;
   try {
-    const model = await call(operation, id);
+    const model = await load();
     if (current !== revision) return;
     if (!model) {
       status.textContent = '';
@@ -124,13 +124,16 @@ async function showPreview(operation, id, note) {
   } catch (error) {
     if (current === revision) status.textContent = errorText(error) || '模型无法预览。';
   } finally {
-    busy = false;
-    if (!panel.hidden) await refreshList().catch(error => { status.textContent = errorText(error); });
-    syncButtons();
+    if (current === revision) {
+      busy = false;
+      if (!panel.hidden) await refreshList().catch(error => { status.textContent = errorText(error); });
+      syncButtons();
+    }
   }
 }
 
-local.addEventListener('click', () => void showPreview('preview-file', undefined, '请选择一个模型文件。'));
+window.va.onModelPreview(model => void showPreview(() => model, '正在加载 ' + model.name + '…', true));
+local.addEventListener('click', () => void showPreview(() => call('preview-file'), '请选择一个模型文件。'));
 importPack.addEventListener('click', async () => {
   if (busy) return;
   const current = revision;
@@ -148,23 +151,28 @@ importPack.addEventListener('click', async () => {
   } catch (error) {
     if (current === revision) status.textContent = errorText(error);
   } finally {
-    busy = false;
-    syncButtons();
+    if (current === revision) {
+      busy = false;
+      syncButtons();
+    }
   }
 });
 use.addEventListener('click', async () => {
   if (!selected || busy) return;
+  const current = revision;
   busy = true;
   syncButtons();
   status.textContent = '正在检测并更换桌面角色…';
   try {
     const model = await call('use', selected.url);
-    status.textContent = '已设为桌面角色 · ' + model.name;
+    if (current === revision) status.textContent = '已设为桌面角色 · ' + model.name;
   } catch (error) {
-    status.textContent = errorText(error);
+    if (current === revision) status.textContent = errorText(error);
   } finally {
-    busy = false;
-    syncButtons();
+    if (current === revision) {
+      busy = false;
+      syncButtons();
+    }
   }
 });
 
@@ -178,6 +186,7 @@ byId('gallery-link').addEventListener('submit', event => {
 function syncPanel() {
   if (panel.hidden) {
     revision++;
+    busy = false;
     clearPreview();
     status.textContent = '';
     void call('release').catch(() => {});

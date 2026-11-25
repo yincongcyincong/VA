@@ -54,8 +54,8 @@ export async function patchAgentConfig(current, change, launchDirectory) {
 }
 
 export function agentConfigSnapshot(config, mode = integrationMode(config), prompt = '') {
-  const { provider = '', cwd = '', speakReplies = false, ...profiles } = config.localAgent ?? {};
-  const localAgent = { provider, cwd, speakReplies };
+  const { provider = '', cwd = '', speakReplies = false, allowMultipleSessions, ...profiles } = config.localAgent ?? {};
+  const localAgent = { provider, cwd, speakReplies, allowMultipleSessions: allowMultipleSessions === true };
   for (const key of ['codex', 'claude', 'deepseekharness', 'omp', 'custom']) {
     const profile = profiles[key];
     if (profile) localAgent[key] = { command: profile.command, model: profile.model, argumentCount: profile.args?.length };

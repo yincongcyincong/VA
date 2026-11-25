@@ -12,12 +12,12 @@ export function createReplyPresenter({ parseReply, queueDance, queueSpeech, queu
       const [first, ...rest] = splitReplySpeech(speech);
       if (rest.length && !speechCapacity()) return false;
       try {
-        queueDance(selection.dance, { speech: first, expression: selection.expression, readAloud, source });
+        queueDance(selection.dance, { speech: first, expression: selection.expression, readAloud, source, scope: selection.scope });
       } catch (error) {
         if (!danceFailures.includes(error?.code)) throw error;
         return queueSpeech(speech, source, readAloud, { ...selection, dance: undefined });
       }
-      if (rest.length) queueLines(rest, source, readAloud);
+      if (rest.length) queueLines(rest, source, readAloud, selection.scope);
       return true;
     }
     return queueSpeech(speech, source, readAloud, selection);
