@@ -315,15 +315,20 @@ function dispatch(agent, input, signal) {
   if (agent.provider === 'deepseekharness') {
     const args = ['--profile', 'headless', '--json', '--permission-mode', 'read-only',
       ...(input.sessionId ? ['--session-id', input.sessionId] : [])];
+    if (windows && input.sessionId) {
+      return runEventAgent(agent, args, input.prompt + '\n\n用户消息：\n' + input.message, signal, rows => {
+        const final = rows.findLast(event => event.type === 'final');
+        if (!final?.text) throw failure(rows.findLast(event => event.type === 'error')?.message);
+        return { reply: final.text, sessionId: final.sessionId };
+      }).catch(error => {
+        if (deepSeekPresetUnsupported(error)) return runWindowsDeepSeek(agent, input, signal);
+        throw error;
+      });
+    }
     return runEventAgent(agent, args, input.prompt + '\n\n用户消息：\n' + input.message, signal, rows => {
       const final = rows.findLast(event => event.type === 'final');
       if (!final?.text) throw failure(rows.findLast(event => event.type === 'error')?.message);
       return { reply: final.text, sessionId: final.sessionId };
-    }).catch(error => {
-      if (windows && input.sessionId && deepSeekPresetUnsupported(error)) {
-        return runWindowsDeepSeek({ ...agent, env: { PATH: agentPath() } }, input, signal);
-      }
-      throw error;
     });
   }
   return runJsonAgent(agent, input, signal);

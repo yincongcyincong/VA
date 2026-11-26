@@ -106,6 +106,18 @@ test('Windows changed bindings discard pending recognition and old send failures
   assert.deepEqual(sent, [['第一句', oldTarget], ['第二句', nextTarget]]);
 });
 
+test('Windows microphone stops after a DeepSeek bridge restart requirement instead of repeatedly sending', async t => {
+  const { voice, children } = fixture(t, async () => {
+    throw Object.assign(new Error('请重新打开 DeepSeek Harness'), { code: 'DEEPSEEK_RESTART' });
+  });
+  voice.start({ key: 'deepseekharness', sessionId: 'bound-session' });
+  children[0].emitLine({ type: 'user-input', text: '测试' });
+  await setTimeout(15);
+  assert.equal(voice.state().enabled, false);
+  assert.equal(voice.state().problem, '请重新打开 DeepSeek Harness');
+  assert.equal(children.length, 1);
+});
+
 test('Windows native helper can probe recognizers without opening the microphone',
   { skip: process.platform !== 'win32', timeout: 15_000 }, async t => {
     const child = launchWindowsAgentVoice({ probe: true });
