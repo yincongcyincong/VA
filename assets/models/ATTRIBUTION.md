@@ -22,13 +22,6 @@
 
 说话时，唇线沿连续的形变展开成横向椭圆，唇缘和口腔阴影共同随元音变化。
 
-## Gemini
-
-模型来自 ApprenTice 发布的「AI 娘全家桶」，原角色设计来自 ZipZipPipe 的《大 AI 与小 AI 们》。VA 收录了原包 `04_Gemini_V2/model.glb`，仅更改文件名。预览时在 VA 内旋转到正面，模型数据保持原样。
-
-- [模型包原帖（模之屋）](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
-- [CC BY-NC-SA 4.0 署名、非商业性使用、相同方式共享](https://creativecommons.org/licenses/by-nc-sa/4.0/deed.zh-hans)
-
 ## AI 娘动作版
 
 [`ai-girls/`](ai-girls/) 收录十款源自同一模型包的动作版 VRM。DeepSeek 复用原骨骼，其余九款由 VA 添加人形骨骼和蒙皮。十款均适配基础表情和口型，并沿用原包的 CC BY-NC-SA 4.0 授权。[动作版授权与改动说明](ai-girls/LICENSE.md) · [原模型包](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)

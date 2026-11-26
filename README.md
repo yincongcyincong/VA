@@ -14,7 +14,7 @@ VA 在 macOS 和 Windows 桌面上显示透明悬浮的 3D 角色。鼠标靠近
   <img src="docs/gallery/cover-avatar-back.png" width="246" alt="VA 默认 3D 角色的背面">
 </p>
 
-默认模型在项目的 `assets/models/VA Cover.vrm`。打包后位于 `VA.app/Contents/Resources/app.asar` 内的同一相对路径。运行 `va model --json` 可以查看当前加载的模型和路径。[下载默认形象](assets/models/VA%20Cover.vrm)
+安装包内置 VA 封面角色作为默认模型。文件在项目的 `assets/models/VA Cover.vrm`，打包后位于 `VA.app/Contents/Resources/app.asar` 内的同一相对路径。运行 `va model --json` 可以查看当前加载的模型和路径。[下载默认形象](assets/models/VA%20Cover.vrm)
 
 ## 3D 角色展示
 
@@ -66,6 +66,8 @@ ln -s "$PWD/bin/va.js" ~/.local/bin/va
 在仓库运行 `npm test` 或 `make test`。测试使用临时配置、模拟截图和模拟 Agent，对外部服务和系统录制权限均无依赖。
 
 在 Node.js 26 下运行 `npm run test:coverage`，统计 `bin/`、`desktop/`、`lib/` 和 `integrations/` 下的 JavaScript 覆盖率，包含测试从未加载的文件。
+
+在 macOS 26 的桌面会话中运行 `npm run test:desktop`，用临时配置和模拟麦克风测试模型升级与会话绑定。通过 `VA_TEST_ASAR` 指定打包后的 `app.asar`，同一命令也会测试包内代码和模型清单。
 
 VA 将运行日志写到启动目录下的 `logs/va.log`。通过 `va start` 启动时，以执行命令时所在的目录为准。直接打开打包应用且系统提供的工作目录是磁盘根目录时，以 `.app` 的所在目录为准。可运行 `tail -f logs/va.log` 跟踪日志。
 

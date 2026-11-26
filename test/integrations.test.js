@@ -8,6 +8,7 @@ import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
 import { checkBotRoute, configureIntegration, integrationMode, modes, screenMode } from '../desktop/integration.js';
 import { createLocalAgent } from '../desktop/local-agent.js';
+import { ControlError } from '../lib/control.js';
 import { readCodexSession } from '../lib/current-codex.js';
 import { stopWindowsAgent } from '../desktop/windows-agent.js';
 
@@ -205,8 +206,8 @@ test('binding history migrates old records and reopens the correct native sessio
   assert.equal(unbound.sessionHistory.find(record => record.ref === records[1].ref).bound, false);
   const openedAndBound = launch(async id => {
     assert.equal(id, codexId);
-    assert.equal(config.provider, 'codex');
-    assert.equal(config.cwd, codexCwd);
+    assert.equal(config.provider, 'claude');
+    assert.equal(config.cwd, claudeCwd);
     return true;
   });
   assert.equal(await openedAndBound.openSession(records[1].ref, { bind: true }), 'codex');
@@ -214,6 +215,43 @@ test('binding history migrates old records and reopens the correct native sessio
   assert.equal(config.provider, 'codex');
   assert.equal(config.cwd, codexCwd);
   await assert.rejects(restarted.openSession('missing-record'), { code: 'AGENT_SESSION' });
+});
+
+test('opening and binding preserves the current session when a native launcher fails', async t => {
+  for (const provider of ['claude', 'codex']) {
+    await t.test(provider, async t => {
+      const folder = await mkdtemp(join(tmpdir(), 'va-agent-open-failure-'));
+      t.after(() => rm(folder, { recursive: true, force: true }));
+      const sessionPath = join(folder, 'sessions.json');
+      const target = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+      const current = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+      let config = { provider };
+      const launchError = new ControlError('AGENT_LAUNCH', 'Agent command missing');
+      const agent = createLocalAgent({
+        getConfig: async () => config,
+        updateConfig: async edit => { config = await edit(config); },
+        getPrompt: async () => '共用 Prompt',
+        sessionPath,
+        launchDirectory: folder,
+        openCodex: async () => false,
+        openTerminal: async () => { throw launchError; },
+      });
+      await agent.bind(target);
+      const record = (await agent.status()).sessionHistory.find(entry => entry.id === target);
+      await agent.configure({ provider: 'claude' });
+      await agent.bind(current);
+      const savedConfig = config;
+      const savedSessions = await readFile(sessionPath, 'utf8');
+
+      await assert.rejects(agent.openSession(record.ref, { bind: true }), error => error === launchError);
+
+      assert.deepEqual(config, savedConfig);
+      assert.equal(await readFile(sessionPath, 'utf8'), savedSessions);
+      const status = await agent.status();
+      assert.equal(status.sessionId, current);
+      assert.deepEqual(status.sessionHistory.filter(entry => entry.bound).map(entry => entry.id), [current]);
+    });
+  }
 });
 
 test('single-session binding is the default and disabling multiple sessions retains only the send target', async t => {

@@ -62,10 +62,6 @@ export async function loadAvatar(stage, model) {
   const bounds = new THREE.Box3();
   try {
     asset = await loadModel(model, renderer);
-    if (model.builtIn && model.format === 'glb') {
-      // Gemini's source model faces +X. Face the initial camera at +Z.
-      asset.object.rotation.y -= Math.PI / 2;
-    }
     let visible = false;
     asset.object.traverse(node => { if (node.isMesh && node.visible) visible = true; });
     bounds.copy(pmx ? visibleBounds(asset.object) : new THREE.Box3().setFromObject(asset.object));

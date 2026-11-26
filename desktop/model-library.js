@@ -7,7 +7,7 @@ export const modelSources = {
   aplaybox: 'https://www.aplaybox.com/',
   vroid: 'https://hub.vroid.com/en',
 };
-export const localAhaName = '星神';
+const localAhaName = '星神';
 export const coverName = 'VA 封面角色';
 
 const packEntry = /^\d{2}_(.+)_V\d+$/u;
@@ -37,7 +37,7 @@ export function modelPage(value) {
   throw new ControlError('MODEL_LINK', '请粘贴模之屋或 VRoid Hub 的 HTTPS 模型详情链接。');
 }
 
-export function createModelLibrary(manifest, { bundledModel, bundledPack, coverModel, localAha }) {
+export function createModelLibrary(manifest, { bundledPack, coverModel, localAha }) {
   const save = settingsWriter(manifest);
   let importing = false;
 
@@ -75,8 +75,8 @@ export function createModelLibrary(manifest, { bundledModel, bundledPack, coverM
   }
 
   async function availableEntries() {
-    const [imported, pack, bundled, aha, cover] = await Promise.all([
-      currentEntries(), bundledEntries(), lstat(bundledModel).catch(() => undefined),
+    const [imported, pack, aha, cover] = await Promise.all([
+      currentEntries(), bundledEntries(),
       localAha && lstat(localAha.path).catch(() => undefined),
       coverModel && lstat(coverModel).catch(() => undefined),
     ]);
@@ -84,13 +84,9 @@ export function createModelLibrary(manifest, { bundledModel, bundledPack, coverM
     if (cover?.isFile()) entries.push({ path: coverModel, id: 'va-cover', label: coverName, format: 'VRM',
       size: cover.size, builtIn: true, isDefault: true, rigged: true, mouthSync: true });
     if (aha?.isFile()) entries.push({ path: localAha.path, id: 'aha-default', label: localAhaName, format: 'PMX',
-      size: aha.size, builtIn: true, isDefault: !entries.length, rigged: true, mouthSync: true });
-    const hasGeminiVrm = [...pack, ...imported].some(model => model.id === '04_Gemini_V2' && model.format === 'VRM');
-    const showBundledGemini = bundled?.isFile() && !hasGeminiVrm;
-    if (showBundledGemini) entries.push({ path: bundledModel, id: 'gemini-default', label: 'Gemini', format: 'GLB',
-      size: bundled.size, builtIn: true, isDefault: !entries.length });
+      size: aha.size, builtIn: true, rigged: true, mouthSync: true });
     const packIds = new Set(pack.map(model => model.id));
-    return entries.concat(pack, imported.filter(model => !packIds.has(model.id) && (!showBundledGemini || model.label !== 'Gemini')));
+    return entries.concat(pack, imported.filter(model => !packIds.has(model.id)));
   }
 
   return {
@@ -99,8 +95,7 @@ export function createModelLibrary(manifest, { bundledModel, bundledPack, coverM
     },
     async preview(id) {
       const entries = await availableEntries();
-      const entry = entries.find(model => model.id === id) ??
-        (id === 'gemini-default' && entries.find(model => model.id === '04_Gemini_V2'));
+      const entry = entries.find(model => model.id === id);
       if (!entry) throw new ControlError('MODEL_LIBRARY', '模型已移动或更新，请重新导入模型包。');
       return entry;
     },

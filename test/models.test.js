@@ -7,7 +7,7 @@ import { setImmediate } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { runInNewContext } from 'node:vm';
 import { readCharacter, readSettings, restoreAvatarPosition, settingsWriter } from '../desktop/config.js';
-import { bindModel, modelResource } from '../desktop/model-files.js';
+import { bindModel, modelResource, restoreModelPath } from '../desktop/model-files.js';
 import { createModelLibrary, modelPage } from '../desktop/model-library.js';
 
 async function temporary(t) {
@@ -33,16 +33,14 @@ test('model file validation checks headers and resolves only assets in the model
   await assert.rejects(bindModel(bad), { code: 'MODEL_FORMAT' });
 });
 
-test('library keeps previewable models and prefers the rigged Gemini', async t => {
+test('library imports previewable VRM and GLB models', async t => {
   const folder = await temporary(t);
-  const bundledModel = join(folder, 'Gemini 娘.glb');
-  await writeFile(bundledModel, 'glTF fixture');
   for (const id of ['04_Gemini_V2', '08_Claude_V2', '09_GPT_V2']) await mkdir(join(folder, id));
   await writeFile(join(folder, '04_Gemini_V2', 'model.vrm'), 'glTF rigged');
   await writeFile(join(folder, '08_Claude_V2', 'model.glb'), 'glTF preview');
   await writeFile(join(folder, '09_GPT_V2', 'model.glb'), 'unusable');
-  const library = createModelLibrary(join(folder, 'library.json'), { bundledModel });
-  assert.equal((await library.list())[0].label, 'Gemini');
+  const library = createModelLibrary(join(folder, 'library.json'), {});
+  assert.deepEqual(await library.list(), []);
   const imported = await library.importPack(folder, async file => {
     const fixture = await readFile(file, 'utf8');
     return { checked: fixture.startsWith('glTF'), bones: fixture.endsWith('rigged') ? ['head'] : [] };
@@ -58,9 +56,7 @@ test('library keeps previewable models and prefers the rigged Gemini', async t =
 
 test('the local asset pack supplies rigged models and takes priority over matching imports', async t => {
   const folder = await temporary(t);
-  const bundledModel = join(folder, 'Gemini 娘.glb');
   const bundledPack = join(folder, 'ai-girls');
-  await writeFile(bundledModel, 'static Gemini');
   const variants = ['01_DeepSeek_V7', '04_Gemini_V2'];
   for (const id of variants) {
     await mkdir(join(bundledPack, id), { recursive: true });
@@ -68,11 +64,26 @@ test('the local asset pack supplies rigged models and takes priority over matchi
   }
   await mkdir(join(folder, '04_Gemini_V2'));
   await writeFile(join(folder, '04_Gemini_V2', 'model.glb'), 'imported static Gemini');
-  const library = createModelLibrary(join(folder, 'library.json'), { bundledModel, bundledPack });
+  const library = createModelLibrary(join(folder, 'library.json'), { bundledPack });
   assert.equal((await library.importPack(folder, async () => ({ checked: true }))).count, 1);
   assert.deepEqual((await library.list()).map(model => [model.label, model.format, model.rigged]),
     [['DeepSeek', 'VRM', true], ['Gemini', 'VRM', true]]);
-  assert.equal((await library.preview('gemini-default')).path, join(bundledPack, variants[1], 'model.vrm'));
+  assert.equal((await library.preview(variants[1])).path, join(bundledPack, variants[1], 'model.vrm'));
+  await assert.rejects(library.preview('gemini-default'), { code: 'MODEL_LIBRARY' });
+});
+
+test('saved selections of the retired built-in Gemini use the default model', async t => {
+  const folder = await temporary(t);
+  const settings = join(folder, 'settings.json');
+  const save = settingsWriter(settings);
+  const retired = join('assets', 'models', 'Gemini 娘.glb');
+  for (const modelPath of [join(folder, retired), join(folder, 'old-install', 'app.asar', retired)]) {
+    await save({ modelPath });
+    assert.equal(restoreModelPath((await readSettings(settings)).modelPath, folder), null);
+  }
+  for (const modelPath of [join(folder, 'custom', 'Gemini 娘.glb'), join(folder, 'ai-girls', '04_Gemini_V2', 'model.vrm')]) {
+    assert.equal(restoreModelPath(modelPath, folder), modelPath);
+  }
 });
 
 test('3D model gallery searches built-in and imported names', async () => {
@@ -214,8 +225,9 @@ test('the bundled cover is a rigged VRM and wins the default model selection', a
     return Math.max(...values) - Math.min(...values);
   });
   assert.ok(extent[1] > .004 && extent[0] > extent[1] * 2.3, 'the open lip contour is a horizontal oval');
-  const library = createModelLibrary(join(folder, 'library.json'), {
-    bundledModel: join(folder, 'Gemini.glb'), coverModel: fileURLToPath(coverModel),
-  });
-  assert.ok((await library.list()).some(model => model.id === 'va-cover' && model.isDefault));
+  const localAha = { path: join(folder, '星神.pmx') };
+  await writeFile(localAha.path, 'PMX fixture');
+  const library = createModelLibrary(join(folder, 'library.json'), { coverModel: fileURLToPath(coverModel), localAha });
+  assert.deepEqual((await library.list()).map(({ id, isDefault }) => [id, Boolean(isDefault)]),
+    [['va-cover', true], ['aha-default', false]]);
 });

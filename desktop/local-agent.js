@@ -750,45 +750,54 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
       });
     },
     async openSession(ref, { bind = false } = {}) {
-      const config = await getConfig();
-      const { record, sessions, current } = await recordFor(ref, config);
-      if (record.provider === 'deepseekharness' || record.provider === 'omp') {
-        if (windows && record.provider === 'deepseekharness') {
-          throw new ControlError('UNSUPPORTED_PLATFORM', 'Windows 请在 DeepSeek Harness 内打开会话，再回到 VA 绑定。');
+      const open = async signal => {
+        const config = await getConfig();
+        const { record, sessions, current } = await recordFor(ref, config);
+        if (record.provider === 'deepseekharness' || record.provider === 'omp') {
+          if (windows && record.provider === 'deepseekharness') {
+            throw new ControlError('UNSUPPORTED_PLATFORM', 'Windows 请在 DeepSeek Harness 内打开会话，再回到 VA 绑定。');
+          }
+          const launch = async signal => {
+            if (archivedSession(sessions, record.provider, record.id)) {
+              throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档。');
+            }
+            const path = await findSessionFile(record.provider, record.id);
+            if (!path) throw new ControlError('AGENT_SESSION', `找不到这条 ${providers[record.provider]} 会话。`);
+            const agent = await runtime({ ...config, provider: record.provider, cwd: record.cwd }, launchDirectory);
+            const deepseek = record.provider === 'deepseekharness';
+            if (deepseek) {
+              await openDeepSeekSession(record.id, () => openDeepSeek(agent.command), signal);
+            } else {
+              const model = agent.model ? ['--model', agent.model] : [];
+              const prompt = await getPrompt();
+              signal.throwIfAborted();
+              await openTerminal(agent, ['--allow-home', '--append-system-prompt', prompt, ...model, '--resume', path]);
+            }
+            if (bind && (!current || sessions.bindings[current.key] !== record.id)) await restoreBinding(ref, signal);
+            return deepseek ? 'deepseek' : 'terminal';
+          };
+          return signal ? launch(signal) : exclusive(launch);
         }
-        return exclusive(async signal => {
-          if (archivedSession(sessions, record.provider, record.id)) {
-            throw new ControlError('AGENT_SESSION_ARCHIVED', '这条 DeepSeek Harness 会话已归档。');
-          }
-          const path = await findSessionFile(record.provider, record.id);
-          if (!path) throw new ControlError('AGENT_SESSION', `找不到这条 ${providers[record.provider]} 会话。`);
+        if (!nativeResume.has(record.provider)) {
+          throw new ControlError('AGENT_SESSION', '当前支持打开 Codex 和 Claude Code 会话。');
+        }
+        signal?.throwIfAborted();
+        const openedInCodex = record.provider === 'codex' && await openCodex(record.id);
+        if (!openedInCodex) {
           const agent = await runtime({ ...config, provider: record.provider, cwd: record.cwd }, launchDirectory);
-          const deepseek = record.provider === 'deepseekharness';
-          if (deepseek) {
-            await openDeepSeekSession(record.id, () => openDeepSeek(agent.command), signal);
-          } else {
-            const model = agent.model ? ['--model', agent.model] : [];
-            const prompt = await getPrompt();
-            signal.throwIfAborted();
-            await openTerminal(agent, ['--allow-home', '--append-system-prompt', prompt, ...model, '--resume', path]);
-          }
-          if (bind && (!current || sessions.bindings[current.key] !== record.id)) await restoreBinding(ref, signal);
-          return deepseek ? 'deepseek' : 'terminal';
-        });
-      }
-      if (!nativeResume.has(record.provider)) {
-        throw new ControlError('AGENT_SESSION', '当前支持打开 Codex 和 Claude Code 会话。');
-      }
-      if (bind && (!current || boundKey(record, sessions.bindings) !== current.key)) await restoreSession(ref);
-      if (record.provider === 'codex' && await openCodex(record.id)) return 'codex';
-      const agent = await runtime({ ...config, provider: record.provider, cwd: record.cwd }, launchDirectory);
-      const prompt = await getPrompt();
-      const model = agent.model ? ['--model', agent.model] : [];
-      const args = record.provider === 'codex'
-        ? ['resume', '--config', 'developer_instructions=' + JSON.stringify(prompt), ...model, record.id]
-        : ['--resume', record.id, '--append-system-prompt', prompt, ...model];
-      await openTerminal(agent, args);
-      return 'terminal';
+          const prompt = await getPrompt();
+          const model = agent.model ? ['--model', agent.model] : [];
+          const args = record.provider === 'codex'
+            ? ['resume', '--config', 'developer_instructions=' + JSON.stringify(prompt), ...model, record.id]
+            : ['--resume', record.id, '--append-system-prompt', prompt, ...model];
+          signal?.throwIfAborted();
+          await openTerminal(agent, args);
+        }
+        signal?.throwIfAborted();
+        if (bind && (!current || boundKey(record, sessions.bindings) !== current.key)) await restoreBinding(ref, signal);
+        return openedInCodex ? 'codex' : 'terminal';
+      };
+      return bind ? exclusive(open) : open();
     },
     openNewSession() {
       return exclusive(async signal => {

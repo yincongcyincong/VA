@@ -31,8 +31,8 @@ import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
 import { callDoubaoClient, createDoubaoClient } from './doubao-client.js';
 import { createDoubaoCaptions } from './doubao-captions.js';
 import { dialoguePages } from './dialogue-text.js';
-import { bindModel, modelFormats, modelMime, modelResource } from './model-files.js';
-import { aiGirlName, coverName, createModelLibrary, localAhaName, modelPage, modelSources } from './model-library.js';
+import { bindModel, modelFormats, modelMime, modelResource, restoreModelPath } from './model-files.js';
+import { aiGirlName, coverName, createModelLibrary, modelPage, modelSources } from './model-library.js';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mac = process.platform === 'darwin';
@@ -49,11 +49,9 @@ const pageURL = 'va-app://desktop/index.html';
 const bubbleURL = 'va-app://desktop/bubble.html';
 const settingsURL = 'va-app://desktop/settings.html';
 const controlsURL = 'va-app://desktop/controls.html';
-const bundledModelPath = join(root, 'assets', 'models', 'Gemini 娘.glb');
 const bundledAiGirls = join(root, 'assets', 'models', 'ai-girls');
-const riggedGeminiPath = join(bundledAiGirls, '04_Gemini_V2', 'model.vrm');
 const coverModelPath = join(root, 'assets', 'models', 'VA Cover.vrm');
-const builtInModels = new Set([bundledModelPath, coverModelPath]);
+const builtInModels = new Set([coverModelPath]);
 const ahaPack = '星穹铁道-阿哈_by_崩坏：星穹铁道_df69373aacbea0a160459be2ce0eb56e';
 const ahaFile = '星穹铁道-阿哈2.pmx';
 let defaultModelPath = coverModelPath;
@@ -1356,9 +1354,9 @@ function bindCurrentCodexSession(id) {
 
 async function openAgentSession(ref, options) {
   requireMode('local');
-  if (options?.bind) stopAgentVoice();
   const application = await localAgent.openSession(ref, options);
   if (options?.bind) {
+    stopAgentVoice();
     screenRevision++;
     syncSenses();
   }
@@ -1819,8 +1817,7 @@ function syncBounds() {
 }
 
 function publicModel({ url, format, name, builtIn, path }) {
-  if (path === bundledModelPath) name = 'Gemini';
-  if (path === coverModelPath) name = coverName;
+  if (path === defaultModelPath) name = coverName;
   if (basename(path) === 'model.vrm' || basename(path) === 'model.glb') {
     name = aiGirlName(basename(dirname(path))) ?? name;
   }
@@ -2415,22 +2412,21 @@ if (!app.requestSingleInstanceLock()) {
       return result;
     };
     const savedSettings = await readSettings(settingsPath);
-    ({ theme, speakingStyle, scale, view, modelPath, clickThrough, screenWatch, screenInterval, musicDance, windowPosition } = savedSettings);
+    ({ theme, speakingStyle, scale, view, clickThrough, screenWatch, screenInterval, musicDance, windowPosition } = savedSettings);
+    modelPath = restoreModelPath(savedSettings.modelPath, root);
     const localAha = await findLocalAha();
     if (localAha) builtInModels.add(localAha.path);
-    const cover = await bindModel(coverModelPath, true).catch(() => undefined);
-    const riggedGemini = await bindModel(riggedGeminiPath, true).catch(() => undefined);
-    defaultModelPath = cover?.path ?? localAha?.path ?? riggedGemini?.path ?? bundledModelPath;
-    if (!cover && localAha) defaultCharacter.name = localAhaName;
+    const cover = await bindModel(coverModelPath, true);
+    defaultModelPath = cover.path;
+    builtInModels.add(cover.path);
     modelLibrary = createModelLibrary(join(app.getPath('userData'), 'ai-girls.json'), {
-      bundledModel: bundledModelPath, bundledPack: bundledAiGirls, localAha, coverModel: cover?.path,
+      bundledPack: bundledAiGirls, localAha, coverModel: cover.path,
     });
-    if (modelPath === bundledModelPath && riggedGemini) modelPath = riggedGemini.path;
     if (modelPath) {
       selectedModel = await bindModel(modelPath, isBuiltInModel(modelPath))
         .catch(error => { modelWarning = error.message + ' 已显示默认角色。'; });
     }
-    selectedModel ??= cover ?? localAha ?? riggedGemini ?? await bindModel(bundledModelPath, true, { allowMissing: true });
+    selectedModel ??= cover;
     assets.set(selectedModel.id, selectedModel);
     let storedAgent;
     try {

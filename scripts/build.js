@@ -23,7 +23,7 @@ const root = fileURLToPath(new URL('../', import.meta.url));
 const releasePaths = [
   'LICENSE',
   'package\\.json',
-  'assets(?:/app-icon\\.png|/models(?:/VA Cover\\.vrm|/Gemini 娘\\.glb|/ATTRIBUTION\\.md)?)?',
+  'assets(?:/app-icon\\.png|/models(?:/VA Cover\\.vrm|/ATTRIBUTION\\.md)?)?',
   'config(?:/(?:agent|character|voice)\\.json)?',
   'desktop/deepseek-client-package\\.json',
   '(?:bin|desktop|lib)(?:/[^./][^/]*\\.(?:[cm]?js|css|html))?',
@@ -53,7 +53,7 @@ const bundles = await packager({
       if (excludedReleasePath.test(path)) throw new Error(`Unexpected release file: ${path}`);
     }
     for (const path of ['/package.json', '/desktop/main.js', '/bin/va.js', '/assets/models/VA Cover.vrm',
-      '/assets/models/Gemini 娘.glb', '/config/agent.json', '/config/character.json', '/config/voice.json']) {
+      '/config/agent.json', '/config/character.json', '/config/voice.json']) {
       if (!paths.has(path)) throw new Error(`Missing release file: ${path}`);
     }
   }],

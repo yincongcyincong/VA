@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { open, realpath, stat } from 'node:fs/promises';
-import { basename, dirname, extname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { ControlError } from '../lib/control.js';
 
 export const modelFormats = ['pmx', 'vrm', 'glb', 'gltf', 'fbx', 'obj'];
@@ -25,7 +25,12 @@ export const modelMime = {
   '.ktx2': 'image/ktx2',
 };
 
-export async function bindModel(path, builtIn = false, { allowMissing = false } = {}) {
+export function restoreModelPath(path, appRoot) {
+  const retiredModel = join('assets', 'models', 'Gemini 娘.glb');
+  return path === join(appRoot, retiredModel) || path?.endsWith(sep + join('app.asar', retiredModel)) ? null : path;
+}
+
+export async function bindModel(path, builtIn = false) {
   if (typeof path !== 'string' || !isAbsolute(path)) {
     throw new ControlError('MODEL_PATH', '请选择模型的绝对路径。');
   }
@@ -35,10 +40,10 @@ export async function bindModel(path, builtIn = false, { allowMissing = false } 
   }
   const resolved = await realpath(path).catch(() => undefined);
   const file = resolved && await stat(resolved).catch(() => undefined);
-  if ((!file?.isFile() || !file.size) && !allowMissing) {
+  if (!file?.isFile() || !file.size) {
     throw new ControlError('MODEL_PATH', '模型文件不存在或无法读取。');
   }
-  if (!allowMissing && file?.size && ['pmx', 'glb', 'vrm'].includes(format)) {
+  if (['pmx', 'glb', 'vrm'].includes(format)) {
     const handle = await open(resolved, 'r');
     try {
       const prefix = Buffer.alloc(4);
@@ -50,7 +55,7 @@ export async function bindModel(path, builtIn = false, { allowMissing = false } 
       await handle.close();
     }
   }
-  const modelPath = resolved ?? resolve(path);
+  const modelPath = resolved;
   const name = basename(path);
   const id = randomUUID();
   return { id, path: modelPath, root: dirname(modelPath), name, format, builtIn,
