@@ -269,7 +269,11 @@ async function asset(request) {
   }
   if (!local) return new Response(null, { status: 404 });
   try {
-    const bytes = await readFile(local);
+    let bytes = await readFile(local);
+    if (process.platform === 'win32' && extension === '.vrm') {
+      const { repairWindowsDeepSeekVrm } = await import('./windows-vrm-materials.js');
+      bytes = repairWindowsDeepSeekVrm(bytes);
+    }
     return new Response(bytes, { headers: { 'Content-Type': mime[extension] } });
   } catch (error) {
     if (error.code !== 'ENOENT') console.error(error);
