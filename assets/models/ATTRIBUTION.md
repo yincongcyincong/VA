@@ -31,7 +31,7 @@
 
 ## AI 娘动作版
 
-本机 `ai-girls/<角色目录>/model.vrm` 内的十款动作版源自同一模型包。DeepSeek 复用原骨骼，其余九款使用 VA 的人形骨骼、蒙皮、基础表情和口型适配。保留导出文件中的作者、来源与使用标记，动作版 VRM 不随公共仓库分发。[原模型包](https://www.aplaybox.com/details/model/3uR3BbUTlkUW) · [原角色设计](https://www.bilibili.com/video/BV1tE9XBbErS/)
+[`ai-girls/`](ai-girls/) 收录十款源自同一模型包的动作版 VRM。DeepSeek 复用原骨骼，其余九款由 VA 添加人形骨骼和蒙皮。十款均适配基础表情和口型，并沿用原包的 CC BY-NC-SA 4.0 授权。[动作版授权与改动说明](ai-girls/LICENSE.md) · [原模型包](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
 ## 原包署名说明
 
