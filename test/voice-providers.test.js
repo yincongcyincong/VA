@@ -169,6 +169,11 @@ test('ZipVoice waits for model readiness before timing the queued synthesis', as
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(speakState, 'pending');
   t.mock.timers.tick(1);
+  if (process.platform === 'win32') {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(speakState, 'pending');
+    t.mock.timers.tick(45_000);
+  }
   assert.equal(await speaking, 'rejected:ZipVoice 语音合成超时。');
 
   const unavailable = settle(worker.warm({ ...config, modelDirectory: 'never-ready' }, reference));

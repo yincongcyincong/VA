@@ -110,7 +110,7 @@ va config run permissions-status --json
 va config run permissions-open '{"kind":"microphone"}' --json
 ```
 
-窗口坐标使用 macOS 的全局桌面坐标，允许副屏使用负坐标，`null` 恢复主屏幕默认位置。模型预览在设置窗口中打开，可旋转和缩放，也可传 `{"path":"/绝对路径/角色.vrm"}`。麦克风监听需要 macOS 26 或更新版本和已绑定的本地 Agent 会话。DeepSeek 能力安装需要选中并绑定 DeepSeek Harness。豆包客户端可用 `doubao-client-open` 打开，用 `doubao-client-read` 读取当前绑定对话的最新回复。
+窗口坐标使用 macOS 的全局桌面坐标，允许副屏使用负坐标，`null` 恢复主屏幕默认位置。模型预览在设置窗口中打开，可旋转和缩放，也可传 `{"path":"/绝对路径/角色.vrm"}`。麦克风监听需要已绑定的本地 Agent 会话；macOS 需要 26 或更新版本，Windows 需要本机语音识别引擎和麦克风访问权限。DeepSeek 能力安装需要选中并绑定 DeepSeek Harness。豆包客户端可用 `doubao-client-open` 打开，用 `doubao-client-read` 读取当前绑定对话的最新回复。
 
 `permissions-open` 接受 `screen`、`microphone` 或 `accessibility`，由用户在 macOS 系统设置中授权。OpenClaw 和 AstrBot 的 VA 端频道可通过 `agent.channels` 设置，机器人凭据、插件权限和部署参数在对应服务的配置中管理。
 
@@ -300,7 +300,9 @@ va chat "我们刚才聊到哪里了？" --speak
 
 ### 向本地 Agent 说话
 
-在「设置 → 智能体接入 → 本地 Agent」选择 Agent 并绑定会话，然后在「向 Agent 说话」点「开始监听」。首次使用需要给 VA 开启 macOS 的麦克风权限。需要 macOS 26 和本机中文语音识别资源。[Apple Speech](https://developer.apple.com/documentation/speech)
+在「设置 → 智能体接入 → 本地 Agent」选择 Agent 并绑定会话，然后在「向 Agent 说话」点「开始监听」。macOS 首次使用需要给 VA 开启麦克风权限。需要 macOS 26 和本机中文语音识别资源。[Apple Speech](https://developer.apple.com/documentation/speech)
+
+Windows 使用独立的本机语音识别通路，不依赖 macOS 助手。请在 Windows 语言选项中安装语音识别组件，并在麦克风隐私设置中允许桌面应用访问麦克风。优先使用已安装的简体中文识别引擎，其次使用系统界面语言或其他已安装引擎；监听状态会显示实际识别语言。只在点击「开始监听」后使用默认麦克风。[Windows 语音识别引擎](https://learn.microsoft.com/en-us/dotnet/api/system.speech.recognition.speechrecognitionengine?view=netframework-4.8.1)
 
 VA 在本机转写麦克风声音，将识别完成的文字自动发到绑定的会话。回复仍显示在角色旁，开启「自动朗读回复」即可听到回复。发送和朗读期间会暂停监听，结束后自动恢复。
 

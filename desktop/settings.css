@@ -91,6 +91,15 @@ button.danger { color: var(--danger); }
 .agent-head { padding-inline: 2px; }
 .settings-grid, .form-grid { display: grid; gap: 10px; }
 .form-grid { grid-template-columns: 1fr 1fr; align-items: end; }
+#configuration.windows-agent-form {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  align-items: center;
+}
+#configuration.windows-agent-form > .toggle { white-space: nowrap; }
+@media (max-width: 600px) {
+  #configuration.windows-agent-form { grid-template-columns: 1fr 1fr; }
+  #configuration.windows-agent-form > .end { grid-column: 1 / -1; justify-self: end; }
+}
 .wide { grid-column: 1 / -1; }
 .end { justify-content: flex-end; text-align: end; }
 input:not([type=range], [type=checkbox]), textarea {

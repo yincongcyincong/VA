@@ -298,6 +298,10 @@ function renderVoicePanel() {
 function renderVoice(config) {
   const previous = voiceConfig;
   voiceConfig = config;
+  if (Object.hasOwn(config, 'playbackWarning')) {
+    if (config.playbackWarning) voiceStatus.textContent = config.playbackWarning;
+    else if (previous?.playbackWarning) voiceStatus.textContent = '';
+  }
   voiceSelection ??= config.provider;
   actionSound.checked = config.actionSound;
   actionSound.disabled = false;

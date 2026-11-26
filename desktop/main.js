@@ -21,6 +21,7 @@ import { createSenses } from './senses.js';
 import { botRoute, checkBotRoute, configureIntegration, externalModes, integrationMode, integrationSnapshot, screenMode } from './integration.js';
 import { createLocalAgent } from './local-agent.js';
 import { createAgentVoice } from './agent-voice.js';
+import { createWindowsAgentVoice } from './windows-agent-voice.js';
 import { installDeepSeekRole } from './deepseek-profile.js';
 import { deepSeekNavigation } from './deepseek-navigation.js';
 import { createSystemVoiceCatalog, defaultSystemVoice, splitReplySpeech, systemSpeech } from './speech.js';
@@ -122,6 +123,7 @@ let performanceEdits = Promise.resolve();
 let defaultVoice;
 let voiceEdits = Promise.resolve();
 let zipVoicePreparation;
+let windowsVoiceWarning;
 const speechCache = createSpeechCache();
 let localAgent;
 let doubaoClient;
@@ -329,6 +331,7 @@ function voiceSnapshot(config) {
     systemVoice,
     zipvoice: zipVoiceSettings(zipvoice),
     zipvoicePreparation: provider === 'zipvoice' ? zipVoicePreparation : undefined,
+    ...(windows ? { playbackWarning: windowsVoiceWarning } : {}),
     volc: { speaker: volc.speaker, resourceId: volc.resourceId, apiKeyEnv: volc.apiKeyEnv, hasKey: Boolean(volcKey(volc)) },
   };
 }
@@ -338,6 +341,7 @@ function editVoice(edit) {
     const config = await getVoiceConfig();
     const reference = await edit(config);
     await saveVoice(config);
+    if (windows) windowsVoiceWarning = undefined;
     if (config.provider !== 'zipvoice') {
       zipVoicePreparation = undefined;
       zipVoice.stop();
@@ -353,6 +357,13 @@ function editVoice(edit) {
 
 function transferAudio(audio, warning) {
   return { audio: audio.buffer.slice(audio.byteOffset, audio.byteOffset + audio.byteLength), warning };
+}
+
+function publishWindowsVoiceWarning(warning, config) {
+  if (warning === windowsVoiceWarning) return;
+  windowsVoiceWarning = warning;
+  if (warning) logger.write('warn', 'speech.fallback', { provider: config?.provider, message: warning });
+  if (config) settingsWindow?.webContents.send('va:voice-changed', voiceSnapshot(config));
 }
 
 async function synthesize(text, job) {
@@ -375,6 +386,7 @@ async function synthesize(text, job) {
         const { audio, cached } = await speechCache.get(text, ['zipvoice', python, modelDirectory, reference, rate, volume],
           signal, () => zipVoice.speak(text, settings, reference, signal, prosody));
         logger.write('info', 'speech.ready', { provider: 'zipvoice', cached });
+        if (windows) publishWindowsVoiceWarning(undefined, config);
         return transferAudio(audio);
       }
       if (config.provider === 'volc') {
@@ -383,12 +395,14 @@ async function synthesize(text, job) {
         const { audio, cached } = await speechCache.get(text, ['volc', speaker, resourceId, apiKey, rate, volume],
           signal, () => volcSpeech(text, { speaker, resourceId, apiKey }, signal, prosody));
         logger.write('info', 'speech.ready', { provider: 'volc', cached });
+        if (windows) publishWindowsVoiceWarning(undefined, config);
         return transferAudio(audio);
       }
     } catch (error) {
       signal.throwIfAborted();
       if (preview) throw error;
       warning = error.message + ' 本次改用系统声音。';
+      if (windows) publishWindowsVoiceWarning(warning, config);
     }
     const voice = config?.systemVoice ?? defaultSystemVoice;
     const { audio, cached } = await speechCache.get(text, ['system', voice, rate, volume],
@@ -1424,7 +1438,14 @@ function stopAgentVoice() {
 }
 
 async function startAgentVoice() {
-  if (windows) throw new ControlError('UNSUPPORTED_PLATFORM', 'Agent 本机语音输入暂不支持 Windows，请使用文字输入。');
+  if (windows) {
+    requireMode('local');
+    if (agentVoice.state().enabled) return agentVoice.state();
+    const revision = ++agentVoiceRevision;
+    const target = await localAgent.voiceTarget();
+    if (revision !== agentVoiceRevision || currentMode !== 'local') return agentVoice.state();
+    return agentVoice.start(target);
+  }
   requireMode('local');
   if (agentVoice.state().enabled) return agentVoice.state();
   if (Number(process.getSystemVersion().split('.')[0]) < 26) {
@@ -2451,7 +2472,7 @@ if (!app.requestSingleInstanceLock()) {
       onChange: () => settingsWindow?.webContents.send('va:chat-refresh'),
     });
     await localAgent.monitorReplies(currentMode === 'local');
-    agentVoice = createAgentVoice({
+    agentVoice = (windows ? createWindowsAgentVoice : createAgentVoice)({
       binary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-captions'),
       send: (text, target) => sendChat(text, undefined, target),
       onState: value => {

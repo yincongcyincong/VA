@@ -12,7 +12,8 @@ import { createSessionReplies, findSessionFile, replySessionKey, supportsSession
 import { createSessionTitles, sessionPreview } from './session-titles.js';
 import { navigateDeepSeek } from './deepseek-navigation.js';
 import { deepSeekArchives, deepSeekSessionId } from './deepseek-sessions.js';
-import { launchWindowsTerminal, stopWindowsAgent } from './windows-agent.js';
+import { launchWindowsTerminal, openWindowsDeepSeekDesktop, stopWindowsAgent } from './windows-agent.js';
+import { deepSeekPresetUnsupported, runWindowsDeepSeek } from './windows-deepseek.js';
 
 const providers = { codex: 'Codex', claude: 'Claude Code', deepseekharness: 'DeepSeek Harness', omp: 'OMP', custom: '自定义 Agent' };
 const defaultCommands = { deepseekharness: 'dsh', custom: '' };
@@ -318,6 +319,11 @@ function dispatch(agent, input, signal) {
       const final = rows.findLast(event => event.type === 'final');
       if (!final?.text) throw failure(rows.findLast(event => event.type === 'error')?.message);
       return { reply: final.text, sessionId: final.sessionId };
+    }).catch(error => {
+      if (windows && input.sessionId && deepSeekPresetUnsupported(error)) {
+        return runWindowsDeepSeek({ ...agent, env: { PATH: agentPath() } }, input, signal);
+      }
+      throw error;
     });
   }
   return runJsonAgent(agent, input, signal);
@@ -363,8 +369,7 @@ const quote = value => "'" + value.replaceAll("'", "'\\''") + "'";
 
 async function launchTerminal(agent, args, { freshOmp = false } = {}) {
   const path = agentPath();
-  if (windows && !freshOmp) return launchWindowsTerminal(agent, args, path);
-  if (windows) throw new ControlError('UNSUPPORTED_PLATFORM', 'Windows 请先在终端新建 OMP 会话，再回到 VA 绑定。');
+  if (windows) return launchWindowsTerminal(agent, args, path, { freshOmp });
   const candidates = isAbsolute(agent.command) ? [agent.command]
     : path.split(delimiter).map(directory => resolve(agent.cwd, directory, agent.command));
   let executable;
@@ -409,7 +414,7 @@ async function openCodexDesktop(id, cwd) {
 }
 
 async function openDeepSeekDesktop(command) {
-  if (windows) return false;
+  if (windows) return openWindowsDeepSeekDesktop();
   const embedded = command.match(/^(.+\.app)\/Contents\/Resources\/runtime\/cli\/bin\/dsh$/u)?.[1];
   for (const app of new Set([embedded, ...deepSeekApps].filter(Boolean))) {
     if (!(await stat(app).catch(() => undefined))?.isDirectory()) continue;

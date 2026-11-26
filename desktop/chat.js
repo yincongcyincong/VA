@@ -58,7 +58,11 @@ function controls() {
   createSession.disabled = Boolean(busy || !current?.provider);
   clearSessions.disabled = Boolean(busy || !current?.hasSessionRecords);
   installDeepSeekRole.disabled = Boolean(busy || !current?.sessionId);
-  voiceStart.disabled = Boolean(current?.platform === 'win32' || busy || changingVoice || !current?.sessionId || voiceInput.enabled);
+  if (current?.platform === 'win32') {
+    voiceStart.disabled = Boolean(busy || changingVoice || !current?.sessionId || voiceInput.enabled);
+  } else {
+    voiceStart.disabled = Boolean(current?.platform === 'win32' || busy || changingVoice || !current?.sessionId || voiceInput.enabled);
+  }
   voiceStop.disabled = changingVoice || !voiceInput.enabled;
   for (const control of sessions.querySelectorAll('button')) control.disabled = Boolean(busy || control.dataset.unavailable);
   const bound = Boolean(current?.client?.title);
@@ -72,10 +76,11 @@ function controls() {
 function renderAgentVoice(state) {
   voiceInput = state ?? {};
   byId('agent-voice-status').textContent = current?.platform === 'win32'
-    ? 'Agent 本机语音输入暂不支持 Windows，请使用文字输入。'
+    ? [voiceInput.message, voiceInput.problem && '错误：' + voiceInput.problem].filter(Boolean).join(' ') || '使用 Windows 本机语音识别，需安装对应语言的语音识别组件并允许桌面应用使用麦克风。'
     : [voiceInput.message, voiceInput.problem].filter(Boolean).join(' ');
   const text = byId('agent-voice-text');
   text.textContent = voiceInput.text ?? '';
+  if (current?.platform === 'win32' && voiceInput.text) text.textContent = '最近识别：' + voiceInput.text;
   text.hidden = !voiceInput.text;
   controls();
 }
@@ -154,6 +159,12 @@ function render(state, syncFields = false) {
   syncFields ||= mode !== current?.integration.mode || state.provider !== current?.provider ||
     state.workingDirectory !== current?.workingDirectory || state.allowMultipleSessions !== current?.allowMultipleSessions;
   current = state;
+  if (state.platform === 'win32') {
+    configuration.classList.add('windows-agent-form');
+    const save = configuration.querySelector('button[type="submit"]');
+    save.textContent = '保存设置';
+    save.classList.add('primary');
+  }
 
   markChoice(modes, mode);
   byId('local-panel').hidden = byId('session-panel').hidden = !local;

@@ -62,7 +62,8 @@ export function createZipVoice(script, { launch = spawn } = {}) {
       if (!ready || active || !pending.size) return;
       active = pending.values().next().value;
       const timeoutMessage = active.probe ? 'ZipVoice 参考录音准备超时。' : 'ZipVoice 语音合成超时。';
-      requestTimer = setTimeout(() => close(failure(timeoutMessage)), 15_000);
+      const timeout = process.platform === 'win32' && !active.probe ? 60_000 : 15_000;
+      requestTimer = setTimeout(() => close(failure(timeoutMessage)), timeout);
       child.stdin.write(JSON.stringify({ id: active.id, ...active.payload }) + '\n');
     }
 

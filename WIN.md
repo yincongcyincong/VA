@@ -1,5 +1,35 @@
 # Windows 版本适配与本机测试
 
+## ZipVoice 长回复回退系统音色（2026-11-26）
+
+本机星铃参考音色已保存，但较长回复的 CPU 合成需要约 23.7 秒，旧的 15 秒限制会触发超时并回退系统声音。已复现旧限制在约 15 秒报错，再用同一配置验证延长等待后生成有效 WAV。Windows 的实际合成上限调整到 60 秒，macOS 仍为原来的 15 秒；模型启动、参考音频准备的限制保持原样。Windows 上的回退原因会显示在语音设置页并记录为 `speech.fallback`。诊断结果及测试音频在本机 `build/windows-zipvoice-diagnose.json`、`build/windows-zipvoice-diagnose.wav`。完整测试 100 项通过。
+
+Windows 绑定 DSH 会话本身不向其软件窗口注入 VA 人设或聊天历史；从 VA 发给 DSH 的消息会带上 VA 角色提示词和动作规则。Windows 暂不支持原有 DSH 桌面角色插件的自动安装，Codex 聊天记录也不会因为绑定而自动同步给 DSH。
+
+## Agent 保存按钮布局（2026-11-26）
+
+Windows 的 Agent 配置表单将两个选项与右侧「保存设置」按钮放在同一行，并使用主题强调色；窄窗口时按钮另起一行靠右。修复原来按钮落在两列网格左半列、看起来悬在中间的问题。样式仅由 Windows 分支添加的类启用，macOS 保持原样。宽、窄两种窗口的对齐和溢出检查通过，预览在本机 `build/windows-agent-layout-907.png` 和 `build/windows-agent-layout-520.png`。
+
+## Agent 麦克风语音输入（2026-11-26）
+
+Windows 现使用独立的 `desktop/windows-agent-voice.js`，通过隐藏的 Windows PowerShell 调用 System.Speech 识别默认麦克风；不调用 Swift 助手。macOS 仍使用原有 Apple Speech 通路，版本和权限检查保持原样。
+
+使用方法：在「设置 → 智能体接入 → 本地 Agent」绑定发送会话，再点「向 Agent 说话 → 开始监听」。需安装 Windows 语音识别语言组件，并允许桌面应用访问麦克风。优先使用简体中文引擎，其次使用界面语言或其他已安装引擎，状态栏显示实际语言。识别完成后自动发送，发送和朗读期间暂停，停止或切换绑定后丢弃旧识别结果。
+
+本机已验证中文引擎 `zh-CN` 和真实默认麦克风初始化。另用本机合成的中文 WAV 验证原生识别器能输出中文转写，并在父进程输入管道关闭后退出；没有将测试语音发到真实 Agent。合成语音的转写存在错字，识别效果仍需用实际说话验证。本机冒烟记录在忽略提交的 `build/windows-agent-voice-smoke.json`。语音相关测试覆盖重复结果、会话切换、播放暂停和恢复、停止监听及组件错误。
+
+完整测试 100 项通过。Windows x64 打包通过，新版试用入口为 `build/voice-release/VA-win32-x64/VA.exe`；退出正在运行的旧版后再启动此入口，保留整个应用目录。macOS 原生助手及语音控制模块未改动，未在本机进行 macOS 实机回归。
+
+## Windows Agent 创建会话修复（2026-11-26）
+
+本机 `dsh` 解析为 `C:\Users\b\AppData\Roaming\npm\dsh.cmd`。旧的 Windows 终端启动器只接受 EXE/COM，导致点击创建会话、准备运行 `dsh web` 时直接报错。Windows 启动器现支持在工作目录和 PATH 查找 EXE、COM、CMD、BAT，并使用 cross-spawn 处理命令包装脚本和参数，在独立控制台启动。macOS 路径没有改动。
+
+Claude、Codex、OMP、DSH 共用该 Windows 启动器，均支持 CMD/BAT 入口。OMP 不再拒绝新建会话，而是为本次启动生成 `autoResume: false` 的临时配置，避免自动恢复旧会话。Claude 和 OMP 的角色提示词通过临时文件传入，避免 CMD 截断多行内容；进程结束后清理临时配置和提示词。
+
+DSH 优先打开当前用户或系统开始菜单中的 DeepSeek Harness 软件快捷方式，也可识别常见安装目录的 EXE。软件入口不存在或打开失败时，才回退到 `dsh web`。本机通过 Electron 的系统打开接口验证软件启动成功，结果保存在 `build/windows-deepseek-desktop-smoke.json`。
+
+验证：本机 `dsh --help` 成功，Claude Code 2.1.332、OMP 19.1.1、Codex CLI 0.172.0 的版本命令均成功。新增测试执行四种 Agent 的 CMD/BAT 包装脚本，覆盖中文路径、空格、引号、`&` 参数、完整多行提示词、OMP 新会话配置及 DSH 软件启动优先级。完整测试 100 项通过。未发送真实模型对话，打开软件不代表自动创建并绑定会话。
+
 测试日期：2026-11-25（北京时间）。本机验证平台为 Windows x64，测试运行时为 Node.js 24.22.3，打包使用 Electron 45.4.1。ARM64 构建入口已提供，但未在 ARM64 机器上验证。
 
 ## 代码同步
@@ -59,7 +89,7 @@ node bin/va.js settings
 - 使用明确的 `win32` 分支及独立的 `windows-speech.js`、`windows-agent.js`，macOS 继续使用原有语音、终端和原生助手路径。
 - 系统朗读使用 Windows PowerShell / System.Speech，支持音色枚举、中文默认音色选择及 WAV 合成，后台辅助进程隐藏窗口。
 - Windows 使用命名管道替代 Unix socket，在当前用户应用数据目录发布随机管道端点。
-- Agent 后台进程使用 Windows 兼容的启动与进程树清理方式；交互式终端要求原生 EXE/COM，失败时提供操作提示。
+- Agent 后台进程使用 Windows 兼容的启动与进程树清理方式；交互式终端支持 EXE、COM、CMD、BAT，失败时提供包含命令名的操作提示。
 - Codex 会话标题在 Windows 使用 Node SQLite 读取，保留远程新增的大小写兼容修复；macOS 仍使用原来的 sqlite3 路径。
 - Windows 的 ZipVoice 默认 Python 路径是虚拟环境的 `Scripts/python.exe`。参考录音可使用 24 kHz 单声道 16 位 PCM WAV。其他 WAV、M4A 和 MP3 需要将 `ffmpeg.exe` 加入 PATH。
 - macOS 专用功能在 Windows 禁用或返回 `UNSUPPORTED_PLATFORM`，避免继续调用缺失的原生组件。设置页使用 Windows 快捷键文案。
@@ -70,13 +100,11 @@ node bin/va.js settings
 | --- | --- |
 | 豆包客户端绑定、桌面联动、通话字幕 | 依赖 macOS 原生助手，Windows 禁用入口并返回明确错误 |
 | 系统音乐检测后自动跳舞 | 不支持；仍可手动执行舞步。启用请求已实测返回明确错误 |
-| Agent 麦克风语音输入 | 远程新增实现依赖 macOS 26 原生助手；Windows 禁用按钮并提示使用文字输入 |
 | DeepSeek Harness 桌面导航及角色插件安装 | 不支持自动操作桌面端；需在其原生界面打开会话后回到 VA 绑定，文字 CLI 能力需另行配置验证 |
-| OMP 自动新建终端会话 | Windows 需先手动创建会话，再回到 VA 绑定 |
 
 ## 尚未完成端到端验证
 
-- 本地 Agent 的进程调用、绑定、续聊、回复处理由测试夹具验证通过；没有向真实模型发送对话。本机检测到 Codex，但未验证其账号、模型服务及完整交互。Claude、OMP、DeepSeek Harness 需要先安装相应程序。
+- 本地 Agent 的进程调用、绑定、续聊、回复处理由测试夹具验证通过；本机已检测并验证 Claude、Codex、OMP、DSH 命令入口，没有向真实模型发送对话，账号、模型服务及完整交互仍需另行验证。
 - 屏幕观察的采集代码已按平台分支处理，路由逻辑有自动化测试；本轮未将真实桌面截图交给视觉模型，因此不将整个屏幕识别链路列为实测通过。
 - 火山 TTS 的响应解析及错误处理测试通过，未调用真实服务；需配置密钥及音色。
 - ZipVoice 的预热、合成、取消、异常恢复及超时已通过模拟测试。Windows 需要自行准备 Python、sherpa-onnx、模型和参考音频，真实克隆语音合成仍需验证。
