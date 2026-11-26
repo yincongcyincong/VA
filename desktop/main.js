@@ -1,6 +1,7 @@
 import { app, BrowserWindow, Menu, Tray, clipboard, desktopCapturer, dialog, globalShortcut, ipcMain, nativeImage,
   protocol, screen, shell, systemPreferences } from 'electron';
 import { mkdir, readFile, stat } from 'node:fs/promises';
+import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { basename, dirname, extname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -29,7 +30,9 @@ import { createSpeechCache } from './speech-cache.js';
 import { createZipVoice, zipVoiceReference } from './zipvoice-tts.js';
 import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
 import { callDoubaoClient, createDoubaoClient } from './doubao-client.js';
+import { createWindowsDoubaoRequest, openWindowsDoubao } from './windows-doubao-client.js';
 import { createDoubaoCaptions } from './doubao-captions.js';
+import { createWindowsDoubaoCaptions } from './windows-doubao-captions.js';
 import { dialoguePages } from './dialogue-text.js';
 import { bindModel, modelFormats, modelMime, modelResource, restoreModelPath } from './model-files.js';
 import { aiGirlName, coverName, createModelLibrary, modelPage, modelSources } from './model-library.js';
@@ -37,6 +40,7 @@ import { aiGirlName, coverName, createModelLibrary, modelPage, modelSources } fr
 const root = fileURLToPath(new URL('../', import.meta.url));
 const mac = process.platform === 'darwin';
 const windows = process.platform === 'win32';
+const windowsDoubaoHelper = join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-client.exe');
 if (!mac && !windows) {
   throw new ControlError('UNSUPPORTED_PLATFORM', 'VA 桌面版目前支持 macOS 和 Windows。');
 }
@@ -1196,15 +1200,15 @@ async function chatStatus() {
   const integration = integrationSnapshot(config, currentMode);
   const prompt = rolePrompt;
   if (integration.mode === 'local') return { integration, prompt, platform: process.platform, ...await localAgent.status(), voiceInput: agentVoice?.state() };
-  if (integration.mode === 'doubao-client') return { integration, prompt, ...doubaoClient.state(),
+  if (integration.mode === 'doubao-client') return { integration, prompt, ...(windows ? { platform: process.platform } : {}), ...doubaoClient.state(),
     captions: doubaoCaptions.state(), autoActions: (config.doubaoClient?.autoActions ?? config.doubaoClient?.autoDance) !== false,
     listenForActions: (config.doubaoClient?.listenForActions ?? config.doubaoClient?.listenForDance) === true };
   return { integration, prompt, platform: process.platform, history: externalHistory, busy: false };
 }
 
 function requireSupportedIntegration(mode) {
-  if (windows && mode === 'doubao-client') {
-    throw new ControlError('UNSUPPORTED_PLATFORM', '豆包客户端联动和通话字幕暂不支持 Windows。');
+  if (windows && mode === 'doubao-client' && !existsSync(windowsDoubaoHelper)) {
+    throw new ControlError('CLIENT_HELPER', '当前 Windows 程序缺少豆包组件，请重新构建或使用新版 Windows 程序。');
   }
 }
 
@@ -1266,7 +1270,7 @@ async function configureAgent(change) {
     : Object.keys(settings).length ? await edit() : await getAgentConfig();
   if (prompt !== undefined) await setRolePrompt(prompt.trim() || createRolePrompt());
   const configuredMode = integrationMode(next);
-  const mode = windows && configuredMode === 'doubao-client' ? 'off' : configuredMode;
+  const mode = configuredMode;
   if (mode === currentMode && mode === 'local' && change.localAgent) {
     localAgent.cancel();
     await localAgent.monitorReplies(true);
@@ -1303,6 +1307,7 @@ async function bindDoubao(isActive) {
 
 async function openDoubaoClient() {
   requireMode('doubao-client');
+  if (windows) { await openWindowsDoubao(); return chatStatus(); }
   const paths = ['/Applications/Doubao.app', join(homedir(), 'Applications/Doubao.app')];
   for (const path of paths) {
     if (!(await stat(path).catch(() => null))?.isDirectory()) continue;
@@ -1403,6 +1408,7 @@ function createAgentSession(message) {
 }
 
 async function startDoubaoCaptions(value) {
+  if (windows && value?.systemOutput !== true) throw new ControlError('AUDIO_CAPTURE_CONSENT', '请先勾选允许采集默认扬声器的所有播放声音。');
   requireMode('doubao-client');
   const revision = ++captionStartRevision;
   const stored = (await getAgentConfig()).doubaoClient;
@@ -1423,6 +1429,7 @@ async function startDoubaoCaptions(value) {
   requireMode('doubao-client');
   captionAutoActions = autoActions;
   return doubaoCaptions.start({ autoActions, listen: listen && microphoneAllowed,
+    ...(windows ? { systemOutput: true } : {}),
     micStatus: microphoneAllowed ? '' : (mac ? '请在 macOS 系统设置允许 VA 使用麦克风。'
       : '请在 Windows 隐私设置中允许桌面应用使用麦克风。') });
 }
@@ -2351,7 +2358,9 @@ if (!app.requestSingleInstanceLock()) {
     const doubaoHelper = join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-client');
     let lastDoubaoProblem;
     doubaoClient = createDoubaoClient({
-      request: command => callDoubaoClient(doubaoHelper, command),
+      request: windows
+        ? createWindowsDoubaoRequest(windowsDoubaoHelper)
+        : command => callDoubaoClient(doubaoHelper, command),
       onChange: () => {
         const code = doubaoClient.state().client.problemCode;
         if (code && code !== lastDoubaoProblem) logger.write('warn', 'doubao.client_unavailable', { code });
@@ -2360,13 +2369,19 @@ if (!app.requestSingleInstanceLock()) {
       },
       onInput: onVoiceOrClientInput,
       onReply: reply => {
+        if (windows) {
+          if (doubaoCaptions.running()) {
+            if (Date.now() - lastCaptionAt > 5000) animateFromCaption(reply);
+          } else showReply(reply, 'doubao-client', true);
+          return;
+        }
         if (doubaoCaptions.running()) {
           if (Date.now() - lastCaptionAt > 5000) animateFromCaption(reply);
         } else showReply(reply, 'doubao-client', false);
       },
     });
-    doubaoCaptions = createDoubaoCaptions({
-      binary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-captions'),
+    doubaoCaptions = (windows ? createWindowsDoubaoCaptions : createDoubaoCaptions)({
+      binary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), windows ? 'va-doubao-captions.exe' : 'va-doubao-captions'),
       onState: value => settingsWindow?.webContents.send('va:doubao-captions', value),
       onCaption: (text, final) => {
         clearTimeout(captionTimer);
@@ -2436,7 +2451,6 @@ if (!app.requestSingleInstanceLock()) {
     try {
       storedAgent = await getAgentConfig();
       currentMode = integrationMode(storedAgent);
-      if (windows && currentMode === 'doubao-client') currentMode = 'off';
     } catch (error) {
       console.error(error.message);
     }

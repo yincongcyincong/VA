@@ -1,5 +1,25 @@
 # Windows 版本适配与本机测试
 
+## 豆包 Windows 语音联动（2026-11-26）
+
+新增独立的 `native/WindowsDoubaoCaptions.cs` 与 `desktop/windows-doubao-captions.js`。WASAPI 采集默认扬声器，混音转为 16 kHz 单声道 PCM，再交给 Windows System.Speech 在本机转写。字幕、口型和明确动作词接入现有角色流程，支持可选的麦克风本机动作请求；通话期间保留豆包原声，避免 VA 重复朗读。停止字幕、切换模式、退出或父进程断开时结束采音，不保存音频。
+
+本机为 Windows 10 19045，微软按进程隔离采音接口要求 20348 及以上；此兼容实现会包含默认扬声器上其他应用的声音，使用前必须明确勾选同意，默认不启动。建议暂停其他应用音频、使用耳机；切换播放设备后需停止并重新开始。需安装本机语音识别语言组件。麦克风识别仅触发本机动作，不向豆包发送转写；扬声器出声后短暂抑制麦克风结果以减少回声。[微软 loopback 说明](https://learn.microsoft.com/en-us/windows/win32/coreaudio/loopback-recording)
+
+已编译原生助手，检测到 `zh-CN`。离线验证浮点双声道转单声道、48 kHz 转 16 kHz、跨数据包采样相位和静音输入通过；合成中文 PCM 经相同流接口送入真实识别器，返回中文转写。117 项自动化测试通过。
+
+用户授权后，在实际打包 VA 中验证了混合声音采集的同意保护、启动、豆包现有回复朗读、实时字幕及停止；未发送新消息，未保存录音。该回复包含 `va act` 等中英文指令，中文识别器的转写准确度很差。再用纯中文经真实扬声器播放验证同一链路，得到「你好这是一条语音字母测试消息」，其中「字幕」被误识别为「字母」。因此此功能为实验性，不能保证字幕准确度。记录在本机 `build/windows-doubao-voice-smoke.json` 和 `build/windows-doubao-speaker-smoke.json`；验收后已停止采音。口型音量事件的路由由自动化测试验证，没有做逐帧视觉验收。真实双向通话及实际麦克风动作仍待验收。
+
+## 豆包 Windows 文字客户端接入（2026-11-26）
+
+新增独立的 `native/WindowsDoubaoClient.cs` 和 `desktop/windows-doubao-client.js`。Windows 通过 [UI Automation 可访问性接口](https://learn.microsoft.com/en-us/windows/win32/winauto/uiauto-msaa) 识别豆包聊天窗口、读取会话地址与回复、输入文字和调用朗读按钮，不读取豆包账号数据库或 Cookie。构建会使用 Windows 自带 .NET Framework 编译并携带客户端助手；macOS 仍使用原来的 Swift 助手。
+
+使用步骤：在豆包完成登录，从左侧历史打开一条已有对话，在 VA 选择「豆包客户端」并点「绑定当前对话」。会话绑定使用进程、窗口和会话地址共同核对；切换会话、已有其他草稿、输入框失焦或内容变化时会拒绝发送，剪贴板输入后恢复原内容。新回复通过 VA 当前音色朗读；「用豆包朗读最近回复」调用客户端本身的朗读按钮。语音通话字幕见上方独立的语音联动说明。
+
+已完成原生助手编译和真实登录会话绑定。经用户授权，向其指定测试会话提交一次验收消息，豆包实际回复「VA Windows 联动测试通过。」。验收修正了 Windows 特有的可编辑分组输入框、未命名发送箭头和扁平化聊天树；回复提取按消息操作栏边界隔离，避免把旧回复或用户提示词混入。使用真实发送前快照作为绑定基线、轮询当前会话取得这条实际回复，再由 VA 当前 ZipVoice 音色朗读成功，记录在本机 `build/windows-doubao-read-speech-smoke.json`。没有为复核重复发送验收消息。
+
+文字适配阶段 115 项自动化测试全部通过，覆盖回复提取、登录及新聊天页拒绝、会话切换保护、草稿保护、输入框选择歧义、扁平化历史边界和原生操作派发。后续语音验收及客户端朗读验证见上方语音联动说明。
+
 ## DeepSeek standard 会话语音续聊（2026-11-26）
 
 Windows 发送遇到 `one-shot runner does not compose` 时，使用独立的桌面会话桥接。插件只追加到 DeepSeek `desktop` profile，在已运行的桌面 Host 内调用原会话的 `sessionController`，保持 standard 预设及会话 ID，不另起 Host 抢占写句柄。macOS 原有发送实现保持原样。
@@ -114,7 +134,7 @@ node bin/va.js settings
 
 | 功能 | Windows 当前行为 |
 | --- | --- |
-| 豆包客户端绑定、桌面联动、通话字幕 | 依赖 macOS 原生助手，Windows 禁用入口并返回明确错误 |
+| 豆包语音通话的系统音频字幕 | 独立 Windows WASAPI + System.Speech 助手；需明确勾选采集默认扬声器混合声音，包含其他应用 |
 | 系统音乐检测后自动跳舞 | 不支持；仍可手动执行舞步。启用请求已实测返回明确错误 |
 | DeepSeek Harness 桌面导航及角色插件安装 | 不支持自动操作桌面端；需在其原生界面打开会话后回到 VA 绑定，文字 CLI 能力需另行配置验证 |
 

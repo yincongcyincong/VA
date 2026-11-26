@@ -36,6 +36,11 @@ function errorText(error) {
 function renderCaptions(state) {
   const running = state.phase !== 'idle';
   captionStart.disabled = captionActions.disabled = listenActions.disabled = running;
+  const systemOutput = byId('doubao-system-output');
+  if (systemOutput) {
+    systemOutput.disabled = running;
+    captionStart.disabled ||= !systemOutput.checked;
+  }
   captionStop.disabled = !running;
   captionStatus.textContent = state.message;
   byId('doubao-caption-text').textContent = state.text;
@@ -51,8 +56,27 @@ function controls() {
   }
   if (current?.platform === 'win32') {
     const doubao = modes.querySelector('[data-choice="doubao-client"]');
-    doubao.disabled = true;
-    doubao.textContent = '豆包客户端（仅 macOS）';
+    doubao.textContent = '豆包客户端';
+    if (current.integration.mode === 'doubao-client') {
+      const description = byId('doubao-captions-panel').querySelector('p');
+      description.textContent = '实验性字幕：在豆包客户端开始通话或朗读，再开启字幕。Windows 在本机识别默认扬声器的所有播放声音，不保存录音。转写可能有错字，中英文指令的识别效果较差。请暂停其他应用的声音；切换输出设备后需重新开始。通话保留豆包原声，VA 跟随口型。';
+      if (!byId('doubao-system-output')) {
+        const label = document.createElement('label');
+        label.className = 'toggle';
+        const input = document.createElement('input');
+        input.type = 'checkbox';
+        input.id = 'doubao-system-output';
+        input.checked = current.captions?.phase !== 'idle';
+        input.disabled = current.captions?.phase !== 'idle';
+        input.addEventListener('change', () => { captionStart.disabled = !input.checked; });
+        label.append(input, ' 允许采集默认扬声器的所有播放声音（包含其他应用）');
+        description.after(label);
+        const actionLabel = captionActions.closest('label');
+        actionLabel.lastChild.textContent = ' 根据语音中明确的动作词执行动作';
+      }
+      captionStart.disabled ||= !byId('doubao-system-output').checked;
+      byId('doubao-caption-privacy').hidden = true;
+    }
   }
   for (const control of binding.elements) control.disabled = Boolean(busy || !current?.provider);
   createSession.disabled = Boolean(busy || !current?.provider);
@@ -293,7 +317,8 @@ for (const [action, success, pending] of [
 captionStart.addEventListener('click', async () => {
   captionStart.disabled = captionActions.disabled = listenActions.disabled = true;
   try {
-    renderCaptions(await call('doubao-caption-start', { autoActions: captionActions.checked, listen: listenActions.checked }));
+    renderCaptions(await call('doubao-caption-start', { autoActions: captionActions.checked, listen: listenActions.checked,
+      ...(current?.platform === 'win32' ? { systemOutput: byId('doubao-system-output')?.checked === true } : {}) }));
   } catch (error) {
     renderCaptions({ phase: 'idle', message: errorText(error), text: '' });
   }
