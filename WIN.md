@@ -1,5 +1,21 @@
 # Windows 版本适配与本机测试
 
+## DeepSeek standard 会话语音续聊（2026-11-26）
+
+Windows 发送遇到 `one-shot runner does not compose` 时，使用独立的桌面会话桥接。插件只追加到 DeepSeek `desktop` profile，在已运行的桌面 Host 内调用原会话的 `sessionController`，保持 standard 预设及会话 ID，不另起 Host 抢占写句柄。macOS 原有发送实现保持原样。
+
+首次安装后需要退出并重新打开 DeepSeek Harness。桥接只通过随机命名的本机管道提供服务，每次启动生成独立认证令牌，端点记录保存在用户 VA 数据目录；不会开放网络监听。绑定变化、取消、忙碌状态及超时均有处理，已经接受的消息不自动重发。授权请求仍由 DeepSeek 原界面处理。Windows 语音面板将最近转写明确标注为「最近识别」，错误另加标签；需要重启桥接时停止监听，避免背景声音反复触发失败。
+
+本机在原 `session-ee697ce0-e676-4f97-aaf1-ffdfef7d6521` standard 会话验收成功，回复「续聊测试通过。」；记录在忽略提交的 `build/deepseek-standard-smoke.json`。完整测试 109 项通过，覆盖真实 CMD 入口拒绝 one-shot 后转入桌面桥接、身份验证、同会话发送、旧回复过滤、取消及安装幂等性。未进行 macOS 实机回归。
+
+Windows 修复包位于 `build/deepseek-release/VA-win32-x64/VA.exe`，已正常启动。再经打包后 VA 的聊天入口向原绑定会话发送验收消息，返回「语音续聊测试通过。」且 `spoken: true`；日志确认 ZipVoice 合成和播放完成。麦克风验收后保持停止，用户可再次点击「开始监听」。
+
+## 全部 AI 娘的本机可用性（2026-11-26）
+
+远程同步后的 10 款 VRM（DeepSeek、Claude、GPT、Gemini、GLM、Grok、Qwen、Kimi、MiniMax、豆包）均已在当前 VA 渲染器逐个加载检测通过，没有纹理警告，均报告骨骼、口型及 22 种动作信息。此为实际模型加载与能力检测，没有逐个执行全部动作。检测前后当前角色保持不变，详细结果在本机 `build/windows-ai-girls-check.json`。
+
+发现旧 Windows 打包白名单遗漏 `assets/models/ai-girls`，导致源码有模型、运行包的模型库却没有这些角色。已仅在 Windows 构建分支包含全部 VRM 和模型许可文件，并在打包后检查文件完整性；macOS 构建逻辑保持原样。新版已启动，模型库列出这 10 款及 VA 封面角色；再逐个从实际包内加载检测，10/10 通过，当前角色保持不变。包内检测结果在 `build/windows-ai-girls-packaged-check.json`。完整测试 107 项通过。
+
 ## ZipVoice 长回复回退系统音色（2026-11-26）
 
 本机星铃参考音色已保存，但较长回复的 CPU 合成需要约 23.7 秒，旧的 15 秒限制会触发超时并回退系统声音。已复现旧限制在约 15 秒报错，再用同一配置验证延长等待后生成有效 WAV。Windows 的实际合成上限调整到 60 秒，macOS 仍为原来的 15 秒；模型启动、参考音频准备的限制保持原样。Windows 上的回退原因会显示在语音设置页并记录为 `speech.fallback`。诊断结果及测试音频在本机 `build/windows-zipvoice-diagnose.json`、`build/windows-zipvoice-diagnose.wav`。完整测试 100 项通过。

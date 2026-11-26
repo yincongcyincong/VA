@@ -1,7 +1,7 @@
 import { listPackage } from '@electron/asar';
 import { packager } from '@electron/packager';
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync } from 'node:fs';
 import { dirname, join, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -19,11 +19,17 @@ if (mac && (process.platform !== 'darwin' || arch !== process.arch)) {
   throw new Error('请在目标架构的 Mac 上打包 macOS 版，以编译对应的 Swift 助手。');
 }
 const root = fileURLToPath(new URL('../', import.meta.url));
+const windowsAiGirls = platform === 'win32'
+  ? readdirSync(join(root, 'assets/models/ai-girls'), { withFileTypes: true })
+    .filter(entry => entry.isDirectory() && /^\d{2}_.+_V\d+$/u.test(entry.name))
+    .map(entry => `/assets/models/ai-girls/${entry.name}/model.vrm`)
+  : [];
 // Only runtime sources, shipped assets and npm dependencies belong in the archive.
 const releasePaths = [
   'LICENSE',
   'package\\.json',
   'assets(?:/app-icon\\.png|/models(?:/VA Cover\\.vrm|/ATTRIBUTION\\.md)?)?',
+  ...(platform === 'win32' ? ['assets/models/ai-girls(?:/(?:\\d{2}_[^/]+_V\\d+(?:/model\\.vrm)?|LICENSE\\.md))?'] : []),
   'config(?:/(?:agent|character|voice)\\.json)?',
   'desktop/deepseek-client-package\\.json',
   '(?:bin|desktop|lib)(?:/[^./][^/]*\\.(?:[cm]?js|css|html))?',
@@ -53,7 +59,8 @@ const bundles = await packager({
       if (excludedReleasePath.test(path)) throw new Error(`Unexpected release file: ${path}`);
     }
     for (const path of ['/package.json', '/desktop/main.js', '/bin/va.js', '/assets/models/VA Cover.vrm',
-      '/config/agent.json', '/config/character.json', '/config/voice.json']) {
+      '/config/agent.json', '/config/character.json', '/config/voice.json',
+      ...(platform === 'win32' ? ['/assets/models/ai-girls/LICENSE.md', ...windowsAiGirls] : [])]) {
       if (!paths.has(path)) throw new Error(`Missing release file: ${path}`);
     }
   }],

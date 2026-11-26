@@ -176,7 +176,7 @@ va stop
 
 导入前会检查文件、可见网格和实际渲染结果，检测通过后才替换当前角色。可先点「检测模型…」或执行 `va model-check "/path/to/character.glb" --json`，预查骨骼、表情目标和动画片段。检测失败会保留当前角色。模型能渲染时，缺少部分贴图会显示提醒。
 
-在「设置 → 模型库 → 3D模型」可以按名称搜索、预览并选用角色。源码仓库的 [`assets/models/ai-girls`](assets/models/ai-girls/) 收录 DeepSeek、Claude、GPT、Gemini、GLM、Grok、Qwen、Kimi、MiniMax 和豆包的动作版 VRM。从源码运行时，VA 会自动发现这十款模型。使用安装包时，下载仓库后点「导入解压目录…」，选择其中的 `assets/models/ai-girls`。[模型授权与改动说明](assets/models/ai-girls/LICENSE.md) · [AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+在「设置 → 模型库 → 3D模型」可以按名称搜索、预览并选用角色。源码仓库的 [`assets/models/ai-girls`](assets/models/ai-girls/) 收录 DeepSeek、Claude、GPT、Gemini、GLM、Grok、Qwen、Kimi、MiniMax 和豆包的动作版 VRM。源码运行和 Windows 便携包会直接显示这十款模型。使用 macOS 安装包时，下载仓库后点「导入解压目录…」，选择其中的 `assets/models/ai-girls`。[模型授权与改动说明](assets/models/ai-girls/LICENSE.md) · [AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
 ![模型库的默认角色 3D 预览、模型搜索和导入入口](docs/screenshots/model-library.png)
 

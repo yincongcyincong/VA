@@ -8,6 +8,7 @@ import { test } from 'node:test';
 import { setTimeout } from 'node:timers/promises';
 import { bridgeTurn, startWindowsDeepSeekBridge } from '../desktop/windows-deepseek-plugin.js';
 import { deepSeekPresetUnsupported, installWindowsDeepSeekBridge, runWindowsDeepSeek } from '../desktop/windows-deepseek.js';
+import { createLocalAgent } from '../desktop/local-agent.js';
 
 const sessionId = 'session-' + randomUUID();
 const input = { sessionId, prompt: '角色提示', message: '你好' };
@@ -106,3 +107,31 @@ test('only the explicit one-shot preset rejection can activate the Windows fallb
     assert.equal(deepSeekPresetUnsupported(new Error(message)), false);
   }
 });
+
+test('Windows VA falls back from the real one-shot rejection to the same desktop session',
+  { skip: process.platform !== 'win32' }, async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'va-dsh-resume-'));
+    const previousAppData = process.env.APPDATA;
+    process.env.APPDATA = directory;
+    const api = controller(t);
+    const close = await startWindowsDeepSeekBridge(api, join(directory, 'VA Desktop/deepseek-bridge.endpoint.json'));
+    t.after(async () => {
+      await close();
+      if (previousAppData === undefined) delete process.env.APPDATA;
+      else process.env.APPDATA = previousAppData;
+      await rm(directory, { recursive: true, force: true });
+    });
+    const shim = join(directory, 'dsh.cmd');
+    await writeFile(shim, `@echo off\r\necho dsh: session "${sessionId}" runs under agent preset "standard", which the one-shot runner does not compose 1>&2\r\nexit /b 1\r\n`);
+    const agent = createLocalAgent({
+      getConfig: async () => ({ provider: 'deepseekharness', cwd: directory, deepseekharness: { command: shim } }),
+      getPrompt: async () => '角色提示', parseReply: text => ({ speech: text }), presentReply: () => false,
+      sessionPath: join(directory, 'sessions.json'), launchDirectory: directory,
+    });
+    await agent.bind(sessionId);
+    const reply = await agent.send('你好');
+    assert.equal(reply.sessionId, sessionId);
+    assert.equal(reply.reply, '新回复');
+    assert.equal(api.prompt.mock.callCount(), 1);
+    assert.equal(api.prompt.mock.calls[0].arguments[0].sessionId, sessionId);
+  });
