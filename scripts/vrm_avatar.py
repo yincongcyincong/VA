@@ -71,10 +71,18 @@ def configure_vrm(armature, name, version):
     vrm.meta.vrm_name = name
     vrm.meta.version = version
     vrm.meta.authors.add().value = 'ApprenTice (model source)'
+    vrm.meta.authors.add().value = 'ZipZipPipe (character design)'
+    if name == 'DeepSeek':
+        vrm.meta.authors.add().value = '上善无形 (original whale girl design)'
+    vrm.meta.authors.add().value = 'VA contributors (VRM adaptation)'
     vrm.meta.references.add().value = 'https://www.aplaybox.com/details/model/3uR3BbUTlkUW'
-    vrm.meta.avatar_permission = 'onlySeparatelyLicensedPerson'
+    vrm.meta.references.add().value = 'https://www.bilibili.com/video/BV1tE9XBbErS/'
+    vrm.meta.other_license_url = 'https://creativecommons.org/licenses/by-nc-sa/4.0/'
+    vrm.meta.avatar_permission = 'everyone'
+    vrm.meta.commercial_usage = 'personalNonProfit'
     vrm.meta.credit_notation = 'required'
-    vrm.meta.allow_redistribution = False
+    vrm.meta.allow_redistribution = True
+    vrm.meta.modification = 'allowModificationRedistribution'
     return vrm
 
 

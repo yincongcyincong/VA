@@ -174,21 +174,21 @@ va stop
 
 导入前会检查文件、可见网格和实际渲染结果，检测通过后才替换当前角色。可先点「检测模型…」或执行 `va model-check "/path/to/character.glb" --json`，预查骨骼、表情目标和动画片段。检测失败会保留当前角色。模型能渲染时，缺少部分贴图会显示提醒。
 
-在「设置 → 模型库 → 3D模型」可以按名称搜索、预览并选用角色。把 DeepSeek、Claude、GPT、Gemini、GLM、Grok、Qwen、Kimi、MiniMax 和豆包的动作版 VRM 放入 `assets/models/ai-girls`，VA 会优先显示这里的带骨骼版本。也可以点「导入解压目录…」加入其他本机模型。原包提供七款静态 GLB，DeepSeek、Claude 和 GPT 提供 Blender 5.2 源文件。各角色的署名和使用说明见原包内的文件。[AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
+在「设置 → 模型库 → 3D模型」可以按名称搜索、预览并选用角色。源码仓库的 [`assets/models/ai-girls`](assets/models/ai-girls/) 收录 DeepSeek、Claude、GPT、Gemini、GLM、Grok、Qwen、Kimi、MiniMax 和豆包的动作版 VRM。从源码运行时，VA 会自动发现这十款模型。使用安装包时，下载仓库后点「导入解压目录…」，选择其中的 `assets/models/ai-girls`。[模型授权与改动说明](assets/models/ai-girls/LICENSE.md) · [AI 娘全家桶原帖](https://www.aplaybox.com/details/model/3uR3BbUTlkUW)
 
 ![模型库的默认角色 3D 预览、模型搜索和导入入口](docs/screenshots/model-library.png)
 
-安装 Blender 5.2 或更新版本后，也可以用命令导出这三个角色。脚本保留已有的 GLB，导出后在模型库重新导入解压目录。
+原包提供七款静态 GLB，DeepSeek、Claude 和 GPT 提供 Blender 5.2 源文件。安装 Blender 5.2 或更新版本后，可以用以下命令为这三款导出 GLB。脚本保留已有的 GLB，导出后在模型库重新导入解压目录。
 
 ```bash
 blender --background --factory-startup --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls.py -- "解压后的 AI 娘全家桶目录"
 ```
 
-十款 AI 娘都可以生成带动作和表情的 VRM。启用 Blender 的 VRM 插件后，用下面的命令把动作版写入项目的本机模型目录。DeepSeek 复用原有骨骼，其余角色按各自的体型绑定。动作版支持内置舞步、基础表情和五种口型。动作版文件保留原有的 VRM 使用标记，该目录中的 VRM 仅保存在本机。[Blender VRM 插件](https://vrm-addon-for-blender.info/en-us/installation/)
+动作版支持内置舞步、基础表情和五种口型。需要从原包重新生成 VRM 时，启用 Blender 的 VRM 插件，再将文件导出到另一个目录。[Blender VRM 插件](https://vrm-addon-for-blender.info/en-us/installation/)
 
 ```bash
 blender --background --disable-autoexec --python-exit-code 1 --python scripts/export-ai-girls-vrm.py -- \
-  "解压后的 AI 娘全家桶目录" assets/models/ai-girls
+  "解压后的 AI 娘全家桶目录" "动作版输出目录"
 ```
 
 也可以在系统浏览器打开模之屋或 VRoid Hub，或粘贴两站的模型详情链接。下载其他模型后请保留贴图，用「预览本机文件…」加载。预览通过后可以点「设为桌面角色」。
