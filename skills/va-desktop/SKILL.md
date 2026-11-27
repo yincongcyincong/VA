@@ -1,6 +1,6 @@
 ---
 name: va-desktop
-description: 操作和配置 VA 桌面 3D 角色。用户说「绑定VA」「绑定当前会话到 VA」时绑定本机 Codex 会话，也用于调整角色、模型、动作、音色和接入，或让 VA 表演、朗读、自拍和观察屏幕。
+description: 操作和配置 VA 桌面 3D 角色。用户说「绑定VA」「绑定当前会话到 VA」时绑定本机 Codex 会话，也用于调整角色、模型、动作、音色、语音识别引擎和接入，检查识别模型下载及依赖，或让 VA 表演、朗读、自拍和观察屏幕。
 ---
 
 # 操作 VA 桌面角色
@@ -11,6 +11,10 @@ description: 操作和配置 VA 桌面 3D 角色。用户说「绑定VA」「绑
 - **配置**：先调用 `va_config_list`（`va config list --json`）查看配置组和操作。用 `va_config_get` 读取当前值，再用 `va_config_set` 传入 `section` 和仅含所需字段的 `patch`，对应 CLI 为 `va config get <组> --json` 和 `va config set <组> '<JSON>'`。执行操作用 `va_config_run` 的 `operation` 和可选的 `parameters`，对应 `va config run <操作> [JSON]`。CLI 的敏感值用 `--stdin` 或 `--file`。角色 Prompt 位于 `character.prompt`，会话记录通过 `chat-sessions` 查询。
 - **窗口和模型**：用 `desktop.windowPosition` 设置桌面坐标 `{x,y}`，填 `null` 回到主屏幕默认位置。用 `model-library` 查询模型编号，`model-preview` 接受 `{id}` 或 `{path}`，会打开可旋转的 VA 模型库预览。用户要求换用模型时，更新 `model` 配置。
 - **麦克风和接入**：本地 Agent 语音输入用 `agent-voice-status`、`agent-voice-start` 和 `agent-voice-stop`。启用前核对用户的请求和当前绑定，它会把识别到的文字发给该会话。用 `deepseek-install-role` 为当前已绑定的 DeepSeek Harness 安装角色能力。用 `permissions-status` 查询 macOS 权限，`permissions-open` 接受 `{kind}` 并打开系统设置，由用户完成授权。机器人服务端的插件配置见 [接入指南](../../integrations/README.md)。
+- **Windows 共用语音识别**：「语音 → 语音识别」统一配置本地 Agent 麦克风输入和豆包字幕。先用 `va config get voice --json`（MCP：`va_config_get`，`section: "voice"`）读取 `recognition`，再只修改需要的字段：`engine` 为 `system` 或 `sensevoice`，`python` 为已安装 `sherpa-onnx`、`numpy` 的 Python 可执行文件，`modelDirectory` 为模型目录。例如 `va config set voice '{"recognition":{"engine":"sensevoice","python":"C:/speech/python.exe","modelDirectory":"C:/speech/sensevoice"}}' --json`；MCP 对应 `va_config_set` 的 `section: "voice"` 和相同 `patch`。
+  - 启动前调用 `va config run voice-recognition-status --json`，或 MCP `va_voice_recognition_status`（也可 `va_config_run`，`operation: "voice-recognition-status"`）。此检查不采音，返回 `ready`、`missing`、`message`，SenseVoice 还返回 `setup.command`、`setup.modelUrl` 和说明链接。
+  - `ready: false` 时明确告诉用户尚未下载模型、依赖缺失或路径无效，展示返回的安装命令，提醒在 VA 仓库根目录运行；不要声称配置完成、反复启动识别或静默切换到系统引擎。用户要求安装时可执行仓库的 `scripts/setup-windows-sensevoice.ps1 -Python <路径> [-Destination <模型目录>]`，完成后重新检查。模型目录需要 `model.int8.onnx`、`tokens.txt`、`silero_vad.onnx`。详见 [Windows 识别设置](../../WIN.md#可选的-sensevoice-中文字幕)。
+  - 保存识别设置不会启用录音，并会停止当前识别。只有用户要求后才调用 `agent-voice-start`；豆包字幕仍需用户同意采集默认扬声器混合声音，并传入 `systemOutput: true`。macOS 沿用原有识别路径。
 - **角色和对白**：用 `va_prompt` 或 `va prompt` 读取当前显示名、人设和可用动作。用户指定原话时使用该台词。其他情况下，为内置或自定义动作写一句符合当前对话的台词，传给 `speech` 或 `--say`。省略台词时，VA 使用动作的默认对白，可用 `va_character` 或 `va character --json` 查询。
 - **演出和发言**：用 `va_actions` 或 `va actions --json` 读取当前目录，从 `supported: true` 的动作和 `supportedExpressions` 选择编号，包括用户刚添加的条目。结合用户请求与即将说出的回复选择动作。用 `va_perform` 或 `va perform --action <编号>` 播放动作，传入 `speech` 或 `--say` 时同步对白。只说话用 `va_say` 或 `va say`。收到 `NOT_RUNNING` 时先启动，收到 `BUSY` 时等表演结束。用户要求打断时用 `va_stop` 或 `va stop`。
 - **自定义动作和表情**：使用 `va_config_set` 修改 `actions` 组。动作和表情按编号合并，`null` 移除对应覆盖。根据返回的 `supported` 与 `supportedExpressions` 检查模型兼容性，再取一次 `va_prompt` 获取新清单。配置字段和示例见 [Agent 自定义动作指南](../../docs/agent-custom-actions.md)。

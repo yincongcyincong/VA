@@ -2,6 +2,7 @@ import { spawn } from 'node:child_process';
 import { join } from 'node:path';
 import { createAgentVoice } from './agent-voice.js';
 import { ControlError } from '../lib/control.js';
+import { windowsRecognition, senseVoiceMicrophone } from './windows-recognition.js';
 
 const powershell = join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
 
@@ -79,8 +80,9 @@ export function launchWindowsAgentVoice({ launch = spawn, probe = false } = {}) 
   });
 }
 
-export function createWindowsAgentVoice({ send, onState, launch = spawn, resumeDelay } = {}) {
-  return createAgentVoice({
+export function createWindowsAgentVoice({ send, onState, launch = spawn, resumeDelay, senseVoiceScript, captureBinary } = {}) {
+  let recognition = windowsRecognition();
+  const controller = createAgentVoice({
     send: async (...args) => {
       try { return await send(...args); }
       catch (error) {
@@ -90,6 +92,14 @@ export function createWindowsAgentVoice({ send, onState, launch = spawn, resumeD
         throw error;
       }
     }, onState, resumeDelay,
-    launch: () => launchWindowsAgentVoice({ launch }),
+    launch: () => recognition.engine === 'sensevoice'
+      ? senseVoiceMicrophone(recognition, senseVoiceScript, captureBinary, launch)
+      : launchWindowsAgentVoice({ launch }),
   });
+  return { ...controller, start(target, settings) {
+    if (!controller.state().enabled) recognition = windowsRecognition(settings);
+    if (recognition.engine === 'sensevoice' && (!recognition.python || !recognition.modelDirectory))
+      throw new ControlError('ASR_SETUP', '请在「语音 → 语音识别」配置 SenseVoice。');
+    return controller.start(target);
+  } };
 }

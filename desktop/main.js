@@ -33,6 +33,8 @@ import { callDoubaoClient, createDoubaoClient } from './doubao-client.js';
 import { createWindowsDoubaoRequest, openWindowsDoubao } from './windows-doubao-client.js';
 import { createDoubaoCaptions } from './doubao-captions.js';
 import { createWindowsDoubaoCaptions } from './windows-doubao-captions.js';
+import { windowsRecognition, captionRecognition, windowsRecognitionStatus, requireWindowsRecognition } from './windows-recognition.js';
+import { createWindowsCaptionDisplay } from './windows-caption-display.js';
 import { dialoguePages } from './dialogue-text.js';
 import { bindModel, modelFormats, modelMime, modelResource, restoreModelPath } from './model-files.js';
 import { aiGirlName, coverName, createModelLibrary, modelPage, modelSources } from './model-library.js';
@@ -159,6 +161,7 @@ let positionTimer;
 let positionSave;
 let speechText = '';
 let captionText = '';
+const windowsCaptionDisplay = windows ? createWindowsCaptionDisplay(page => { captionText = page; syncBubble(); }) : undefined;
 let captionTimer;
 let lastCaptionAt = 0;
 let bubbleWindow;
@@ -295,7 +298,18 @@ async function getVoiceConfig() {
     volc: { ...volcDefaults, ...volc },
     zipvoice: Object.fromEntries([...Object.keys(zipVoiceDefaults), 'referenceText']
       .map(key => [key, typeof zipvoice?.[key] === 'string' ? zipvoice[key].trim() : ''])),
+    ...(windows ? { recognition: windowsRecognition(stored?.recognition ?? null, (await getAgentConfig()).doubaoClient) } : {}),
   };
+}
+
+function windowsRecognitionResources() {
+  return { script: app.isPackaged ? join(process.resourcesPath, 'windows-sensevoice.py') : join(root, 'native/windows-sensevoice.py'),
+    binary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-captions.exe') };
+}
+
+async function recognitionStatus() {
+  if (!windows) throw new ControlError('UNSUPPORTED_PLATFORM', '此识别模型检查仅用于 Windows。');
+  return windowsRecognitionStatus((await getVoiceConfig()).recognition, windowsRecognitionResources());
 }
 
 function zipVoiceSettings(config) {
@@ -338,6 +352,7 @@ function voiceSnapshot(config) {
     zipvoice: zipVoiceSettings(zipvoice),
     zipvoicePreparation: provider === 'zipvoice' ? zipVoicePreparation : undefined,
     ...(windows ? { playbackWarning: windowsVoiceWarning } : {}),
+    ...(windows ? { recognition: config.recognition } : {}),
     volc: { speaker: volc.speaker, resourceId: volc.resourceId, apiKeyEnv: volc.apiKeyEnv, hasKey: Boolean(volcKey(volc)) },
   };
 }
@@ -720,6 +735,10 @@ ipcMain.handle('va:voice-config', async (event, change) => {
   if (!change) return voiceSnapshot(await getVoiceConfig());
   return configureVoice(change);
 });
+ipcMain.handle('va:recognition-status', event => {
+  if (!settingsAuthorized(event)) throw new Error('无效的声音设置请求。');
+  return recognitionStatus();
+});
 ipcMain.handle('va:system-voices', (event, cached) => {
   if (!settingsAuthorized(event)) throw new Error('无效的音色请求。');
   return cached === true ? systemVoiceCatalog.cached() : systemVoiceCatalog.refresh();
@@ -735,6 +754,10 @@ ipcMain.handle('va:choose-voice-reference', async event => {
 });
 
 async function configureVoice(change) {
+  if (windows && change.recognition) {
+    stopAgentVoice();
+    stopDoubaoCaptions();
+  }
   if (Object.hasOwn(change, 'systemVoice')) {
     const voice = change.systemVoice;
     const hasVoice = voices => voices.some(item => item.name === voice);
@@ -743,6 +766,7 @@ async function configureVoice(change) {
     }
   }
   return editVoice(async config => {
+    if (windows && change.recognition) config.recognition = windowsRecognition({ ...config.recognition, ...change.recognition });
     if (Object.hasOwn(change, 'systemVoice')) config.systemVoice = change.systemVoice;
     if (Object.hasOwn(change, 'actionSound')) {
       if (typeof change.actionSound !== 'boolean') throw new ControlError('VOICE_CONFIG', '无效的动作发声设置。');
@@ -1201,6 +1225,7 @@ async function chatStatus() {
   const prompt = rolePrompt;
   if (integration.mode === 'local') return { integration, prompt, platform: process.platform, ...await localAgent.status(), voiceInput: agentVoice?.state() };
   if (integration.mode === 'doubao-client') return { integration, prompt, ...(windows ? { platform: process.platform } : {}), ...doubaoClient.state(),
+    ...(windows ? { recognitionEngine: (await getVoiceConfig()).recognition.engine } : {}),
     captions: doubaoCaptions.state(), autoActions: (config.doubaoClient?.autoActions ?? config.doubaoClient?.autoDance) !== false,
     listenForActions: (config.doubaoClient?.listenForActions ?? config.doubaoClient?.listenForDance) === true };
   return { integration, prompt, platform: process.platform, history: externalHistory, busy: false };
@@ -1412,10 +1437,15 @@ async function startDoubaoCaptions(value) {
   requireMode('doubao-client');
   const revision = ++captionStartRevision;
   const stored = (await getAgentConfig()).doubaoClient;
+  const recognition = windows ? captionRecognition((await getVoiceConfig()).recognition) : {};
   const { autoActions = (stored?.autoActions ?? stored?.autoDance) !== false,
     listen = (stored?.listenForActions ?? stored?.listenForDance) === true } = value ?? {};
   if (typeof autoActions !== 'boolean' || typeof listen !== 'boolean') {
     throw new ControlError('INVALID_REQUEST', '请选择通话字幕选项。');
+  }
+  if (windows && recognition.recognitionEngine === 'sensevoice') {
+    if (listen) throw new ControlError('ASR_SETUP', 'SenseVoice 暂不支持麦克风动作监听，请取消该选项。');
+    await requireWindowsRecognition((await getVoiceConfig()).recognition, windowsRecognitionResources());
   }
   if (revision !== captionStartRevision) throw new ControlError('CANCELED', '已取消启动字幕。');
   const microphoneAllowed = !listen || (mac ? await systemPreferences.askForMediaAccess('microphone')
@@ -1429,7 +1459,7 @@ async function startDoubaoCaptions(value) {
   requireMode('doubao-client');
   captionAutoActions = autoActions;
   return doubaoCaptions.start({ autoActions, listen: listen && microphoneAllowed,
-    ...(windows ? { systemOutput: true } : {}),
+    ...(windows ? { systemOutput: true, ...recognition } : {}),
     micStatus: microphoneAllowed ? '' : (mac ? '请在 macOS 系统设置允许 VA 使用麦克风。'
       : '请在 Windows 隐私设置中允许桌面应用使用麦克风。') });
 }
@@ -1453,7 +1483,10 @@ async function startAgentVoice() {
     const revision = ++agentVoiceRevision;
     const target = await localAgent.voiceTarget();
     if (revision !== agentVoiceRevision || currentMode !== 'local') return agentVoice.state();
-    return agentVoice.start(target);
+    const recognition = (await getVoiceConfig()).recognition;
+    await requireWindowsRecognition(recognition, windowsRecognitionResources());
+    if (revision !== agentVoiceRevision || currentMode !== 'local') return agentVoice.state();
+    return agentVoice.start(target, recognition);
   }
   requireMode('local');
   if (agentVoice.state().enabled) return agentVoice.state();
@@ -1627,6 +1660,7 @@ async function handleConfiguration(command) {
     case 'model-preview': return openModelPreview(value);
     case 'voice-preview': return previewVoice();
     case 'system-voices': return { voices: await systemVoiceCatalog.refresh() };
+    case 'voice-recognition-status': return recognitionStatus();
     case 'actions-reload':
       await reloadPerformance();
       settingsWindow?.webContents.send('va:settings-changed', settingsSnapshot());
@@ -2166,7 +2200,7 @@ function stopControlsHover() {
 
 function syncBubble() {
   if (!bubbleReady || !bubbleWindow || bubbleWindow.isDestroyed() || !window || window.isDestroyed()) return;
-  const page = bubblePage || dialoguePages(captionText).at(-1);
+  const page = bubblePage || (windows ? windowsCaptionDisplay.page() : dialoguePages(captionText).at(-1));
   if (!page || !window.isVisible()) {
     bubbleRevision++;
     if (bubbleWindow.isVisible()) bubbleWindow.hide();
@@ -2381,9 +2415,16 @@ if (!app.requestSingleInstanceLock()) {
       },
     });
     doubaoCaptions = (windows ? createWindowsDoubaoCaptions : createDoubaoCaptions)({
+      ...(windows ? { senseVoiceScript: app.isPackaged ? join(process.resourcesPath, 'windows-sensevoice.py')
+        : join(root, 'native', 'windows-sensevoice.py') } : {}),
       binary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), windows ? 'va-doubao-captions.exe' : 'va-doubao-captions'),
       onState: value => settingsWindow?.webContents.send('va:doubao-captions', value),
       onCaption: (text, final) => {
+        if (windows) {
+          windowsCaptionDisplay.push(text, final);
+          lastCaptionAt = text ? Date.now() : 0;
+          return final && text ? animateFromCaption(text) : true;
+        }
         clearTimeout(captionTimer);
         captionText = text;
         lastCaptionAt = text ? Date.now() : 0;
@@ -2487,6 +2528,8 @@ if (!app.requestSingleInstanceLock()) {
     });
     await localAgent.monitorReplies(currentMode === 'local');
     agentVoice = (windows ? createWindowsAgentVoice : createAgentVoice)({
+      ...(windows ? { captureBinary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-captions.exe'),
+        senseVoiceScript: app.isPackaged ? join(process.resourcesPath, 'windows-sensevoice.py') : join(root, 'native/windows-sensevoice.py') } : {}),
       binary: join(app.isPackaged ? process.resourcesPath : join(root, 'build'), 'va-doubao-captions'),
       send: (text, target) => sendChat(text, undefined, target),
       onState: value => {

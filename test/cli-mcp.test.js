@@ -28,6 +28,10 @@ test('the VA CLI exposes the configuration catalog and validates requests withou
   assert.ok(catalog.sections.desktop.input.properties.windowPosition);
   assert.ok(catalog.operations['model-preview']);
   assert.ok(catalog.operations['agent-voice-start']);
+  if (process.platform === 'win32') {
+    assert.ok(catalog.operations['voice-recognition-status']);
+    assert.ok(catalog.sections.voice.input.properties.recognition.properties.modelDirectory);
+  }
   assert.ok(catalog.operations['chat-bind-current']);
   assert.equal(execute(['chat-bind-current'], undefined, { ...process.env, CODEX_THREAD_ID: '', CODEX_SESSION_ID: '' })
     .error.code, 'CODEX_THREAD_UNAVAILABLE');
@@ -58,6 +62,7 @@ test('VA MCP initializes over stdio and returns schema errors as tool results', 
   const { tools } = await client.listTools();
   assert.ok(tools.some(tool => tool.name === 'va_actions' && tool.annotations?.readOnlyHint));
   assert.ok(tools.some(tool => tool.name === 'va_observe'));
+  if (process.platform === 'win32') assert.ok(tools.some(tool => tool.name === 'va_voice_recognition_status' && tool.annotations.readOnlyHint));
   const call = async (name, args) => client.callTool({ name, arguments: args });
   const config = await call('va_config_list', {});
   const catalog = JSON.parse(config.content[0].text);

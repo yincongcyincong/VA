@@ -1,6 +1,24 @@
 # Windows 版本适配与本机测试
 
+## 可选的 SenseVoice 中文字幕
+
+「语音 → 语音识别」提供统一的识别引擎选择，供本地智能体麦克风输入和豆包通话字幕共用：Windows 系统识别（默认、免下载）或 SenseVoice Small INT8（本机 CPU，支持普通话和中英混说）。SenseVoice 使用 Silero VAD 分句，通常在停顿后显示最终字幕；模型初始化和分句会增加延迟，具体准确度取决于音源。两种引擎都需明确勾选采集默认扬声器混合声音，不保存录音。SenseVoice 暂不支持麦克风动作监听；可选的字幕动作仍可使用。
+
+先准备 Python 3.10–3.12 环境，再在仓库根目录运行安装脚本（也可以复用 ZipVoice 的 Python 环境）：
+
+```powershell
+powershell -File scripts/setup-windows-sensevoice.ps1 -Python "C:\path\to\python.exe"
+```
+
+脚本安装 `sherpa-onnx`、`numpy`，下载官方 SenseVoice INT8 模型及 Silero VAD，并在不采音的情况下验证加载。下载目录默认为 `build/sensevoice`，可用 `-Destination` 指定。随后在「语音 → 语音识别」选 SenseVoice，填写同一个 Python 可执行文件及模型目录并保存。旧版豆包字幕中的引擎和路径会自动沿用到统一设置。智能体输入仍需手动开启麦克风；豆包字幕仍需勾选扬声器采音。保存识别设置会停止正在运行的识别，再次开启后使用新引擎。模型目录需包含 `model.int8.onnx`、`tokens.txt`、`silero_vad.onnx`。模型仅在选择 SenseVoice 时加载，加载失败会明确报错，可手动切回系统识别。
+
+来源：[SenseVoice](https://github.com/FunAudioLLM/SenseVoice) · [sherpa-onnx 模型及 Python 接口](https://k2-fsa.github.io/sherpa/onnx/sense-voice/python-api.html)。macOS 保持原有识别路径。
+
+Agent、CLI 和 MCP 共用 `voice.recognition`。可用 `va config get voice --json` 读取、`va config set voice '{"recognition":{"engine":"sensevoice","python":"C:/speech/python.exe","modelDirectory":"C:/speech/sensevoice"}}' --json` 修改。开启识别前用 `va config run voice-recognition-status --json` 检查环境；MCP 可直接调用只读工具 `va_voice_recognition_status`，也可通过 `va_config_run` 执行同名配置操作。未下载模型时会返回 `ready: false`、缺失项 `missing`、安装命令 `setup.command` 和下载地址，Agent 应先提醒用户下载安装。此检查不打开麦克风或扬声器采集；实际启动时也会检查并拒绝缺失环境。
+
 ## 豆包 Windows 语音联动（2026-11-26）
+
+字幕气泡会按顺序显示长句的每一页，新识别到的句子排在后面，避免只显示最后一页。设置页的字幕区域保留本次识别记录（最近约 6000 字，停止后清空，不写入文件）。在字幕面板勾选「根据语音中明确的动作词执行动作」后，可让豆包完整说出「我来给你跳一段舞」「我来侧步摇摆」「我来转身亮相」等短句；识别到最终句子后会选择当前模型支持的舞步。提及、引用、否定动作不触发。若没有触发，可先查看字幕是否准确识别出该短句、自动动作选项是否开启、角色是否正忙。
 
 新增独立的 `native/WindowsDoubaoCaptions.cs` 与 `desktop/windows-doubao-captions.js`。WASAPI 采集默认扬声器，混音转为 16 kHz 单声道 PCM，再交给 Windows System.Speech 在本机转写。字幕、口型和明确动作词接入现有角色流程，支持可选的麦克风本机动作请求；通话期间保留豆包原声，避免 VA 重复朗读。停止字幕、切换模式、退出或父进程断开时结束采音，不保存音频。
 

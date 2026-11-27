@@ -36,6 +36,7 @@ function errorText(error) {
 function renderCaptions(state) {
   const running = state.phase !== 'idle';
   captionStart.disabled = captionActions.disabled = listenActions.disabled = running;
+  if (current?.platform === 'win32' && current.recognitionEngine === 'sensevoice') listenActions.disabled = true;
   const systemOutput = byId('doubao-system-output');
   if (systemOutput) {
     systemOutput.disabled = running;
@@ -59,6 +60,7 @@ function controls() {
     doubao.textContent = '豆包客户端';
     if (current.integration.mode === 'doubao-client') {
       const description = byId('doubao-captions-panel').querySelector('p');
+      if (current.recognitionEngine === 'sensevoice') { listenActions.checked = false; listenActions.disabled = true; }
       description.textContent = '实验性字幕：在豆包客户端开始通话或朗读，再开启字幕。Windows 在本机识别默认扬声器的所有播放声音，不保存录音。转写可能有错字，中英文指令的识别效果较差。请暂停其他应用的声音；切换输出设备后需重新开始。通话保留豆包原声，VA 跟随口型。';
       if (!byId('doubao-system-output')) {
         const label = document.createElement('label');
@@ -220,6 +222,7 @@ function render(state, syncFields = false) {
     if (syncFields) {
       captionActions.checked = state.autoActions;
       listenActions.checked = state.listenForActions;
+
     }
     renderCaptions(state.captions);
   } else clientStatus.textContent = '';
@@ -339,3 +342,5 @@ window.va.onChatRefresh(() => { if (!working) void refresh(); });
 window.addEventListener('focus', () => { if (!working) void refresh(); });
 controls();
 await refresh();
+
+window.va.onVoiceChanged(() => { if (current?.platform === 'win32') void refresh(); });

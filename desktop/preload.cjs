@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('va', {
   saveRolePrompt: prompt => ipcRenderer.invoke('va:role-prompt', prompt),
   openCapturePrivacy: () => ipcRenderer.invoke('va:open-capture-privacy'),
   voiceConfig: change => ipcRenderer.invoke('va:voice-config', change),
+  recognitionStatus: () => ipcRenderer.invoke('va:recognition-status'),
   chooseVoiceReference: () => ipcRenderer.invoke('va:choose-voice-reference'),
   cachedSystemVoices: () => ipcRenderer.invoke('va:system-voices', true),
   systemVoices: () => ipcRenderer.invoke('va:system-voices'),

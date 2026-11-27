@@ -46,6 +46,17 @@ static class WindowsDoubaoCaptions {
         Console.OutputEncoding = new UTF8Encoding(false);
         if (args.Contains("--self-test")) return PcmConverter.SelfTest();
         try {
+            if (args.Contains("--pcm-output")) {
+                bool microphoneInput = args.Contains("--microphone");
+                if (!args.Contains("--system-output") && !microphoneInput) throw new InvalidOperationException("请先明确同意采集默认扬声器的混合声音。");
+                if (args.Contains("--system-output") && microphoneInput) throw new InvalidOperationException("请选择一种音频输入。");
+                if (args.Contains("--listen")) throw new InvalidOperationException("SenseVoice 字幕暂不支持麦克风动作监听。");
+                var parent = new Thread(() => { while (Console.ReadLine() != null) {} done.Set(); });
+                parent.IsBackground = true; parent.Start();
+                using (var pcm = new PcmStream(bytes => Emit(new { type = "pcm", data = Convert.ToBase64String(bytes) })))
+                    Capture(pcm, "SenseVoice", microphoneInput);
+                return 0;
+            }
             var info = Preferred();
             if (args.Contains("--recognition-test")) return RecognitionTest(info);
             if (args.Contains("--probe")) {
@@ -136,22 +147,23 @@ static class WindowsDoubaoCaptions {
         }
     }
     static void Release(object value) { if (value != null && Marshal.IsComObject(value)) Marshal.ReleaseComObject(value); }
-    static void Capture(PcmStream stream, string language) {
+    static void Capture(PcmStream stream, string language, bool microphoneInput = false) {
         IMMDeviceEnumerator enumerator = null; IMMDevice device = null;
         IAudioClient client = null; IAudioCaptureClient capture = null; IntPtr format = IntPtr.Zero;
         try {
             enumerator = (IMMDeviceEnumerator)new MMDeviceEnumerator();
             // eRender / eMultimedia: follows the default playback device at start.
-            Check(enumerator.GetDefaultAudioEndpoint(0, 1, out device));
+            Check(enumerator.GetDefaultAudioEndpoint(microphoneInput ? 1 : 0, 1, out device));
             var clientId = typeof(IAudioClient).GUID; object obj;
             Check(device.Activate(ref clientId, 23, IntPtr.Zero, out obj)); client = (IAudioClient)obj;
             Check(client.GetMixFormat(out format));
             var converter = new PcmConverter(format);
-            Check(client.Initialize(0, 0x00020000, 1000000, 0, format, IntPtr.Zero));
+            Check(client.Initialize(0, microphoneInput ? 0u : 0x00020000u, 1000000, 0, format, IntPtr.Zero));
             var captureId = typeof(IAudioCaptureClient).GUID;
             Check(client.GetService(ref captureId, out obj)); capture = (IAudioCaptureClient)obj;
             Check(client.Start());
-            Emit(new { type = "ready", actions = false, message = "正在监听默认扬声器的所有声音（" + language + "）；请在豆包播放声音，切换输出设备后需重新开始。" });
+            Emit(new { type = "ready", actions = false, message = microphoneInput ? "正在监听默认麦克风（SenseVoice），说完后会自动发送。"
+                : "正在监听默认扬声器的所有声音（" + language + "）；请在豆包播放声音，切换输出设备后需重新开始。" });
             bool heard = false; var lastLevel = DateTime.UtcNow; var lastPacket = DateTime.UtcNow;
             double levelPeak = 0;
             while (!done.WaitOne(10)) {
@@ -188,10 +200,13 @@ static class WindowsDoubaoCaptions {
 
 // Bounded in-memory PCM only. No file output or audio upload exists in this helper.
 sealed class PcmStream : Stream {
+    readonly Action<byte[]> onPcm;
+    public PcmStream(Action<byte[]> onPcm = null) { this.onPcm = onPcm; }
     readonly Queue<byte[]> buffers = new Queue<byte[]>(); readonly object gate = new object();
     int offset, queued; long position; bool finished;
     public void Add(byte[] bytes) {
         if (bytes.Length == 0) return;
+        if (onPcm != null) { onPcm(bytes); return; }
         lock (gate) {
             if (finished) return;
             if (queued + bytes.Length > 16000 * 2 * 15) throw new IOException("本机转写处理过慢，请停止后重试。");
@@ -298,6 +313,11 @@ sealed class PcmConverter {
                 if (pcm.Length != 640 || peak != .5 || BitConverter.ToInt16(pcm, 0) != 16384 || BitConverter.ToInt16(pcm, 320) != 0)
                     throw new Exception("PCM downmix/resample/silence test failed");
                 WindowsDoubaoCaptions.Emit(new { type = "self-test", ok = true, frames = pcm.Length / 2 });
+            }
+            int emitted = 0;
+            using (var stream = new PcmStream(bytes => emitted += bytes.Length)) {
+                new PcmConverter(format).Push(audio, 480, false, stream);
+                if (emitted != 320) throw new Exception("PCM streaming callback test failed");
             }
             return 0;
         } finally { Marshal.FreeCoTaskMem(format); Marshal.FreeCoTaskMem(audio); }

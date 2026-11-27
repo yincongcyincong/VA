@@ -298,6 +298,20 @@ function renderVoicePanel() {
 function renderVoice(config) {
   const previous = voiceConfig;
   voiceConfig = config;
+  if (config.recognition?.engine === 'sensevoice' && JSON.stringify(config.recognition) !== JSON.stringify(previous?.recognition)) {
+    void checkRecognitionSetup();
+  } else if (config.recognition?.engine === 'system') {
+    document.getElementById('speech-recognition-status').textContent = '使用 Windows 系统识别，无需下载 SenseVoice 模型。';
+  }
+  const recognitionForm = document.getElementById('speech-recognition-form');
+  recognitionForm.hidden = !config.recognition;
+  if (config.recognition) {
+    for (const [key, value] of Object.entries(config.recognition)) {
+      const field = recognitionForm.elements[key];
+      if (!previous?.recognition || field.value === previous.recognition[key]) field.value = value;
+    }
+    document.getElementById('speech-recognition-paths').hidden = recognitionForm.elements.engine.value !== 'sensevoice';
+  }
   if (Object.hasOwn(config, 'playbackWarning')) {
     if (config.playbackWarning) voiceStatus.textContent = config.playbackWarning;
     else if (previous?.playbackWarning) voiceStatus.textContent = '';
@@ -554,3 +568,30 @@ async function pickModel(checkOnly) {
 }
 modelFile.addEventListener('click', () => void pickModel(false));
 modelCheck.addEventListener('click', () => void pickModel(true));
+
+const recognitionForm = document.getElementById('speech-recognition-form');
+let recognitionCheck = 0;
+async function checkRecognitionSetup() {
+  const revision = ++recognitionCheck;
+  const feedback = document.getElementById('speech-recognition-status');
+  try {
+    const result = await window.va.recognitionStatus();
+    if (revision !== recognitionCheck || voiceConfig?.recognition?.engine !== 'sensevoice') return;
+    feedback.textContent = result.ready ? 'SenseVoice 环境和模型已就绪。' : result.message + '\n安装命令（在 VA 仓库根目录运行）：' + result.setup.command;
+  } catch (error) { if (revision === recognitionCheck) feedback.textContent = error.message; }
+}
+recognitionForm.elements.engine.addEventListener('change', () => {
+  document.getElementById('speech-recognition-paths').hidden = recognitionForm.elements.engine.value !== 'sensevoice';
+});
+recognitionForm.addEventListener('submit', async event => {
+  event.preventDefault();
+  const button = recognitionForm.querySelector('button');
+  const feedback = document.getElementById('speech-recognition-status');
+  button.disabled = true;
+  try {
+    const recognition = Object.fromEntries(['engine', 'python', 'modelDirectory'].map(key => [key, recognitionForm.elements[key].value]));
+    renderVoice(await window.va.voiceConfig({ recognition }));
+    feedback.textContent = '已保存，智能体语音输入和豆包字幕共用此引擎。';
+  } catch (error) { feedback.textContent = error.message; }
+  finally { button.disabled = false; }
+});

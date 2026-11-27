@@ -58,6 +58,8 @@ VA 是 macOS 上的 3D 桌面角色。Agent 可以通过本机 CLI 或 MCP 查�
 
 修改前读取当前配置，并只提交用户要求更新的字段。MCP 对应 `va_config_get`、`va_config_set` 和 `va_config_run`。统一角色 Prompt 在「桌面角色」的输入框里，可用 `config set character` 的 `prompt` 字段更新。
 
+Windows 的智能体麦克风与豆包字幕共用 `voice.recognition`，包含 `engine`（`system` 或 `sensevoice`）、`python` 和 `modelDirectory`。先读取 `config get voice --json`，修改后用 `config run voice-recognition-status --json` 检查，或调用只读 MCP 工具 `va_voice_recognition_status`。检查不会采音。若返回 `ready: false`，先向用户说明缺少哪些模型或依赖，并提供 `setup.command` 安装命令、下载地址；下载安装后再次检查，不能直接声称可用或反复开启录音。设置保存在「语音 → 语音识别」，启用录音仍需用户明确要求。详细流程见 [VA Skill](skills/va-desktop/SKILL.md) 和 [Windows 说明](WIN.md#可选的-sensevoice-中文字幕)。
+
 `chat-sessions` 返回绑定记录及其 `ref`。可用 `chat-open-session` 打开记录、用 `chat-unbind-session` 解除绑定，或用 `chat-clear-sessions` 按 `ref` 或 `provider` 清理 VA 的记录。绑定和清理前核对会话所属的 Agent。AstrBot 和 OpenClaw 的部署、频道配对和 Docker 桥接见 [机器人接入指南](integrations/README.md)。
 
 ## 开发与打包

@@ -3,6 +3,35 @@ import { spawn } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { PassThrough } from 'node:stream';
 import { test } from 'node:test';
+import { windowsRecognition } from '../desktop/windows-recognition.js';
+
+test('shared recognition migrates legacy caption settings and SenseVoice microphone sends one utterance', async t => {
+  const settings = windowsRecognition(null, { recognitionEngine: 'sensevoice', recognitionPython: 'python.exe', recognitionModelDirectory: 'model' });
+  assert.deepEqual(settings, { engine: 'sensevoice', python: 'python.exe', modelDirectory: 'model' });
+  assert.equal(windowsRecognition({ engine: 'system' }, { recognitionEngine: 'sensevoice' }).engine, 'system');
+  const sent = [], children = [];
+  const voice = createWindowsAgentVoice({ senseVoiceScript: 'worker.py', captureBinary: 'capture.exe', resumeDelay: 1000,
+    send: async (text, target) => sent.push([text, target]), onState: () => {},
+    launch: (program, args, options) => {
+      assert.equal(program, 'python.exe');
+      assert.deepEqual(args, ['-I', '-u', '-X', 'utf8', 'worker.py', 'model', '--capture', 'capture.exe', '--microphone']);
+      assert.equal(options.windowsHide, true);
+      const child = new EventEmitter(); child.stdin = new PassThrough(); child.stdout = new PassThrough();
+      child.kill = t.mock.fn(); children.push(child); return child;
+    },
+  });
+  t.after(() => { voice.stop(); for (const child of children) child.stdout.end(); });
+  const target = { sessionId: 'bound' };
+  voice.start(target, settings);
+  const child = children[0];
+  child.stdout.write(JSON.stringify({ type: 'user-input', text: '你好，智能体' }) + '\n');
+  child.stdout.write(JSON.stringify({ type: 'user-input', text: '重复消息' }) + '\n');
+  assert.deepEqual(sent, [['你好，智能体', target]]);
+  assert.equal(child.kill.mock.callCount(), 1);
+  voice.stop();
+  await setTimeout(5);
+  assert.equal(children.length, 1);
+});
 import { setTimeout } from 'node:timers/promises';
 import { createWindowsAgentVoice, launchWindowsAgentVoice } from '../desktop/windows-agent-voice.js';
 

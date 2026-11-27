@@ -244,6 +244,18 @@
         </div>
         <p id="voice-status" class="feedback" role="status"></p>
       </div>
+      <form id="speech-recognition-form" class="card form-grid" hidden>
+        <h2 class="wide">语音识别</h2>
+        <p class="wide">本地智能体的麦克风输入与豆包字幕共用此引擎。保存设置会停止正在进行的识别，需手动重新开启。</p>
+        <label class="wide">识别引擎 <select name="engine"><option value="system">Windows 系统识别（免下载）</option><option value="sensevoice">SenseVoice Small INT8（本机中文 / 中英混说）</option></select></label>
+        <div id="speech-recognition-paths" class="wide form-grid" hidden>
+          <label>Python 路径 <input name="python" placeholder="已安装 sherpa-onnx 和 numpy 的 python.exe"></label>
+          <label>模型目录 <input name="modelDirectory" placeholder="SenseVoice 与 Silero VAD 模型目录"></label>
+          <p class="wide">首次使用请按 Windows 使用说明安装模型。全程本机识别，停顿后显示文字。</p>
+        </div>
+        <div class="wide"><button type="submit" class="primary">保存识别设置</button></div>
+        <p id="speech-recognition-status" class="wide feedback" role="status"></p>
+      </form>
     </section>
 
     <section id="panel-agent" class="panel" role="tabpanel" aria-labelledby="tab-agent" hidden>

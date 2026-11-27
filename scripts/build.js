@@ -39,7 +39,7 @@ const releasePaths = [
 const excludedReleasePath = new RegExp(`^/(?!(?:${releasePaths.join('|')})$)`, 'u');
 const extraResource = [join(root, 'native', 'zipvoice-tts.py')];
 if (platform === 'win32') extraResource.push(buildWindowsDoubaoHelper(join(root, 'build', 'va-doubao-client.exe')),
-  buildWindowsDoubaoCaptions(join(root, 'build', 'va-doubao-captions.exe')));
+  buildWindowsDoubaoCaptions(join(root, 'build', 'va-doubao-captions.exe')), join(root, 'native', 'windows-sensevoice.py'));
 if (mac) {
   execFileSync('make', ['audio-helper', 'doubao-helper', `MACOS_ARCH=${arch === 'x64' ? 'x86_64' : arch}`],
     { cwd: root, stdio: 'inherit' });
