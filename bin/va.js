@@ -14,13 +14,13 @@ const usage = `VA · 桌面角色
   va start                              启动或显示角色
   va status [--json]                    查看桌面状态
   va actions [--category <类别>] [--supported] [--reload] [--config-path] [--json]
-  va act <动作编号或名称> [--expression <表情>] [--say <台词>] [--no-wait]
+  va act <动作编号或名称> [--expression <表情>] [--no-wait]
   va <动作编号>                         直接播放动作，内置命令名优先
   va express <表情编号或名称> [--no-wait]
   va say <台词>                          朗读中文台词
-  va perform [--action <动作>] [--say <台词>] [--expression <表情>] [--no-wait]
+  va perform [--action <动作>] [--expression <表情>] [--no-wait]
   va photo [--out <文件.png>] [--clipboard]
-  va selfie [--out <文件.png>] [--clipboard] [--say <台词>]
+  va selfie [--out <文件.png>] [--clipboard]
   va camera [--out <文件.jpg>] [--ask <问题>] [--agent <codex|claude|omp|custom>] [--model <名称>]
   va settings | character               打开设置或读取人设和默认台词
   va config list | get <配置组>           查询配置组、操作或当前配置
@@ -115,16 +115,15 @@ async function performFromCli() {
   const direct = !['act', 'express', 'say', 'perform'].includes(command);
   const { positionals, values } = options({
     ...(command === 'perform' && { action: { type: 'string' } }),
-    ...(command !== 'say' && { say: { type: 'string' } }),
     ...(command !== 'express' && { expression: { type: 'string' } }),
     'no-wait': { type: 'boolean' },
   });
   count(positionals, direct || command === 'perform' ? 0 : 1);
   const actionName = direct ? command : command === 'act' ? positionals[0] : values.action;
   const expressionName = command === 'express' ? positionals[0] : values.expression;
-  const speech = command === 'say' ? positionals[0] : values.say;
+  const speech = command === 'say' ? positionals[0] : undefined;
   if (command === 'say' && !speech.trim()) invalid('请输入要朗读的台词。');
-  if (!actionName && !expressionName && !speech?.trim()) invalid('请提供动作、表情或台词。');
+  if (command !== 'say' && !actionName && !expressionName) invalid('请提供动作或表情。');
 
   let action;
   let expression;
@@ -227,18 +226,17 @@ async function execute() {
   if (command === 'photo' || command === 'selfie') {
     const { positionals, values } = options({
       out: { type: 'string' }, clipboard: { type: 'boolean' },
-      ...(command === 'selfie' ? { say: { type: 'string' } } : {}),
     });
     count(positionals, 0);
     const stamp = new Date().toISOString().replaceAll(':', '-');
     const path = resolve(values.out || `va-${stamp}.png`);
     if (!/\.png$/i.test(path)) invalid('照片文件需要 .png 扩展名。');
     const clipboard = values.clipboard === true;
-    const { png, speech, voiceWarning } = command === 'selfie'
-      ? await takeSelfie({ clipboard, speech: values.say })
+    const { png } = command === 'selfie'
+      ? await takeSelfie({ clipboard })
       : await request({ type: 'photo', clipboard });
     await writeFile(path, Buffer.from(png, 'base64'), { flag: 'wx' });
-    return { path, clipboard, speech, voiceWarning };
+    return { path, clipboard };
   }
   if (command === 'scale') {
     const { positionals } = options();

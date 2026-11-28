@@ -4,9 +4,58 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { createSpeechCache } from '../desktop/speech-cache.js';
-import { createSystemVoiceCatalog, parseMacVoices, splitReplySpeech } from '../desktop/speech.js';
+import { createSystemVoiceCatalog, parseMacVoices, spokenDialogue, splitReplySpeech } from '../desktop/speech.js';
 import { createSpeechMotion, speakingPreset, textSpeechDuration } from '../desktop/speech-motion.js';
 import { dialoguePages } from '../desktop/dialogue-text.js';
+
+test('spoken dialogue excludes VA instructions and image payloads while retaining the surrounding prose', () => {
+  const command = '[[va action=idle-look expression=neutral]]';
+  assert.equal(spokenDialogue([
+    '给你看看今天的造型。',
+    '![自拍](sandbox:/tmp/VA%20pose(1).png)',
+    '[打开照片](attachment:/selfie.webp?download=1)',
+    '<img src="data:image/png;base64,abcd" alt="自拍">',
+    'data:image/png;base64,abcd',
+    '/tmp/VA pose.png',
+    '`' + command + '`',
+    '这张是刚拍的。' + command,
+  ].join('\n')).split('\n').filter(Boolean).join('\n'), '给你看看今天的造型。\n这张是刚拍的。');
+  assert.equal(spokenDialogue('![自拍](data:image/png;base64,' + 'a'.repeat(400)), '');
+  assert.equal(spokenDialogue('照片拍好了。[操作指南](https://example.com/help)'), '照片拍好了。操作指南');
+});
+
+test('spoken dialogue retains Markdown text without heading, emphasis, list, table or code delimiters', () => {
+  assert.equal(spokenDialogue([
+    '# 设置指南',
+    '',
+    '> **先试 _本机音色_**，~~原方案~~可以先放一放。',
+    '> 1. [x] 打开设置。',
+    '> 2. 查看[操作指南][guide]。',
+    '',
+    '---',
+    '',
+    '| 设置 | 状态 |',
+    '| --- | --- |',
+    '| **朗读** | 开启 |',
+    '',
+    '```bash',
+    'va status',
+    '```',
+    '',
+    '行内 `a_b`，等式 2 * 3，字面量 \\#。',
+    '',
+    '[guide]: https://example.com/help',
+  ].join('\n')), [
+    '设置指南',
+    '先试 本机音色，原方案可以先放一放。',
+    '打开设置。',
+    '查看操作指南。',
+    '设置，状态',
+    '朗读，开启',
+    'va status',
+    '行内 a_b，等式 2 * 3，字面量 #。',
+  ].join('\n'));
+});
 
 test('subtitle pages keep combined emoji intact and leave room for explicit line breaks', () => {
   const emoji = '🧑🏽‍🚀';

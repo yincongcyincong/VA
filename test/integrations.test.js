@@ -83,7 +83,7 @@ test('local agent uses the selected executable, injects the prompt and resumes i
   const first = await agent.send('你好');
   assert.equal(first.provider, 'custom');
   assert.equal(JSON.parse(first.reply).sessionId, null);
-  assert.match(JSON.parse(first.reply).prompt, /^角色\n附加内容\n\n.*末行动作标记/);
+  assert.equal(JSON.parse(first.reply).prompt, '角色\n附加内容');
   assert.equal(JSON.parse((await agent.send('再说')).reply).sessionId, 'session-1');
   assert.deepEqual(replyEvents.splice(0), [null, 'session-1']);
   const [firstSession] = (await agent.status()).sessionHistory;
@@ -303,6 +303,8 @@ test('Claude creates a new conversation, keeps generated dialogue with the reque
   const created = 'bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb';
   await writeFile(script, `#!${process.execPath}\n` + [
     "const message = require('node:fs').readFileSync(0, 'utf8');",
+    "const prompt = process.argv[process.argv.indexOf('--append-system-prompt') + 1];",
+    "require('node:assert/strict').equal(prompt.includes('省去重复的工具调用'), message !== '失败');",
     "const resume = process.argv.indexOf('--resume');",
     `const id = resume < 0 ? '${created}' : process.argv[resume + 1];`,
     "const result = message === '挥手' ? '今天也来击个掌吧！' : '';",

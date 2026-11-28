@@ -23,7 +23,7 @@ async function install(t, { sendMedia, config } = {}) {
       input: request.text === '拍张自拍' ? { handled: 'selfie' } :
         request.text === '挥手' ? { accepted: true, reply: '嗨！' } : {},
       prompt: { accepted: true, prompt: '角色就绪。' },
-      perform: { speech: '已挥手' },
+      perform: { action: 'wave' },
       selfie: { image: { mimeType: 'image/png', data: '${png.toString('base64')}' } },
     }[request.op];
     console.log(JSON.stringify(reply ? { ok: true, ...reply } : { ok: false, error: { message: '测试失败' } }));
@@ -85,7 +85,7 @@ test('OpenClaw handles gestures and sends a selfie as the only reply', async t =
   assert.match(await readFile(join(dir, 'SOUL.md'), 'utf8'), /角色就绪。/);
   assert.equal(command.requireAuth, true);
   assert.deepEqual(JSON.parse((await command.handler({ ...context, args: 'route', from: route.target })).text), route);
-  assert.deepEqual(await command.handler({ args: 'act wave' }), { text: '已挥手' });
+  assert.deepEqual(await command.handler({ args: 'act wave' }), { text: '已执行动作。' });
   const photo = await tools.get('va_desktop_selfie').execute('photo', {});
   assert.deepEqual(photo.content, [{ type: 'image', mimeType: 'image/png', data: png.toString('base64') }]);
   const failure = await tools.get('va_desktop_status').execute('status', {});

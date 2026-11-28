@@ -1,6 +1,5 @@
 {
   "provider": "system",
-  "actionSound": false,
   "volc": {
     "speaker": "zh_female_vv_uranus_bigtts",
     "resourceId": "seed-tts-2.0"

@@ -13,12 +13,7 @@ va prompt --voice
 
 用户可以直接说「挥挥手」「露出微笑」「跳一段侧步摇摆」，也可以直接说自定义动作的名字。Agent 可以根据对话决定是否表演。它应优先照顾明确请求，平常聊天时按需使用表情或保持待机。
 
-本地 Agent 可以在回复最后单独附一行动作标记。给内置或自定义动作编一句符合当前对话的台词，写在标记前面。VA 会展示这句台词，并在启用「朗读回复」时同步发声。没有台词时会用动作配置里的默认台词。直接执行 CLI 时可用 `va act <动作> --say "本轮台词"`，调用 MCP 动作工具时填写 `speech`。`action` 和 `expression` 都只填可用编号，其中一个可以省略。
-
-```text
-嘿，见到你真开心！
-[[va action=wave expression=smile]]
-```
+本地文本 Agent 通过 MCP 的 `va_perform` 或终端的 `va perform` 静默执行表演。`action` 和 `expression` 使用当前模型支持的编号，两者可以只填一个。要说的话写进最终回复正文，开启自动朗读后由 VA 在动作完成后播放。
 
 机器人频道和语音使用完整的第一人称短句，例如「太好了！我来侧步摇摆。」「我露出微笑。」VA 在收到回复或完整语音字幕后执行对应动作。豆包客户端可在已绑定对话里点「同步角色能力」。
 
@@ -43,7 +38,7 @@ va actions --config-path --json
 
 | 用户想要的效果 | 配置方式 |
 | --- | --- |
-| 把挥手、飞吻或跳舞改成自己的表演 | 用 `motion` 复用内置动作，加上 `seconds`、默认 `expression` 和 `dialogue` |
+| 把挥手、飞吻或跳舞改成自己的表演 | 用 `motion` 复用内置动作，加上 `seconds` 和默认 `expression` |
 | 做一个新的姿势，例如歪头打招呼 | 用 `bones` 为模型已有骨骼添加 X、Y、Z 轴的角度偏移。角度单位为度，取值 −180 到 180 |
 | 播放模型里录好的完整动作 | 把 `clip` 设为 `model.clips` 中的原名，并填写播放时长 |
 | 让角色做新的表情 | 在 `expressions` 中为模型的表情目标指定 0 至 1 的权重 |
@@ -59,8 +54,7 @@ va actions --config-path --json
       "motion": "wave",
       "seconds": 2.5,
       "bones": { "head": [0, 0, 12] },
-      "expression": "wink",
-      "dialogue": ["嗨，我在这儿呢！"]
+      "expression": "wink"
     }
   },
   "expressions": {
@@ -73,7 +67,7 @@ va actions --config-path --json
 }
 ```
 
-`seconds` 的范围是 0.25 到 30。台词最多 12 条，每条最多 300 字。表情的目标分组用 `pmx`、`vrm` 或通用模型的 `morphs`。模型没有目标时，按实际支持情况选一个可用效果。模型带有 `Run` 片段时，动作也可以直接写成 `{"label":"小跑","seconds":3,"clip":"Run"}`。
+`seconds` 的范围是 0.25 到 30。表情的目标分组用 `pmx`、`vrm` 或通用模型的 `morphs`。模型没有目标时，按实际支持情况选一个可用效果。模型带有 `Run` 片段时，动作也可以直接写成 `{"label":"小跑","seconds":3,"clip":"Run"}`。
 
 ## 重载、验证和试演
 

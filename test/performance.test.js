@@ -47,6 +47,15 @@ test('the current character and supported catalog drive input and reply actions'
   assert.match(prompt, /请用 星神 自称/);
   assert.match(prompt, /dance-spin（转身亮相）/);
   assert.match(prompt, /自拍成功后只交付图片/);
+  assert.match(prompt, /调用 `va_perform`/);
+  assert.match(prompt, /禁止输出 VA 动作标记/);
+  assert.doesNotMatch(prompt, /\[\[va /u);
+  const saved = chatPerformancePrompt({ name: '星神', prompt: '先简短回答。\n- 用 `va act talk-natural --say "你好呀！"` 边说话边做动作。' }, catalog);
+  assert.match(saved, /先简短回答/);
+  assert.match(saved, /只写进最终回复正文/);
+  assert.doesNotMatch(saved, /--say/u);
+  const voicePrompt = chatPerformancePrompt({ name: '星神' }, catalog, '', 'voice');
+  assert.match(voicePrompt, /用自然语言表达本轮主动表演的意图/);
 });
 
 test('dance requests are validated against the catalog and the dance queue before spending an agent round-trip', () => {

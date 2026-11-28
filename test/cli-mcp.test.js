@@ -52,6 +52,9 @@ test('the VA CLI exposes the configuration catalog and validates requests withou
   ]) {
     assert.equal(execute(args).error.code, 'INVALID_ARGUMENTS', args.join(' '));
   }
+  for (const args of [['act', 'wave'], ['perform', '--action', 'wave'], ['selfie']]) {
+    assert.equal(execute([...args, '--say', '你好']).error.code, 'ERR_PARSE_ARGS_UNKNOWN_OPTION');
+  }
 });
 
 test('VA MCP initializes over stdio and returns schema errors as tool results', { timeout: 10000 }, async t => {
@@ -65,6 +68,9 @@ test('VA MCP initializes over stdio and returns schema errors as tool results', 
   assert.ok(tools.some(tool => tool.name === 'va_actions' && tool.annotations?.readOnlyHint));
   assert.ok(tools.some(tool => tool.name === 'va_observe'));
   assert.ok(tools.some(tool => tool.name === 'va_camera' && tool.inputSchema.properties.question));
+  for (const name of ['va_perform', 'va_selfie']) {
+    assert.ok(!Object.hasOwn(tools.find(tool => tool.name === name).inputSchema.properties, 'speech'));
+  }
   if (process.platform === 'win32') assert.ok(tools.some(tool => tool.name === 'va_voice_recognition_status' && tool.annotations.readOnlyHint));
   const call = async (name, args) => client.callTool({ name, arguments: args });
   const config = await call('va_config_list', {});

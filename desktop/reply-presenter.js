@@ -1,4 +1,4 @@
-import { splitReplySpeech } from './speech.js';
+import { spokenDialogue, splitReplySpeech } from './speech.js';
 
 const danceFailures = ['MODEL_ACTION', 'BUSY'];
 
@@ -7,17 +7,22 @@ const danceFailures = ['MODEL_ACTION', 'BUSY'];
 export function createReplyPresenter({ parseReply, queueDance, queueSpeech, queueLines, speechCapacity }) {
   return function showReply(text, source, readAloud, effect) {
     const selection = effect ?? parseReply(text);
-    const speech = selection.speech ?? text;
+    const original = selection.speech ?? text;
+    const speech = readAloud ? spokenDialogue(original) : original;
+    if (readAloud && speech !== original && !/[\p{L}\p{N}]/u.test(speech)) {
+      if (!selection.action && !selection.expression && !selection.dance) return true;
+      readAloud = false;
+    }
     if (selection.dance) {
-      const [first, ...rest] = splitReplySpeech(speech);
-      if (rest.length && !speechCapacity()) return false;
+      const lines = speech ? splitReplySpeech(speech) : [];
+      if (lines.length && !speechCapacity()) return false;
       try {
-        queueDance(selection.dance, { speech: first, expression: selection.expression, readAloud, source, scope: selection.scope });
+        queueDance(selection.dance, { expression: selection.expression, source, scope: selection.scope });
       } catch (error) {
         if (!danceFailures.includes(error?.code)) throw error;
         return queueSpeech(speech, source, readAloud, { ...selection, dance: undefined });
       }
-      if (rest.length) queueLines(rest, source, readAloud, selection.scope);
+      if (lines.length) queueLines(lines, source, readAloud, selection.scope);
       return true;
     }
     return queueSpeech(speech, source, readAloud, selection);

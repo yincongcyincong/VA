@@ -106,7 +106,7 @@ function startBubble(text) {
   };
 }
 
-async function perform({ plan, speech, selfie, speakingStyle, readAloud = true }) {
+async function perform({ plan, speech, selfie, speakingStyle, spokenText }) {
   doubao.stopDance();
   doubao.stopClientSpeech();
   const controller = new AbortController();
@@ -118,9 +118,9 @@ async function perform({ plan, speech, selfie, speakingStyle, readAloud = true }
     let voiceWarning;
     const textDuration = speech ? textSpeechDuration(speech, speakingStyle) : 0;
     if (speech) dialogue = startBubble(speech);
-    if (speech && readAloud && /[\p{L}\p{N}]/u.test(speech)) {
+    if (spokenText) {
       try {
-        const prepared = await voice.prepare(speech, signal);
+        const prepared = await voice.prepare(spokenText, signal);
         audio = prepared.audio;
         voiceWarning = prepared.warning;
       } catch (error) {

@@ -19,13 +19,13 @@ function presenter(overrides = {}) {
   return { show, calls };
 }
 
-test('a dance reply queues one dance with its opening line and speaks the remainder afterwards', () => {
+test('a dance reply queues a silent dance followed by the whole reply', () => {
   const { show, calls } = presenter();
   const scope = 'codex:fixture';
   assert.equal(show(longSpeech, 'local-agent', true, { dance: { count: 2 }, speech: longSpeech, expression: 'smile', scope }), true);
   assert.deepEqual(calls.dances, [[{ count: 2 },
-    { speech: line, expression: 'smile', readAloud: true, source: 'local-agent', scope }]]);
-  assert.deepEqual(calls.lines, [[[line, line], 'local-agent', true, scope]]);
+    { expression: 'smile', source: 'local-agent', scope }]]);
+  assert.deepEqual(calls.lines, [[[line, line, line], 'local-agent', true, scope]]);
   assert.deepEqual(calls.speeches, []);
 });
 
@@ -60,4 +60,29 @@ test('replies without a dance go through the speech queue and parse when no effe
   assert.equal(show('嗨', 'local-agent', true, { speech: '嗨', expression: 'smile' }), true);
   assert.deepEqual(calls.speeches[1], ['嗨', 'local-agent', true, { speech: '嗨', expression: 'smile' }]);
   assert.deepEqual(calls.dances, []);
+});
+
+test('selfie attachments and VA commands are filtered before splitting spoken replies', () => {
+  const { show, calls } = presenter();
+  const selfie = '![自拍](data:image/png;base64,' + 'a'.repeat(400) + ')';
+  const marker = '[[va action=idle-look expression=neutral]]';
+  assert.equal(show(selfie + '\n' + marker, 'local-agent', true), true);
+  assert.deepEqual(calls.speeches, []);
+
+  const reply = selfie + '\n' + marker + '\n你好。';
+  const selection = { speech: reply, dance: { count: 1 } };
+  assert.equal(show(reply, 'local-agent', true, selection), true);
+  assert.equal(calls.dances[0][1].speech, undefined);
+  assert.deepEqual(calls.lines, [[['你好。'], 'local-agent', true, undefined]]);
+
+  const action = { speech: selfie, expression: 'neutral' };
+  assert.equal(show(selfie, 'local-agent', true, action), true);
+  assert.deepEqual(calls.speeches, [['', 'local-agent', false, action]]);
+});
+
+test('the reply presenter removes Markdown before long link destinations can be split into spoken chunks', () => {
+  const { show, calls } = presenter();
+  const reply = '# 标题\n\n[**点这里**](https://example.com/' + 'a'.repeat(400) + ')';
+  assert.equal(show(reply, 'local-agent', true), true);
+  assert.deepEqual(calls.speeches, [['标题\n点这里', 'local-agent', true, { speech: reply }]]);
 });

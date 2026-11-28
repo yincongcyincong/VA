@@ -123,9 +123,9 @@ va actions --supported --json
 va wave
 va act '侧步摇摆'
 va actions --category '说话' --supported
-va talk-lively --say '快听我说！'
+va say '快听我说！'
 va express '微笑'
-va perform --action '挥手' --expression '微笑' --say '欢迎来到这里！'
+va perform --action '挥手' --expression '微笑'
 va view portrait
 va act pose --expression smile --no-wait
 va photo --out /tmp/va-photo.png --clipboard --json
@@ -148,7 +148,7 @@ va stop
 | 摆拍 `pose` | 摆拍 `pose`、双手比心 `pose-heart`、侧身亮相 `pose-hero` |
 | 待机 `idle` | 待机 `idle`、左右观察 `idle-look`、伸懒腰 `idle-stretch` |
 
-可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」，也可以在菜单栏选择舞步。未指定舞步时，VA 轮换当前支持的舞蹈组动作。经典律动仍可用 `va act dance` 播放。任意动作可搭配 `--say` 指定台词。字幕会先显示，音频就绪后开始动作和朗读，口型跟随声音。未指定台词时，用「设置 → 语音 → 做动作时发出声音」控制默认台词是否朗读。可用动作取决于当前模型的骨骼和动画。
+可以直接输入「跳个舞吧」「跳三个舞」或「跳一段弹跳挥手」，也可以在菜单栏选择舞步。未指定舞步时，VA 轮换当前支持的舞蹈组动作。经典律动仍可用 `va act dance` 播放。动作静默执行。开启自动朗读时，VA 在动作完成后朗读 Agent 的最终回复。可用动作取决于当前模型的骨骼和动画。
 
 `va act`、`va say`、`va perform` 默认等演出完成后返回。用 `--no-wait` 可立即获取任务 ID，再用 `va status --json` 查询，或在动作进行时另行调用 `va photo`。已有表演时，新表演返回 `BUSY`。用 `va stop` 可打断，等待该任务的调用会收到 `CANCELED`。
 
@@ -242,7 +242,7 @@ PMX 和 VRM 的内置动作取决于模型的骨骼和表情。GLB、glTF 和 FB
 
 在「设置 → 桌面角色」修改「角色名称」。保存后，角色名牌、菜单、默认台词和角色 Prompt 都可以使用新名称。名称和默认台词位于 `~/Library/Application Support/VA Desktop/character.json`，也可通过 `VA_CHARACTER_CONFIG` 指定文件。编辑台词或 Prompt 时，用 `{{name}}` 引用当前名称。MCP 用 `va_character` 读取角色信息，命令行可用 `va character --json`。[默认台词](config/character.json)
 
-MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角色名。改完动作配置后用 `va_reload_actions`，再从 `supported: true` 和 `supportedExpressions` 选择编号。`va_say` 和 `va_perform` 会在角色旁显示对白气泡，表演可以自带台词或使用默认对白。`va_selfie` 成功时只返回 780 × 1040 的透明 PNG，CLI 用 `va selfie --out /tmp/va-selfie.png --json` 获取文件。角色隐藏或 VA 退出时也可以自拍。
+MCP 的 `va_actions` 和 `va_prompt` 会读取运行中的动作、表情和角色名。改完动作配置后用 `va_reload_actions`，再从 `supported: true` 和 `supportedExpressions` 选择编号。`va_perform` 静默表演，`va_say` 单独朗读并显示对白。`va_selfie` 成功时只返回 780 × 1040 的透明 PNG，CLI 用 `va selfie --out /tmp/va-selfie.png --json` 获取文件。角色隐藏或 VA 退出时也可以自拍。
 
 ## 智能体接入
 
@@ -275,7 +275,7 @@ OMP 的「打开并绑定」会在终端恢复该会话。VA 会同步 DeepSeek 
 
 「会话绑定记录」按当前选中的 Agent 展示。新绑定的会话成为 VA 的当前发送目标；对已绑定的记录也可以点「设为发送目标」。VA 的主动发信和麦克风输入只发往这个目标，已绑定的其他会话仍会显示后续回复。「解除绑定」会停止监听指定会话并保留记录，重启 VA 会恢复仍绑定的会话。「打开并绑定」会恢复记录的工作目录，绑定并打开对应客户端。Codex 优先在桌面端打开原会话，Claude Code 在终端打开。Codex 原会话有写入锁时，可以在原窗口继续聊天。[桌面端会话链接](https://learn.chatgpt.com/docs/app/commands)
 
-在已绑定的 Codex、Claude Code、DeepSeek Harness 或 OMP 原客户端聊天时，VA 会把各会话新完成的回复依次显示在角色旁。开启「自动朗读回复」后，这些回复也会用当前音色朗读。用 `va chat` 发送的消息继续使用同一字幕和朗读流程。动作回复有台词时同步播放，只有动作时使用默认台词。
+在已绑定的 Codex、Claude Code、DeepSeek Harness 或 OMP 原客户端聊天时，VA 会把各会话新完成的回复依次显示在角色旁。开启「自动朗读回复」后，这些回复也会用当前音色朗读。用 `va chat` 发送的消息继续使用同一字幕和朗读流程。
 
 ![本地 Agent 的会话绑定记录](docs/screenshots/local-agent.png)
 
@@ -294,7 +294,7 @@ va chat "我们刚才聊到哪里了？" --speak
 
 ### 角色 Prompt
 
-在「设置 → 桌面角色 → 角色 Prompt」的输入框编辑角色背景、说话方式和动作命令。默认内容包含 `va actions --supported --json`、`va act wave`、`va act pose-heart`、三个舞步、带对白的动作、表情和自拍示例。`{{actionCommands}}` 会根据当前模型和动作配置展开命令清单。Prompt 随桌面设置保存到 `~/Library/Application Support/VA Desktop/settings.json`，旧版配置中的人设和接入指令会在升级时合并到这个输入框。
+在「设置 → 桌面角色 → 角色 Prompt」的输入框编辑角色背景、说话方式和动作命令。默认内容包含 `va actions --supported --json`、`va act wave`、`va act pose-heart`、三个舞步、表情和自拍示例。`{{actionCommands}}` 会根据当前模型和动作配置展开命令清单。Prompt 随桌面设置保存到 `~/Library/Application Support/VA Desktop/settings.json`，旧版配置中的人设和接入指令会在升级时合并到这个输入框。
 
 用 `va config set character '{"prompt":"…"}'` 或 MCP 的 `va_config_set` 更新同一个输入框。运行 `va prompt` 可查看发送给本地 Agent 的完整版，`va prompt --voice` 输出豆包和机器人频道的版本。已绑定豆包客户端时，可点「同步角色能力」更新当前会话。OpenClaw 的同步仍通过插件选项 `workspacePrompt` 开启。[Prompt 与动作配置](docs/agent-custom-actions.md#对话如何触发动作)
 
@@ -410,7 +410,7 @@ OpenClaw 按频道的配对或访问策略授权，AstrBot 允许管理员或插
 
 macOS 上已选用一种交互接入时，可独立开启音乐跟随。音频分类在本机进行。
 
-音乐识别使用 macOS 的本机音频分类，分析系统输出。检测到音乐会播放角色的预设舞步，音乐停止或关闭开关时会停下。鼠标穿透关闭时，点角色可以打断自动动作并听到摸摸回应。桌面打包会编译音频组件，源码开发可用 `make dev` 编译并启动。
+音乐识别使用 macOS 的本机音频分类，分析系统输出。检测到音乐会播放角色的预设舞步，音乐停止或关闭开关时会停下。鼠标穿透关闭时，点角色可以打断自动动作并播放摸头动作。桌面打包会编译音频组件，源码开发可用 `make dev` 编译并启动。
 
 ## 摄像头拍照与问答
 

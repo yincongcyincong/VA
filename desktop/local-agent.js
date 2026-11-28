@@ -869,7 +869,10 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
             !validSession(agent.provider, sessionId)) {
           throw new ControlError('AGENT_SESSION', '请先创建会话或绑定一个有效的 Agent 会话。');
         }
-        const prompt = await getPrompt() + '\n\n在 VA 内处理的对话通过回复触发动作。需要表演时，请直接写台词并附上末行动作标记。';
+        const role = await getPrompt();
+        const prompt = options.requestedEffect
+          ? role + '\n\nVA 已接管用户本轮明确请求的桌面动作。请把要说的话只写在最终回复正文里，省去重复的工具调用。'
+          : role;
         if (prompt.length > 45000) throw new ControlError('AGENT_INPUT', '角色与 Agent 的 Prompt 合计太长。');
         const input = { message, prompt, sessionId };
         pendingReply = sessionId ? replySessionKey(agent.provider, sessionId) : undefined;

@@ -27,7 +27,7 @@ import { createAgentVoice } from './agent-voice.js';
 import { createWindowsAgentVoice } from './windows-agent-voice.js';
 import { installDeepSeekRole } from './deepseek-profile.js';
 import { deepSeekNavigation } from './deepseek-navigation.js';
-import { createSystemVoiceCatalog, defaultSystemVoice, splitReplySpeech, systemSpeech } from './speech.js';
+import { createSystemVoiceCatalog, defaultSystemVoice, spokenDialogue, splitReplySpeech, systemSpeech } from './speech.js';
 import { createSpeechCache } from './speech-cache.js';
 import { createZipVoice, zipVoiceReference } from './zipvoice-tts.js';
 import { volcDefaults, volcKey, volcSpeech } from './volc-tts.js';
@@ -112,6 +112,7 @@ let screenRevision = 0;
 let controlsWindow;
 let controlsReady = false;
 let controlsPosition;
+let controlsIgnoringMouse = false;
 let windowsPositioningControls = false;
 let controlsHoverTimer;
 let controlsLastNearAt = -Infinity;
@@ -176,8 +177,10 @@ let speakingStyle = defaultSpeakingStyle;
 let shortcutRegistered = false;
 const bubbleWidth = 236;
 const bubbleHeight = 164;
-const controlsWidth = 72;
+const controlsWidth = 105;
 const controlsHeight = 34;
+const controlsTooltipHeight = 26;
+const controlsWindowHeight = controlsHeight + controlsTooltipHeight;
 const controlsHoverMargin = 14;
 const controlsHideDelay = 250;
 let view = 'full';
@@ -280,7 +283,7 @@ async function asset(request) {
   if (!local) return new Response(null, { status: 404 });
   try {
     let bytes = await readFile(local);
-    if (process.platform === 'win32' && extension === '.vrm') {
+    if (extension === '.vrm') {
       const { repairWindowsDeepSeekVrm } = await import('./windows-vrm-materials.js');
       bytes = repairWindowsDeepSeekVrm(bytes);
     }
@@ -293,11 +296,10 @@ async function asset(request) {
 
 async function getVoiceConfig() {
   const stored = await readConfig(voicePath, defaultVoice, 'VOICE_CONFIG', 'voice.json');
-  const { provider, actionSound, volc, systemVoice, zipvoice } = stored ?? {};
+  const { provider, volc, systemVoice, zipvoice } = stored ?? {};
   return {
     provider: ['volc', 'zipvoice'].includes(provider) ? provider : 'system',
     systemVoice: typeof systemVoice === 'string' ? systemVoice : defaultSystemVoice,
-    actionSound: actionSound === true,
     volc: { ...volcDefaults, ...volc },
     zipvoice: Object.fromEntries([...Object.keys(zipVoiceDefaults), 'referenceText']
       .map(key => [key, typeof zipvoice?.[key] === 'string' ? zipvoice[key].trim() : ''])),
@@ -347,10 +349,9 @@ function warmZipVoice(config, reference) {
 }
 
 function voiceSnapshot(config) {
-  const { provider, actionSound, systemVoice, volc, zipvoice } = config;
+  const { provider, systemVoice, volc, zipvoice } = config;
   return {
     provider,
-    actionSound,
     systemVoice,
     zipvoice: zipVoiceSettings(zipvoice),
     zipvoicePreparation: provider === 'zipvoice' ? zipVoicePreparation : undefined,
@@ -471,6 +472,12 @@ ipcMain.handle('va:initial-model', event => {
 });
 ipcMain.on('va:open-settings', event => {
   if (controlsAuthorized(event)) openSettings();
+});
+ipcMain.on('va:stop-speaking', event => {
+  if (!controlsAuthorized(event)) return;
+  channelSpeech.length = 0;
+  queuedSpeech = undefined;
+  void handle({ type: 'stop' }).catch(reportAutomaticError);
 });
 ipcMain.on('va:nameplate-bounds', (event, bounds) => {
   if (!authorized(event) || !bounds ||
@@ -772,10 +779,6 @@ async function configureVoice(change) {
   return editVoice(async config => {
     if (windows && change.recognition) config.recognition = windowsRecognition({ ...config.recognition, ...change.recognition });
     if (Object.hasOwn(change, 'systemVoice')) config.systemVoice = change.systemVoice;
-    if (Object.hasOwn(change, 'actionSound')) {
-      if (typeof change.actionSound !== 'boolean') throw new ControlError('VOICE_CONFIG', '无效的动作发声设置。');
-      config.actionSound = change.actionSound;
-    }
     if (change.volc) {
       const { speaker, resourceId } = { ...config.volc, ...change.volc };
       const { apiKey = '', apiKeyEnv, clearKey } = change.volc;
@@ -939,18 +942,6 @@ function updateTray() {
   tray?.setContextMenu(menu());
 }
 
-async function chooseLine(action, speech, configured) {
-  const line = speech.trim();
-  if (line || action === 'idle') return line;
-  const character = await getCharacter().catch(error => {
-    console.error(error.message);
-    return { dialogue: Object.fromEntries(Object.entries(defaultCharacter.dialogue).map(([key, value]) =>
-      [key, value.map(line => line.replaceAll('{{name}}', () => characterName))])) };
-  });
-  const lines = configured ?? character.dialogue[action] ?? [];
-  return lines[Math.floor(Math.random() * lines.length)]?.replaceAll('{{name}}', () => characterName) ?? '';
-}
-
 async function reloadPerformance() {
   try {
     const config = await readConfig(performancePath, performanceDefaults, 'PERFORMANCE_CONFIG', 'performance.json');
@@ -981,7 +972,9 @@ function performancePlan(action, selectedExpression) {
     face: performanceCatalog.faces[expression] };
 }
 
-async function perform(command, { selfie = false, source = 'manual', readAloud = true, defaultDialogue = true, scope } = {}) {
+async function perform(command, {
+  selfie = false, source = 'manual', readAloud = true, speechPrepared = false, scope,
+} = {}) {
   const { action = 'idle', expression, speech = '', wait = true } = command;
   if (typeof action !== 'string' || (expression !== undefined && typeof expression !== 'string') ||
       typeof speech !== 'string' || speech.length > 300 || typeof wait !== 'boolean') {
@@ -991,21 +984,17 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
   if (active) throw new ControlError('BUSY', '角色正在表演。等表演结束，或使用 va stop。');
   const plan = performancePlan(action, expression);
   const style = speechActionStyles[plan.motion] ?? speakingStyle;
-  const job = { id: ++nextId, action, speech: speech.trim(), source, style, scope };
+  const line = command.action === undefined && !selfie ? speech.trim() : '';
+  const job = { id: ++nextId, action, speech: line, source, style, scope };
   active = job;
   let voicePlayback = false;
   const startedAt = Date.now();
   const context = { id: job.id, action, source };
   logger.write('info', 'performance.started', context);
   updateTray();
-  const selected = defaultDialogue
-    ? chooseLine(action, speech, performanceCatalog.actions[action].dialogue)
-      .then(line => line || (source === 'input-action' ? '好呀，看这边。' : ''))
-    : Promise.resolve(speech.trim());
-  const result = selected.then(async line => {
-    job.speech = line;
-    const actionDialogue = !speech.trim() || source === 'input-action';
-    const speak = readAloud && Boolean(line) && (!actionDialogue || await actionSoundEnabled());
+  const result = Promise.resolve().then(async () => {
+    const spokenText = readAloud && line ? (speechPrepared ? line : spokenDialogue(line)) : '';
+    const speak = /[\p{L}\p{N}]/u.test(spokenText);
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     if (speak) {
       voicePlayback = true;
@@ -1013,7 +1002,7 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
     }
     job.started = true;
     const automatedReply = ['local-agent', 'bot-chat'].includes(source);
-    const data = await renderer({ type: 'perform', plan, speech: line, selfie, readAloud: speak, speakingStyle: style },
+    const data = await renderer({ type: 'perform', plan, speech: line, selfie, spokenText: speak ? spokenText : '', speakingStyle: style },
       automatedReply ? 120_000 : 80_000);
     if (job.canceled) throw new ControlError('CANCELED', '表演已停止。');
     logger.write('info', 'performance.completed', { ...context, durationMs: Date.now() - startedAt });
@@ -1038,7 +1027,7 @@ async function perform(command, { selfie = false, source = 'manual', readAloud =
   job.finished = result;
   if (wait) return result;
   result.catch(error => { if (error.code !== 'CANCELED') console.error(error.message); });
-  return { id: job.id, action, speech: await selected, completed: false };
+  return { id: job.id, action, speech: line, completed: false };
 }
 
 async function stopPerformance() {
@@ -1111,17 +1100,12 @@ function discardLocalAgentReplies(removed) {
   }
 }
 
-async function actionSoundEnabled() {
-  return (await getVoiceConfig().catch(error => { reportAutomaticError(error); return {}; })).actionSound === true;
-}
-
 function queueVoicePerformance({ action, expression }) {
   if ((!action && !expression) || active || petting || changingModel || voiceDanceTimer || state.state !== 'ready') return false;
   const key = `${action ?? ''}:${expression ?? ''}`;
   if (lastVoicePerformance?.key === key && Date.now() - lastVoicePerformance.at < 6000) return false;
   const plan = performancePlan(action ?? 'idle', expression);
   lastVoicePerformance = { key, at: Date.now() };
-  const revision = captionStartRevision;
   const reservation = voiceDanceTimer = setTimeout(() => {
     release();
     drainAutomatic();
@@ -1131,14 +1115,7 @@ function queueVoicePerformance({ action, expression }) {
     clearTimeout(reservation);
     voiceDanceTimer = undefined;
   }
-  void (async () => {
-    const voiced = action && action !== 'idle' && await actionSoundEnabled();
-    if (voiceDanceTimer !== reservation || revision !== captionStartRevision || changingModel || active) return false;
-    if (!voiced) return renderer({ type: 'doubao-dance', plan, replaceDance: true });
-    release();
-    await perform({ action, expression }, { source: 'voice-action' });
-    return true;
-  })().then(playing => {
+  void renderer({ type: 'doubao-dance', plan, replaceDance: true }).then(playing => {
     if (!playing) { release(); drainAutomatic(); }
   }).catch(error => { release(); reportAutomaticError(error); drainAutomatic(); });
   return true;
@@ -1153,7 +1130,7 @@ function queueInputPerformance(text) {
     return result;
   }
   const reply = '好呀，看这边。';
-  const queued = queueSpeech(effect.action && effect.action !== 'idle' ? '' : reply, 'input-action', true, effect);
+  const queued = queueSpeech('', 'input-action', false, effect);
   if (!queued) throw new ControlError('BUSY', '角色正在表演，请稍后再试。');
   lastInputPerformanceAt = Date.now();
   return { reply, handled: 'action' };
@@ -1167,25 +1144,30 @@ function onVoiceOrClientInput(text) {
 function drainAutomatic() {
   if (!senses || !window || window.isDestroyed() || state.state !== 'ready' || changingModel || active || petting || voiceDanceTimer) return;
   if (inputDances.length) {
-    const { action: requested, speech, expression, readAloud, source = 'input-dance', scope } = inputDances.shift();
+    const { action: requested, expression, source = 'input-dance', scope } = inputDances.shift();
     const action = requested ?? nextDance();
     if (!action || !actionSupported(performanceCatalog.actions[action], state.media)) {
       inputDances.length = 0;
+      drainAutomatic();
       return;
     }
-    void perform({ action, speech, expression }, { source, readAloud, scope }).catch(reportAutomaticError);
+    void perform({ action, expression }, { source, scope }).catch(reportAutomaticError);
     return;
   }
   if (channelSpeech.length) {
     const { lines, source, readAloud, effect, scope } = channelSpeech.shift();
-    const speech = lines.shift();
-    if (lines.length) channelSpeech.unshift({ lines, source, readAloud, scope, effect: {}, continuation: true });
     const catalog = performanceSnapshot();
     const action = catalog.actions[effect.action]?.supported ? effect.action : undefined;
     const expression = catalog.supportedExpressions.includes(effect.expression) ? effect.expression : undefined;
-    if (!speech && !action && !expression) { drainAutomatic(); return; }
-    perform({ speech, action, expression: expression ?? (action ? undefined : 'smile') }, { source, readAloud, scope })
-      .catch(reportAutomaticError);
+    if (action || expression) {
+      if (lines[0]) channelSpeech.unshift({ lines, source, readAloud, scope, effect: {}, continuation: true });
+      void perform({ action, expression }, { source, scope }).catch(reportAutomaticError);
+      return;
+    }
+    const speech = lines.shift();
+    if (lines.length) channelSpeech.unshift({ lines, source, readAloud, scope, effect: {}, continuation: true });
+    if (!speech) { drainAutomatic(); return; }
+    void perform({ speech, expression: 'smile' }, { source, readAloud, speechPrepared: true, scope }).catch(reportAutomaticError);
     return;
   }
   if (!window.isVisible()) return;
@@ -1271,7 +1253,7 @@ async function activateIntegration(mode) {
     queuedSpeech = undefined;
     screenRevision++;
     const stop = ['screen', 'music', 'local-agent', 'bot-chat', 'bot-action', 'doubao-client',
-      'input-dance', 'input-action', 'voice-action'].includes(active?.source)
+      'input-dance', 'input-action'].includes(active?.source)
       ? stopPerformance().catch(reportAutomaticError) : undefined;
     syncSenses();
     await localAgent.monitorReplies(mode === 'local');
@@ -1470,7 +1452,6 @@ async function startDoubaoCaptions(value) {
 
 function stopDoubaoCaptions() {
   captionStartRevision++;
-  if (active?.source === 'voice-action') void stopPerformance().catch(reportAutomaticError);
   doubaoCaptions.stop();
   return doubaoCaptions.state();
 }
@@ -1557,9 +1538,9 @@ async function conversationPrompt(style) {
 
 async function deepSeekContext(sessionId) {
   if (currentMode !== 'local' || !await localAgent.matchesDeepSeekSession(sessionId)) return { prompt: '' };
-  const role = await conversationPrompt('text');
+  const prompt = await conversationPrompt('text');
   if (currentMode !== 'local' || !await localAgent.matchesDeepSeekSession(sessionId)) return { prompt: '' };
-  return { prompt: role + '\n\n本会话已绑定 VA。挥手、跳舞等可用桌面动作由 VA 读取回复末行后执行。需要表演时，直接写台词和末行动作标记即可。' };
+  return { prompt };
 }
 
 const showReply = createReplyPresenter({
@@ -1805,8 +1786,7 @@ async function handle(command) {
         requireMode(command.platform);
       }
       return await perform({ ...command, action: 'pose', expression: command.expression ?? 'smile', wait: true },
-        { selfie: true, source: command.bot === true ? 'bot-action' : 'manual',
-          defaultDialogue: command.bot !== true && command.quiet !== true });
+        { selfie: true, source: command.bot === true ? 'bot-action' : 'manual' });
     case 'stop':
       clearInputDances();
       if (channelSpeech[0]?.continuation) channelSpeech.shift();
@@ -2138,15 +2118,15 @@ function positionControls() {
   const area = screen.getDisplayMatching(bounds).workArea;
   const centered = Math.round(bounds.x + (bounds.width - controlsWidth) / 2);
   const x = Math.max(area.x, Math.min(centered, area.x + area.width - controlsWidth));
-  const y = bounds.y + bounds.height;
+  const y = bounds.y + bounds.height - controlsTooltipHeight;
   if (windows) {
     // Windows may apply native frame minimums when moving a tiny toolbar.
     // Keep its size explicit and do not interpret this move as a user drag.
     const current = controlsWindow.getBounds();
     windowsPositioningControls = true;
     try {
-      if (current.x !== x || current.y !== y || current.width !== controlsWidth || current.height !== controlsHeight) {
-        controlsWindow.setBounds({ x, y, width: controlsWidth, height: controlsHeight });
+      if (current.x !== x || current.y !== y || current.width !== controlsWidth || current.height !== controlsWindowHeight) {
+        controlsWindow.setBounds({ x, y, width: controlsWidth, height: controlsWindowHeight });
       }
       controlsPosition = controlsWindow.getPosition();
     } finally {
@@ -2165,11 +2145,18 @@ function syncControlsVisibility() {
     cursor.x >= x - controlsHoverMargin && cursor.x <= x + width + controlsHoverMargin &&
     cursor.y >= y - controlsHoverMargin && cursor.y <= y + height + controlsHoverMargin;
   const now = performance.now();
-  if (near(window.getBounds()) || near(controlsWindow.getBounds())) {
+  const bounds = controlsWindow.getBounds();
+  if (near(window.getBounds()) || near(bounds)) {
     controlsLastNearAt = now;
     if (!controlsWindow.isVisible()) setControlsVisibility(true);
   } else if (controlsWindow.isVisible() && now - controlsLastNearAt >= controlsHideDelay) {
     setControlsVisibility(false);
+  }
+  const overTooltip = cursor.x >= bounds.x && cursor.x < bounds.x + bounds.width &&
+    cursor.y >= bounds.y && cursor.y < bounds.y + controlsTooltipHeight;
+  if (overTooltip !== controlsIgnoringMouse) {
+    controlsWindow.setIgnoreMouseEvents(overTooltip);
+    controlsIgnoringMouse = overTooltip;
   }
   syncMousePassthrough(cursor);
 }
@@ -2262,7 +2249,7 @@ function createBubble() {
 function createControls() {
   controlsWindow = new BrowserWindow({
     width: controlsWidth,
-    height: controlsHeight,
+    height: controlsWindowHeight,
     transparent: true,
     frame: false,
     hasShadow: false,
@@ -2277,7 +2264,7 @@ function createControls() {
       // cached size up again every time it moves at fractional display scaling.
       resizable: true, thickFrame: false,
       minWidth: controlsWidth, maxWidth: controlsWidth,
-      minHeight: controlsHeight, maxHeight: controlsHeight,
+      minHeight: controlsWindowHeight, maxHeight: controlsWindowHeight,
       minimizable: false, maximizable: false,
     } : {}),
     webPreferences: { preload: join(root, 'desktop/preload.cjs'), sandbox: true, contextIsolation: true },

@@ -82,6 +82,49 @@ async function prepare() {
     assert.ok(status.model.bones.includes('head'));
     assert.equal((await command({ type: 'configuration', operation: 'get', target: 'model' })).useDefault, true);
 
+    const controls = await waitFor(() => BrowserWindow.getAllWindows().find(window =>
+      window.webContents.getURL() === 'va-app://desktop/controls.html'), 'the avatar controls');
+    assert.equal(await controls.webContents.executeJavaScript(
+      "getComputedStyle(document.querySelector('#stop-speaking')).color"), 'rgb(255, 255, 255)');
+    const debuggerClient = controls.webContents.debugger;
+    debuggerClient.attach('1.3');
+    try {
+      await debuggerClient.sendCommand('DOM.enable');
+      await debuggerClient.sendCommand('CSS.enable');
+      const { root: { nodeId } } = await debuggerClient.sendCommand('DOM.getDocument');
+      for (const [selector, label] of [['#stop-speaking', '停止朗读'], ['#settings', '打开设置']]) {
+        const { nodeId: button } = await debuggerClient.sendCommand('DOM.querySelector', { nodeId, selector });
+        const tooltip = () => controls.webContents.executeJavaScript(
+          `getComputedStyle(document.querySelector(${JSON.stringify(selector)}), '::after').content`);
+        assert.equal(await tooltip(), 'none');
+        await debuggerClient.sendCommand('CSS.forcePseudoState', { nodeId: button, forcedPseudoClasses: ['hover'] });
+        assert.equal(await tooltip(), JSON.stringify(label));
+        await debuggerClient.sendCommand('CSS.forcePseudoState', { nodeId: button, forcedPseudoClasses: [] });
+      }
+    } finally {
+      debuggerClient.detach();
+    }
+    const speech = '测试停止朗读。'.repeat(20);
+    const started = await command({ type: 'perform', speech, wait: false });
+    await waitFor(async () => (await command({ type: 'status' })).speech === speech, 'the speaking avatar');
+    assert.equal(await controls.webContents.executeJavaScript(`(() => {
+      const button = document.querySelector('#stop-speaking');
+      if (button?.nextElementSibling?.id !== 'settings') return false;
+      button.click();
+      return true;
+    })()`), true);
+    await waitFor(async () => {
+      const current = await command({ type: 'status' });
+      return current.performance?.id !== started.id && !current.speech;
+    }, 'the interrupted speech');
+    const action = await command({ type: 'perform', action: 'wave', speech: '旧客户端附带的台词', wait: false });
+    assert.equal(action.speech, '');
+    const acting = await command({ type: 'status' });
+    assert.equal(acting.performance?.id, action.id);
+    assert.equal(acting.performance.hasSpeech, false);
+    assert.equal(acting.speech, null);
+    await command({ type: 'stop' });
+
     await command({ type: 'chat' });
     const settings = await waitFor(() => BrowserWindow.getAllWindows().find(window =>
       window.webContents.getURL() === 'va-app://desktop/settings.html'), 'settings');
@@ -116,6 +159,22 @@ async function prepare() {
     assert.equal(await readFile(sessionsPath, 'utf8'), saved);
     await chat('agent-voice-stop');
     assert.equal(stops, 1);
+
+    await command({ type: 'configuration', operation: 'set', target: 'agent', value: {
+      mode: 'astrbot', channels: { astrbot: { target: 'fixture-room', speakReplies: false } },
+    } });
+    const reply = '这是动作完成后的回复。';
+    const presented = await command({ type: 'bot-present', platform: 'astrbot', origin: { target: 'fixture-room' },
+      text: reply + '\n[[va action=wave]]' });
+    assert.equal(presented.queued, true);
+    const animation = await command({ type: 'status' });
+    assert.equal(animation.performance?.action, 'wave');
+    assert.equal(animation.performance.hasSpeech, false);
+    await waitFor(async () => {
+      const current = await command({ type: 'status' });
+      return current.performance?.id !== animation.performance.id && current.speech === reply;
+    }, 'the final reply after the silent action');
+    await command({ type: 'stop' });
 
     cameraGranted = false;
     await assert.rejects(command({ type: 'camera' }), { code: 'CAMERA_PERMISSION' });

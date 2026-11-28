@@ -25,7 +25,6 @@ const systemVoiceChoices = document.getElementById('system-voice-choices');
 const systemVoiceQuery = document.getElementById('system-voice-query');
 const systemVoiceRefresh = document.getElementById('system-voice-refresh');
 const systemVoiceResults = document.getElementById('system-voice-results');
-const actionSound = document.getElementById('action-sound');
 const zipVoiceForm = document.getElementById('zipvoice-form');
 const zipVoiceStatus = document.getElementById('zipvoice-status');
 const volcForm = document.getElementById('volc-form');
@@ -317,8 +316,6 @@ function renderVoice(config) {
     else if (previous?.playbackWarning) voiceStatus.textContent = '';
   }
   voiceSelection ??= config.provider;
-  actionSound.checked = config.actionSound;
-  actionSound.disabled = false;
   renderVoicePanel();
   const preparation = config.zipvoicePreparation;
   zipVoiceStatus.textContent = preparation?.phase === 'loading' ? '正在后台加载 ZipVoice…'
@@ -475,21 +472,6 @@ async function updateVoice(change) {
     return false;
   }
 }
-
-actionSound.addEventListener('change', async () => {
-  const enabled = actionSound.checked;
-  actionSound.disabled = true;
-  try {
-    const voice = await window.va.voiceConfig({ actionSound: enabled });
-    actionSound.checked = voice.actionSound;
-    voiceStatus.textContent = '';
-  } catch (error) {
-    actionSound.checked = !enabled;
-    voiceStatus.textContent = error.message;
-  } finally {
-    actionSound.disabled = false;
-  }
-});
 
 onChoice(voiceProvider, value => {
   voiceSelection = value;

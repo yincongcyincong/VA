@@ -52,13 +52,13 @@ test('explicit bot commands preserve arguments, retry once after launch, and ret
     },
     startDesktop: async () => calls.push('start'),
     takeSelfie: async options => {
-      assert.deepEqual(options, { speech: undefined, expression: 'smile', bot: true, platform });
+      assert.deepEqual(options, { expression: 'smile', bot: true, platform });
       return { png: 'Zml4dHVyZQ==', saved: true };
     },
     listActions: async () => ({ actions: ['wave'] }),
   };
-  const perform = { type: 'bot-perform', platform, action: 'wave', speech: '你好', expression: 'smile', wait: true };
-  assert.deepEqual(await run({ op: 'perform', ...perform }, dependencies), { speech: '你好' });
+  const perform = { type: 'bot-perform', platform, action: 'wave', expression: 'smile', wait: true };
+  assert.deepEqual(await run({ op: 'perform', ...perform, speech: '旧客户端附带的台词' }, dependencies), { speech: '你好' });
   assert.deepEqual(calls, [perform, 'start', perform]);
   await run({ op: 'say', platform, speech: '台词' }, dependencies);
   await run({ op: 'view', platform, mode: 'portrait' }, dependencies);

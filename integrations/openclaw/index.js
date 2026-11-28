@@ -89,8 +89,8 @@ const presetId = { type: 'string', pattern: '^[a-z][a-z0-9-]{0,39}$' };
 const speech = { type: 'string', maxLength: 300 };
 const definition = [
   ['say', 'Speak on VA', '让 VA 朗读指定台词。', { speech, expression: presetId }, ['speech']],
-  ['act', 'Animate VA', '使用 va_desktop_actions 返回的编号做动作。', { action: presetId, expression: presetId, speech }, ['action']],
-  ['selfie', 'VA selfie', '用户请求自拍时让 VA 拍照并返回 PNG。', { speech, expression: presetId }, []],
+  ['act', 'Animate VA', '静默播放 va_desktop_actions 返回的动作。', { action: presetId, expression: presetId }, ['action']],
+  ['selfie', 'VA selfie', '用户请求自拍时让 VA 静默拍照并返回 PNG。', { expression: presetId }, []],
   ['actions', 'VA actions', '列出 VA 的动作和表情，包括用户添加的配置。', {}, []],
   ['status', 'VA status', '读取 VA 桌面角色状态。', {}, []],
 ];
@@ -105,8 +105,8 @@ export default {
     const workspace = api.config?.agents?.defaults?.workspace;
     const canSyncPrompt = config.workspacePrompt === true && typeof workspace === 'string' && isAbsolute(workspace);
 
-    async function stageSelfie(speech) {
-      const result = await bridge({ op: 'selfie', speech });
+    async function stageSelfie() {
+      const result = await bridge({ op: 'selfie' });
       const state = api.runtime?.state?.resolveStateDir?.(process.env) ?? process.env.OPENCLAW_STATE_DIR
         ?? join(homedir(), '.openclaw');
       const folder = join(state, 'media', 'outbound');
@@ -195,13 +195,13 @@ export default {
             }, null, 2) };
           }
           if (verb === 'selfie') {
-            const { mediaUrl } = await stageSelfie(argument || undefined);
+            const { mediaUrl } = await stageSelfie();
             return { text: '', mediaUrl };
           }
           if (verb === 'say' || verb === 'act') {
             const result = await bridge(verb === 'say' ? { op: 'say', speech: argument }
               : { op: 'perform', action: argument });
-            return { text: result.speech };
+            return { text: verb === 'say' ? result.speech : '已执行动作。' };
           }
           if (verb === 'chat') return { text: '请直接和 OpenClaw 对话，VA 会显示已选频道的回复。' };
           return { text: '用法：/va say 台词，/va act 动作，/va selfie，/va route。' };

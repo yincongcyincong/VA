@@ -18,10 +18,10 @@ VA 是 macOS 上的 3D 桌面角色。Agent 可以通过本机 CLI 或 MCP 查�
 
 ## 控制角色
 
-先查询当前模型支持的动作和表情。用户明确指定台词时使用原话。需要配动作时，写一句符合当前对话的台词，合并成一次表演。省略台词会播放动作默认对白。
+先查询当前模型支持的动作和表情。动作静默执行。要说的话写进最终回复正文，用户明确指定台词时使用原话。
 
 ```bash
-./bin/va.js perform --action wave --expression smile --say "你好呀，见到你真好！" --json
+./bin/va.js perform --action wave --expression smile --json
 ./bin/va.js say "我在桌面上。" --json
 ./bin/va.js selfie --out /tmp/va-selfie.png --json
 ./bin/va.js model-check "/绝对路径/角色.vrm" --json

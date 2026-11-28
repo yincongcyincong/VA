@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('va', {
   initialModel: () => ipcRenderer.invoke('va:initial-model'),
   report: state => ipcRenderer.send('va:ready', state),
   openSettings: () => ipcRenderer.send('va:open-settings'),
+  stopSpeaking: () => ipcRenderer.send('va:stop-speaking'),
   quit: () => ipcRenderer.send('va:quit'),
   openChat: () => ipcRenderer.send('va:open-chat'),
   localChat: (operation, value) => ipcRenderer.invoke('va:local-chat', operation, value),

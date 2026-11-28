@@ -141,8 +141,8 @@ class VAPlugin(Star):
         if not self.allowed(event):
             return
         try:
-            result = await self.call("perform", action=action)
-            yield event.plain_result(result["speech"]).stop_event()
+            await self.call("perform", action=action)
+            yield event.plain_result("已执行动作。").stop_event()
         except VAError as error:
             yield event.plain_result(str(error)).stop_event()
 

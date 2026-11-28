@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
+import { marked } from 'marked';
 import { ControlError } from '../lib/control.js';
 import { settingsWriter } from './config.js';
 import { dialogueCut } from './dialogue-text.js';
@@ -11,6 +12,48 @@ import { windowsSpeech, windowsVoices } from './windows-speech.js';
 const exec = promisify(execFile);
 const windows = process.platform === 'win32';
 export const defaultSystemVoice = windows ? '' : 'Tingting';
+
+const imageExtension = /\.(?:png|jpe?g|gif|webp|avif|heic|bmp|svg)(?=$|[?#\s>])/iu;
+
+function markdownText(tokens, separator = '') {
+  return tokens.map(token => {
+    switch (token.type) {
+      case 'space':
+      case 'hr':
+      case 'def':
+      case 'image': return '';
+      case 'link':
+        return /^data:image\//iu.test(token.href) || imageExtension.test(token.href)
+          ? '' : markdownText(token.tokens);
+      case 'br': return '\n';
+      case 'html':
+        return token.text.replace(/<!--[\s\S]*?-->|<\/?[a-z][^>]*>/giu, '');
+      case 'list':
+        return token.items.map(item => markdownText(item.tokens, '\n')).filter(Boolean).join('\n');
+      case 'blockquote':
+        return markdownText(token.tokens, '\n');
+      case 'table':
+        return [token.header, ...token.rows].map(row =>
+          row.map(cell => markdownText(cell.tokens)).filter(Boolean).join('，')).filter(Boolean).join('\n');
+      default:
+        return token.tokens ? markdownText(token.tokens) : token.text ?? '';
+    }
+  }).filter(Boolean).join(separator);
+}
+
+export function spokenDialogue(text) {
+  const dialogue = text
+    .replace(/`?\[\[va[ \t]+[^\]\r\n]*\]\]`?/giu, '')
+    .replace(/<img\b(?:[^"'<>]|"[^"]*"|'[^']*')*>/giu, '')
+    .replace(/!\[(?:\\.|[^\]\\\r\n])*\]\[[^\]\r\n]*\]/gu, '')
+    .replace(/!?\[[^\]\r\n]*\]\(<?data:image\/[^\r\n)]*$/gimu, '');
+  return markdownText(marked.lexer(dialogue), '\n')
+    .replace(/data:image\/[\w.+-]+(?:;[\w=.+-]+)*,[^\s<>"'\x60)\]]+/giu, '')
+    .replace(/(?:https?:\/\/|(?:sandbox|attachment|file):\/)[^\s<>"'\x60)\]，。！？；、]+/giu, url =>
+      imageExtension.test(url) ? '' : url)
+    .replace(/^[\t ]*(?:\/|[a-z]:[\\/])[^\r\n]*\.(?:png|jpe?g|gif|webp|avif|heic|bmp|svg)[\t ]*$/gimu, '')
+    .trim();
+}
 
 export function splitReplySpeech(text) {
   const lines = [];
