@@ -114,7 +114,7 @@ va config run permissions-open '{"kind":"microphone"}' --json
 
 窗口坐标使用 macOS 的全局桌面坐标，允许副屏使用负坐标，`null` 恢复主屏幕默认位置。模型预览在设置窗口中打开，可旋转和缩放，也可传 `{"path":"/绝对路径/角色.vrm"}`。麦克风监听需要已绑定的本地 Agent 会话；macOS 需要 26 或更新版本，Windows 需要本机语音识别引擎和麦克风访问权限。DeepSeek 能力安装需要选中并绑定 DeepSeek Harness。豆包客户端可用 `doubao-client-open` 打开，用 `doubao-client-read` 读取当前绑定对话的最新回复。
 
-`permissions-open` 接受 `screen`、`microphone` 或 `accessibility`，由用户在 macOS 系统设置中授权。OpenClaw 和 AstrBot 的 VA 端频道可通过 `agent.channels` 设置，机器人凭据、插件权限和部署参数在对应服务的配置中管理。
+`permissions-open` 接受 `screen`、`microphone`、`camera` 或 `accessibility`，由用户在 macOS 系统设置中授权。OpenClaw 和 AstrBot 的 VA 端频道可通过 `agent.channels` 设置，机器人凭据、插件权限和部署参数在对应服务的配置中管理。
 
 ### 操作桌面角色
 
@@ -409,6 +409,17 @@ OpenClaw 按频道的配对或访问策略授权，AstrBot 允许管理员或插
 macOS 上已选用一种交互接入时，可独立开启音乐跟随。音频分类在本机进行。
 
 音乐识别使用 macOS 的本机音频分类，分析系统输出。检测到音乐会播放角色的预设舞步，音乐停止或关闭开关时会停下。鼠标穿透关闭时，点角色可以打断自动动作并听到摸摸回应。桌面打包会编译音频组件，源码开发可用 `make dev` 编译并启动。
+
+## 摄像头拍照与问答
+
+```bash
+va camera --out /tmp/va-camera.jpg
+va camera --ask '照片里有哪些物品？' --agent codex
+```
+
+`va camera` 使用默认摄像头，只拍一张 JPEG，拍完释放摄像头。首次使用时按操作系统提示授权。加上 `--ask` 会把照片和问题交给配置的视觉 Agent，并返回答案。支持 Codex、Claude Code、OMP 和能接收图片的自定义 Agent。可用 `--agent` 和 `--model` 临时指定本次使用的 Agent 或模型。问答在独立请求中进行，使用远端模型时照片会发送给该服务。问答时同时指定 `--out` 可以保存照片。
+
+MCP 的 `va_camera` 可以把 JPEG 交给当前调用的 Agent。传入 `question` 时，由 VA 发起照片问答并返回文字答案。
 
 ## 语音和口型
 

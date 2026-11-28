@@ -29,6 +29,7 @@ export function createRolePrompt(background, previousInstructions = '', previous
       '- 每个动作都可以用 `--say` 配上你为当前对话写的台词，同时播放动作、语音和字幕。例如 `va act wave --say "嘿，好久不见！"`。省略 `--say` 时使用配置的默认台词。加上 `--expression smile` 会同时微笑。',
       '- 用 `va express smile` 换表情，用 `va say "你好呀！"` 朗读。',
       '- 用 `va stop` 停止当前动作，用 `va selfie --out /tmp/va-selfie.png --json` 自拍。',
+      '- 用户明确要求使用实体摄像头时，用 `va camera --out /tmp/va-camera.jpg` 拍一张照片，或用 `va camera --ask "照片里有什么？"` 发起照片问答。',
       '执行成功后直接回应用户，避免再通过回复触发同一个动作。没有终端权限时，按当前接入的回复方式表达动作意图。',
     ].join('\n'),
     '{{actionCommands}}',
@@ -68,6 +69,7 @@ export function characterPerformancePrompt(character, catalog, { style = 'text',
     '用户明确要求的动作优先。VA 可直接响应明确请求。若本轮已经收到 VA 的动作安排反馈，正常回应即可。一次回复最多主动选择一个动作和一个表情。提到、引用或否定某个动作时保持原状。',
     dance ? '想主动跳舞时，选一种可用舞步。' : '本接入已关闭主动跳舞，用户明确要求时仍可由 VA 处理。',
     '摆拍动作在桌面摆姿势。用户明确要求发送自拍时由有附件能力的频道或自拍工具拍摄和发送。自拍成功后只交付图片，省略附文和完成说明。拍摄或发送失败时说明原因。',
+    '只有用户明确要求使用实体摄像头时，才调用 `va_camera` 或 `va camera` 拍照。用户询问照片内容时，读取照片或用照片问答，按用户问题回复。',
     !hasCommandSlot && commands,
     style === 'text'
       ? '先写用户能看到和听到的台词。决定表演时，在回复最后单独写一行 [[va action=wave expression=smile]]，把示例编号换成上面实际可用的编号。action 或 expression 可以只写一个。需要自然聊天时省略这一行。'

@@ -5,6 +5,7 @@ import { parseArgs } from 'node:util';
 import { listActions } from '../lib/catalog.js';
 import { ControlError, request } from '../lib/control.js';
 import { startDesktop, takeSelfie } from '../lib/start.js';
+import { cameraQuestion } from '../lib/camera.js';
 import { configCatalog, maxConfigBytes, parseConfigCommand } from '../lib/configuration.js';
 import { bindCurrentCodex } from '../lib/current-codex.js';
 
@@ -20,6 +21,7 @@ const usage = `VA · 桌面角色
   va perform [--action <动作>] [--say <台词>] [--expression <表情>] [--no-wait]
   va photo [--out <文件.png>] [--clipboard]
   va selfie [--out <文件.png>] [--clipboard] [--say <台词>]
+  va camera [--out <文件.jpg>] [--ask <问题>] [--agent <codex|claude|omp|custom>] [--model <名称>]
   va settings | character               打开设置或读取人设和默认台词
   va config list | get <配置组>           查询配置组、操作或当前配置
   va config <set|run> <目标> [JSON|--file <文件>|--stdin]
@@ -207,6 +209,20 @@ async function execute() {
     const { positionals } = options();
     if (positionals.length > 1) invalid('请选择一种接入方式。');
     return await request({ type: command, mode: positionals[0] });
+  }
+  if (command === 'camera') {
+    const { positionals, values } = options({
+      out: { type: 'string' }, ask: { type: 'string' }, agent: { type: 'string' }, model: { type: 'string' },
+    });
+    count(positionals, 0);
+    const question = cameraQuestion({ question: values.ask, agent: values.agent, model: values.model });
+    const stamp = new Date().toISOString().replaceAll(':', '-');
+    const path = values.out !== undefined || !question ? resolve(values.out || `va-camera-${stamp}.jpg`) : undefined;
+    if (path && !/\.jpe?g$/iu.test(path)) invalid('摄像头照片文件需要 .jpg 或 .jpeg 扩展名。');
+    const { data, ...result } = await request({ type: 'camera', ...question, includeImage: Boolean(path) });
+    if (!path) return result;
+    await writeFile(path, Buffer.from(data, 'base64'), { flag: 'wx', mode: 0o600 });
+    return { ...result, path };
   }
   if (command === 'photo' || command === 'selfie') {
     const { positionals, values } = options({

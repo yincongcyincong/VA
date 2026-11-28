@@ -81,6 +81,7 @@ function macOptions() {
     appBundleId: 'local.va.desktop',
     usageDescription: {
       AudioCapture: 'VA locally detects music or transcribes Doubao playback when you enable these features.',
+      Camera: 'VA takes one photo when you explicitly use its camera command.',
       Microphone: 'VA uses the microphone when you enable Agent voice input or Doubao action recognition.',
       ScreenCapture: 'VA can send a screenshot of your primary display to the vision model you configure.',
     },

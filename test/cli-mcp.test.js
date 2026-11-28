@@ -39,7 +39,7 @@ test('the VA CLI exposes the configuration catalog and validates requests withou
   await writeFile(configFile, '{"scale":999}');
   assert.equal(execute(['config', 'set', 'desktop', '--file', configFile]).error.code, 'CONFIG_VALUE');
   assert.equal(execute(['config', 'set', 'desktop', '--stdin'], '{"scale":0}').error.code, 'CONFIG_VALUE');
-  assert.equal(execute(['config', 'run', 'permissions-open', '{"kind":"camera"}']).error.code, 'CONFIG_VALUE');
+  assert.equal(execute(['config', 'run', 'permissions-open', '{"kind":"location"}']).error.code, 'CONFIG_VALUE');
   assert.equal(execute(['bridge'], '["invalid"]').error.code, 'INVALID_ARGUMENTS');
   for (const args of [
     ['config', 'get', 'desktop', '{}'], ['config', 'set', 'desktop', '{bad json'],
@@ -47,6 +47,8 @@ test('the VA CLI exposes the configuration catalog and validates requests withou
     ['chat-use'], ['integration', 'off', 'local'], ['photo', '--out', 'photo.jpg'], ['scale', 'unknown'],
     ['model', 'one', 'two'], ['sense', 'screen', 'unknown'], ['click-through', 'unknown'], ['status', 'extra'],
     ['perform'], ['say', '   '],
+    ['camera', '--ask', ' '], ['camera', '--agent', 'codex'], ['camera', '--model', 'fast'],
+    ['camera', '--ask', '看看', '--agent', 'deepseekharness'], ['camera', '--out', 'photo.png'],
   ]) {
     assert.equal(execute(args).error.code, 'INVALID_ARGUMENTS', args.join(' '));
   }
@@ -62,6 +64,7 @@ test('VA MCP initializes over stdio and returns schema errors as tool results', 
   const { tools } = await client.listTools();
   assert.ok(tools.some(tool => tool.name === 'va_actions' && tool.annotations?.readOnlyHint));
   assert.ok(tools.some(tool => tool.name === 'va_observe'));
+  assert.ok(tools.some(tool => tool.name === 'va_camera' && tool.inputSchema.properties.question));
   if (process.platform === 'win32') assert.ok(tools.some(tool => tool.name === 'va_voice_recognition_status' && tool.annotations.readOnlyHint));
   const call = async (name, args) => client.callTool({ name, arguments: args });
   const config = await call('va_config_list', {});

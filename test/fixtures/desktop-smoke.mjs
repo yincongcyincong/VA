@@ -14,6 +14,7 @@ const data = join(profile, 'VA Desktop');
 const sessionsPath = join(data, 'local-agent-sessions.json');
 const history = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
 const bound = 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb';
+app.commandLine.appendSwitch('use-fake-device-for-media-stream');
 
 async function waitFor(check, description) {
   const deadline = Date.now() + 15_000;
@@ -57,6 +58,10 @@ async function prepare() {
   let stops = 0;
   microphone.kill = () => { stops++; };
   systemPreferences.askForMediaAccess = async () => true;
+  const mediaStatus = systemPreferences.getMediaAccessStatus.bind(systemPreferences);
+  let cameraGranted = true;
+  systemPreferences.getMediaAccessStatus = kind => kind === 'camera'
+    ? (cameraGranted ? 'granted' : 'denied') : mediaStatus(kind);
   const spawn = childProcess.spawn;
   childProcess.spawn = (command, args, options) => {
     if (args?.[0] !== '--agent-microphone') return spawn(command, args, options);
@@ -111,6 +116,33 @@ async function prepare() {
     assert.equal(await readFile(sessionsPath, 'utf8'), saved);
     await chat('agent-voice-stop');
     assert.equal(stops, 1);
+
+    cameraGranted = false;
+    await assert.rejects(command({ type: 'camera' }), { code: 'CAMERA_PERMISSION' });
+    cameraGranted = true;
+    const photo = await command({ type: 'camera' });
+    assert.equal(photo.mime, 'image/jpeg');
+    assert.equal(Buffer.from(photo.data, 'base64').readUInt16BE(), 0xffd8);
+    assert.ok(photo.width > 1 && photo.height > 1 && Math.max(photo.width, photo.height) <= 1280);
+    assert.equal(BrowserWindow.getAllWindows().some(window =>
+      window.webContents.getURL() === 'va-app://desktop/camera.html'), false);
+
+    const cameraAgent = join(profile, 'camera-agent.cjs');
+    await writeFile(cameraAgent, `
+      const assert = require('node:assert/strict');
+      const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
+      assert.equal(input.sessionId, null);
+      assert.equal(input.image.mime, 'image/jpeg');
+      assert.equal(Buffer.from(input.image.data, 'base64').readUInt16BE(), 0xffd8);
+      console.log(JSON.stringify({ reply: '收到：' + input.message }));
+    `);
+    await command({ type: 'configuration', operation: 'set', target: 'agent', value: {
+      localAgent: { custom: { command: '/usr/bin/env', args: ['node', cameraAgent] } },
+    } });
+    const answer = await command({ type: 'camera', agent: 'custom', question: '照片是什么？' });
+    assert.equal(answer.reply, '收到：照片是什么？');
+    assert.equal(answer.data, undefined);
+    assert.equal((await command({ type: 'configuration', operation: 'get', target: 'agent' })).localAgent.provider, 'claude');
     childProcess.spawn = spawn;
     syncBuiltinESMExports();
     hook.deregister();

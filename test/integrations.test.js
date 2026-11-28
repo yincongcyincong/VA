@@ -441,6 +441,7 @@ test('Claude receives an image through stream JSON without writing to the bound 
     assert.equal(args[args.indexOf('--input-format') + 1], 'stream-json');
     assert.equal(args[args.indexOf('--output-format') + 1], 'stream-json');
     assert.equal(args[args.indexOf('--append-system-prompt') + 1], '观察角色');
+    assert.equal(args[args.indexOf('--model') + 1], 'vision-fixture');
     const input = JSON.parse(require('node:fs').readFileSync(0, 'utf8'));
     assert.deepEqual(input.message.content, [
       { type: 'text', text: '概括主屏幕' },
@@ -456,7 +457,7 @@ test('Claude receives an image through stream JSON without writing to the bound 
   });
   await agent.bind(sessionId);
   const before = await readFile(join(root, 'bindings.json'), 'utf8');
-  const observe = await agent.prepareObservation();
+  const observe = await agent.prepareObservation({ provider: 'claude', model: 'vision-fixture' });
   const reply = await observe({
     message: '概括主屏幕', prompt: '观察角色', frame: { mime: 'image/jpeg', data: 'Zml4dHVyZQ==' },
     signal: new AbortController().signal,

@@ -29,6 +29,8 @@ VA 是 macOS 上的 3D 桌面角色。Agent 可以通过本机 CLI 或 MCP 查�
 
 自拍使用新的输出路径，完成后使用返回的 PNG。用户只要照片时直接交付图片。向机器人频道发自拍时，使用已绑定频道的插件入口并核对目标。读取屏幕前先确认用户确实要求观察，再用 `va senses --json` 查询当前接入和权限状态。[自定义动作和回复协议](docs/agent-custom-actions.md)
 
+用户明确要求用实体摄像头时，用 `./bin/va.js camera --out /tmp/va-camera.jpg --json` 拍照，用 `./bin/va.js camera --ask "照片里有什么？" --agent codex --json` 发起视觉问答。MCP 对应 `va_camera`，不传 `question` 时直接返回 JPEG。
+
 ## 连接 MCP 和 Skill
 
 把 VA 启动为 stdio MCP 服务。将下例中的路径换成仓库的绝对路径，并按客户端要求放入其 MCP 配置。

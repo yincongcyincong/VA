@@ -626,9 +626,15 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
     return sessions.listening.delete(record.ref) || Boolean(key);
   }
 
-  async function screenAgent() {
-    const agent = await runtime(await getConfig(), launchDirectory);
-    if (!agent.provider) throw new ControlError('AGENT_UNSELECTED', '请在「智能体接入」选择接收截图的本地 Agent。');
+  async function pictureAgent({ provider, model } = {}) {
+    const config = await getConfig();
+    const selected = provider ?? config?.provider;
+    if (!selected) throw new ControlError('AGENT_UNSELECTED', '请在「智能体接入」选择接收图片的本地 Agent。');
+    if (selected === 'custom' && model !== undefined) {
+      throw new ControlError('AGENT_CONFIG', '自定义 Agent 的模型由它自己的配置决定。');
+    }
+    const agent = await runtime({ ...config, provider: selected,
+      ...(model !== undefined && { [selected]: { ...config?.[selected], model } }) }, launchDirectory);
     if (agent.provider === 'deepseekharness') {
       throw new ControlError('AGENT_IMAGE_UNSUPPORTED', 'DeepSeek Harness 的 headless CLI 不接收图片，请选择支持图片输入的 Agent。');
     }
@@ -651,8 +657,8 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
       replyMonitorEnabled = enabled;
       return refreshReplyMonitor();
     },
-    async prepareObservation() {
-      const agent = await screenAgent();
+    async prepareObservation(options) {
+      const agent = await pictureAgent(options);
       return async ({ frame, message, prompt, signal }) => {
         const limit = AbortSignal.timeout(timeout);
         const result = await dispatch(agent, { message, prompt, sessionId: null, image: frame }, AbortSignal.any([signal, limit]))
