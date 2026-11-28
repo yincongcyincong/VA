@@ -1,5 +1,6 @@
 import { lstat } from 'node:fs/promises';
 import { createConnection } from 'node:net';
+import { startDeepSeekDesktopBridge } from './deepseek-desktop-bridge.mjs';
 
 export const name = 'va-desktop-role';
 export const inject = ['systemPrompt'];
@@ -69,4 +70,10 @@ export function apply(ctx) {
       },
     });
   });
+  if (process.platform === 'darwin') {
+    ctx.inject(['sessionController'], async host => {
+      const close = await startDeepSeekDesktopBridge(host.sessionController);
+      host.on('dispose', close);
+    });
+  }
 }

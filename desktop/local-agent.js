@@ -12,6 +12,7 @@ import { createSessionReplies, findSessionFile, replySessionKey, supportsSession
 import { createSessionTitles, sessionPreview } from './session-titles.js';
 import { navigateDeepSeek } from './deepseek-navigation.js';
 import { deepSeekArchives, deepSeekSessionId } from './deepseek-sessions.js';
+import { requestDeepSeekDesktopTurn } from './deepseek-desktop-bridge.mjs';
 import { launchWindowsTerminal, openWindowsDeepSeekDesktop, stopWindowsAgent } from './windows-agent.js';
 import { deepSeekPresetUnsupported, runWindowsDeepSeek } from './windows-deepseek.js';
 
@@ -309,26 +310,32 @@ async function runOmp(agent, input, signal) {
   }
 }
 
-function dispatch(agent, input, signal) {
+function dispatch(agent, input, signal, runDeepSeekDesktop = requestDeepSeekDesktopTurn) {
   if (agent.provider === 'codex') return runCodex(agent, input, signal);
   if (agent.provider === 'omp') return runOmp(agent, input, signal);
   if (agent.provider === 'deepseekharness') {
     const args = ['--profile', 'headless', '--json', '--permission-mode', 'read-only',
       ...(input.sessionId ? ['--session-id', input.sessionId] : [])];
-    if (windows && input.sessionId) {
-      return runEventAgent(agent, args, input.prompt + '\n\n用户消息：\n' + input.message, signal, rows => {
-        const final = rows.findLast(event => event.type === 'final');
-        if (!final?.text) throw failure(rows.findLast(event => event.type === 'error')?.message);
-        return { reply: final.text, sessionId: final.sessionId };
-      }).catch(error => {
-        if (deepSeekPresetUnsupported(error)) return runWindowsDeepSeek(agent, input, signal);
-        throw error;
-      });
-    }
-    return runEventAgent(agent, args, input.prompt + '\n\n用户消息：\n' + input.message, signal, rows => {
+    const run = runEventAgent(agent, args, input.prompt + '\n\n用户消息：\n' + input.message, signal, rows => {
       const final = rows.findLast(event => event.type === 'final');
       if (!final?.text) throw failure(rows.findLast(event => event.type === 'error')?.message);
       return { reply: final.text, sessionId: final.sessionId };
+    });
+    if (!input.sessionId) return run;
+    if (windows) return run.catch(error => {
+      if (deepSeekPresetUnsupported(error)) return runWindowsDeepSeek(agent, input, signal);
+      throw error;
+    });
+    if (process.platform !== 'darwin') return run;
+    return run.catch(async error => {
+      if (!deepSeekPresetUnsupported(error)) throw error;
+      signal.throwIfAborted();
+      try {
+        return await runDeepSeekDesktop({ sessionId: input.sessionId, message: input.message }, signal);
+      } catch (problem) {
+        signal.throwIfAborted();
+        throw new ControlError(problem.code || 'AGENT_FAILED', problem.message);
+      }
     });
   }
   return runJsonAgent(agent, input, signal);
@@ -431,7 +438,8 @@ async function openDeepSeekDesktop(command) {
 export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseReply, sessionPath, launchDirectory = process.cwd(),
   presentReply, onReplySessionsRemoved = () => {}, onChange = () => {}, onReplyError = () => {},
   openTerminal = launchTerminal, openCodex = openCodexDesktop,
-  openDeepSeek = openDeepSeekDesktop, openDeepSeekSession = navigateDeepSeek }) {
+  openDeepSeek = openDeepSeekDesktop, openDeepSeekSession = navigateDeepSeek,
+  runDeepSeekDesktop = requestDeepSeekDesktopTurn }) {
   const writeSessions = settingsWriter(sessionPath);
   const saveSessions = ({ bindings, history, listening }) => writeSessions({ bindings, history, listening: [...listening] });
   const sessionTitles = createSessionTitles();
@@ -865,7 +873,7 @@ export function createLocalAgent({ getConfig, updateConfig, getPrompt, parseRepl
         if (prompt.length > 45000) throw new ControlError('AGENT_INPUT', '角色与 Agent 的 Prompt 合计太长。');
         const input = { message, prompt, sessionId };
         pendingReply = sessionId ? replySessionKey(agent.provider, sessionId) : undefined;
-        const result = await dispatch(agent, input, signal);
+        const result = await dispatch(agent, input, signal, runDeepSeekDesktop);
         signal.throwIfAborted();
         const fullReply = typeof result?.reply === 'string' ? result.reply.trim() : '';
         const raw = fullReply.slice(0, maxReply);

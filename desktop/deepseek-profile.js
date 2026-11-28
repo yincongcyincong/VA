@@ -30,6 +30,7 @@ export async function installDeepSeekRole(home = process.env.DSH_HOME || join(ho
   await mkdir(pluginDir, { mode: 0o700, recursive: true });
   let updated = false;
   for (const [filename, sourceFile] of [
+    ['deepseek-desktop-bridge.mjs', 'deepseek-desktop-bridge.mjs'],
     ['deepseek-role.mjs', 'deepseek-role.mjs'],
     ['client.js', 'deepseek-client.js'],
     ['package.json', 'deepseek-client-package.json'],

@@ -90,6 +90,18 @@ test('VA stops listening when the bound Agent changes and reports native microph
   assert.equal(voice.state().enabled, false);
 });
 
+test('VA stops listening until the DeepSeek desktop bridge has been restarted', async t => {
+  const { voice, children } = fixture(t, async () => {
+    throw new ControlError('DEEPSEEK_RESTART', '请重新打开 DeepSeek Harness。');
+  });
+  voice.start({ key: 'deepseekharness', sessionId: 'bound-session' });
+  children[0].emitLine({ type: 'user-input', text: '测试' });
+  await setTimeout(10);
+  assert.equal(voice.state().enabled, false);
+  assert.equal(voice.state().problem, '请重新打开 DeepSeek Harness。');
+  assert.equal(children.length, 1);
+});
+
 test('stopping during a send discards the old result before listening to a new binding', async t => {
   const previous = { key: 'claude', sessionId: 'old-session' };
   const next = { key: 'codex', sessionId: 'new-session' };

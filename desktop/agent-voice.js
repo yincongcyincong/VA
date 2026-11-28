@@ -51,7 +51,7 @@ export function createAgentVoice({ binary, send, onState, launch = spawn, resume
       if (target === recipient) update({ message: '已发送。等待角色回复结束。' });
     } catch (error) {
       if (target !== recipient) return;
-      if (['AGENT_SESSION_CHANGED', 'AGENT_SESSION_ARCHIVED', 'INTEGRATION_MODE'].includes(error.code)) stop(error.message);
+      if (['AGENT_SESSION_CHANGED', 'AGENT_SESSION_ARCHIVED', 'INTEGRATION_MODE', 'DEEPSEEK_RESTART'].includes(error.code)) stop(error.message);
       else update({ problem: error.message });
     } finally {
       sending = false;
